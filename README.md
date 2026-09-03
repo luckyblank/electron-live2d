@@ -1,157 +1,100 @@
-# Live2D 桌面 Q 版宠物 🐾
+# Live2D 桌面伙伴
 
-基于 Electron + Live2D Cubism SDK 的桌面 Q 版（chibi）宠物应用。一个无边框、透明、置顶的桌面窗口，渲染一只可交互的 Live2D 动画角色，支持点击互动、拖拽移动、随机空闲动画、系统托盘控制和多模型切换。
+基于 Electron 与 Live2D Cubism SDK 的透明桌面伙伴。宠物窗口保持无边框、不抢焦点，可拖动、点击互动、跟随近距离光标，并通过独立设置窗口切换角色和调整性能策略。
 
 <p align="center">
-  <img src="resources/icon.png" width="128" alt="icon">
+  <img src="resources/icon.png" width="128" alt="Live2D 桌面伙伴图标">
 </p>
 
-## ✨ 功能
+## 功能
 
-- **桌面宠物** — 无边框透明窗口，角色悬浮在桌面上
-- **点击互动** — 单击、双击、三连击触发不同反应（表情气泡、粒子特效、震动）
-- **拖拽移动** — 按住角色拖动即可移动位置，自动保存位置
-- **光标跟随** — 角色眼球/头部跟随鼠标移动
-- **随机空闲动画** — 闲置时自动播放动画、气泡对话、打盹 Zzz
-- **右键菜单** — 右键点击角色触发特殊反应
-- **键盘快捷键** — H/S/B/F 键触发不同特效
-- **系统托盘** — 显示/隐藏、切换模型、退出
-- **多模型支持** — 12 个内置模型，可在托盘菜单中切换
+- 透明无边框宠物窗口，不占任务栏、不打断当前工作
+- 拖动角色移动位置并自动保存，允许贴近屏幕边缘
+- 点击角色触发动作与轻量反馈
+- 近距离光标跟随，远离角色后停止高频光标采样
+- 30 / 60 / 10 FPS 自适应调度，支持省资源与高质量模式
+- 独立设置窗口，用于切换模型、调整尺寸、锁定交互和系统选项
+- 系统托盘支持显示、隐藏、切换模型、锁定和退出
+- 模型切换时主动释放 WebGL、纹理与音频资源
 
-## 📦 已内置模型（12 个）
+## 内置模型
 
-| 模型 | 来源 | 动画数 | 大小 |
-|------|------|--------|------|
-| **mori-miko** | Fox Hime Zero — 狐娘巫女森美子 | 85 | 5.7 MB |
-| **ruri-miko** | Fox Hime Zero — 狐娘巫女瑠璃美子 | 85 | 6.6 MB |
-| **mori-suit** | Fox Hime Zero — 森美子便服版 | 85 | 4.9 MB |
-| **konosuba-aqua** | 为美好的世界献上祝福 — 阿库娅 | 32 | 2.5 MB |
-| **konosuba-001** | 为美好的世界献上祝福 | 38 | 1.9 MB |
-| **konosuba-002** | 为美好的世界献上祝福 | 26 | 2.3 MB |
-| **azur-01** | 碧蓝航线 (aersasi) | 28 | 13.9 MB |
-| **azur-02** | 碧蓝航线 (aierdeliqi) | 15 | 5.6 MB |
-| **azur-03** | 碧蓝航线 (aidang) | 14 | 3.9 MB |
-| **shoujo-01** | 少女次元 | 15 | 1.5 MB |
-| **senko** | Live2D 官方示例 (带 hit 检测) | 4 | 6.9 MB |
-| **hiyori** | live2d-renderer 示例 | — | 4.4 MB |
+当前只保留以下 5 个模型：
 
-## 🚀 快速开始
+- `azur-03`
+- `hiyori`
+- `mori-miko`
+- `mori-suit`
+- `senko`
+
+## 快速开始
 
 ### 前置条件
 
-1. **Live2D Cubism Core** — 将 `live2dcubismcore.min.js` 放入 `static/` 目录
-   - 从 [Live2D 官网](https://www.live2d.com/download/cubism-sdk/) 下载 Cubism SDK for Web（需免费注册）
-   - 解压后将 `Core/live2dcubismcore.min.js` 复制到 `static/live2dcubismcore.min.js`
-
-2. **Node.js** >= 18
+1. Node.js 18 或更高版本。
+2. 将 Live2D Cubism SDK for Web 中的 `Core/live2dcubismcore.min.js` 放到 `static/live2dcubismcore.min.js`。
 
 ### 安装与运行
 
 ```bash
-# 安装依赖
 npm install
-
-# 启动开发模式（带热重载）
-npm run dev
-
-# 或直接启动
 npm start
-
-# 检查主进程、预加载和渲染脚本语法
-npm run check
-
-# 代码规范检查（需先 npm install）
-npm run lint
 ```
 
-### 打包为 Windows 安装包
+开发模式会额外打开开发者工具：
 
 ```bash
+npm run dev
+```
+
+### 检查与打包
+
+```bash
+npm run check
+npm run lint
 npm run package:win
 ```
 
-输出在 `dist/` 目录。
+Windows 安装包输出到 `dist/`。
 
-## 🎮 交互说明
+## 使用方式
 
-| 操作 | 效果 |
-|------|------|
-| **单击角色** | 触发点击动画 + 粒子特效，点击头部有爱心特效 |
-| **双击** | 触发强烈动画 + 表情气泡 + 大量粒子 |
-| **三连击** | 触发终极动画 + 星星爆发 + 窗口震动 |
-| **右键点击** | 吐槽气泡 + 震动 |
-| **拖拽** | 移动窗口位置（自动保存） |
-| **光标悬停** | 角色眼球跟随 |
-| **H 键** | 爱心特效 |
-| **S 键** | 惊吓特效 |
-| **B 键** | 随机对话气泡 |
-| **F 键** | 全套开心特效 |
+| 操作 | 结果 |
+|---|---|
+| 左键轻点角色 | 播放点击动作与轻量特效 |
+| 按住角色拖动 | 移动宠物窗口并保存位置 |
+| 右键角色 | 打开快捷菜单和设置入口 |
+| 托盘图标 | 显示或隐藏角色 |
+| 托盘菜单 | 切换模型、锁定交互、打开设置或退出 |
 
-### 空闲行为
+锁定后宠物会完全穿透鼠标，可从系统托盘菜单解除锁定。
 
-- **30 秒无操作** → 随机空闲气泡
-- **60 秒无操作** → 打盹提示
-- **120 秒无操作** → 深度睡眠 Zzz
+## 项目结构
 
-## 📁 项目结构
-
-```
+```text
 electron-live2d/
-├── main.js              # Electron 主进程（窗口/托盘/IPC/模型发现）
-├── preload.js           # 预加载脚本（contextBridge API）
+├── main.js                 # 窗口、托盘、IPC、偏好设置和模型发现
+├── preload.js              # 宠物窗口桥接 API
+├── settings-preload.js     # 设置窗口桥接 API
 ├── renderer/
-│   └── index.html       # 渲染进程（Live2D 渲染 + 交互逻辑 + 特效）
+│   ├── index.html          # 透明宠物舞台
+│   ├── app.js              # Live2D 渲染、拖动、点击与调度器
+│   ├── styles.css          # 宠物窗口样式
+│   ├── settings.html       # 设置窗口结构
+│   ├── settings.js         # 设置窗口交互
+│   └── settings.css        # 设置窗口视觉样式
 ├── static/
-│   ├── live2dcubismcore.min.js  # Cubism Core（需手动下载）
-│   └── models/                  # Live2D 模型包（.zip）
-│       ├── mori-miko/mori-miko.zip
-│       ├── senko/senko.zip
-│       ├── ...（共 12 个模型）
-│       └── _repo/               # 模型源仓库（Eikanya/Live2d-model）
+│   ├── live2dcubismcore.min.js
+│   └── models/             # 五个 Live2D 模型目录
 ├── resources/
-│   └── icon.png         # 托盘图标
-├── download-models.cjs  # 批量模型下载脚本（git 方式）
-└── package.json         # 打包配置（含 electron-builder 配置）
+│   └── icon.png
+└── package.json
 ```
 
-## 🔧 添加新模型
+## 添加模型
 
-模型支持两种格式：
+在 `static/models/` 下新建目录，并放入 `.model3.json` 描述文件及其依赖资源；也支持将结构完整的模型放为 `.zip`。重启应用后，合法模型会自动出现在设置窗口和托盘菜单中。
 
-**格式 1：目录形式（Cubism 3+）**
-```
-static/models/my-model/
-├── my-model.model3.json
-├── my-model.moc3
-├── my-model.physics3.json
-├── textures/
-│   └── texture_00.png
-└── motions/
-    ├── idle.motion3.json
-    └── ...
-```
+## 许可证
 
-**格式 2：Zip 包**
-```
-static/models/my-model/
-└── my-model.zip        # 内部结构与格式1相同
-```
-
-放入模型后重启应用，新模型会自动出现在托盘切换菜单中。窗口位置、当前模型和角色缩放会自动保存；切换模型时会先加载新模型，加载失败会保留当前角色，避免出现空白窗口。
-
-### 获取更多模型
-
-- [Eikanya/Live2d-model](https://github.com/Eikanya/Live2d-model) — 1000+ 社区模型
-- [Live2D 官网 SDK](https://www.live2d.com/download/cubism-sdk/) — 官方示例（Haru, Mao, Nito 等）
-- 运行 `node download-models.cjs` 从内置仓库下载更多模型
-
-## 🛠 技术栈
-
-- **Electron** — 桌面框架
-- **live2d-renderer** — Cubism SDK 渲染封装
-- **electron-store** — 窗口位置持久化
-- **Live2D Cubism 3 SDK** — 模型驱动
-
-## 📄 许可证
-
-本项目代码仅供学习参考。Live2D 模型版权归原作者所有，来自 [Eikanya/Live2d-model](https://github.com/Eikanya/Live2d-model) 社区仓库。Cubism Core 需从 Live2D 官网获取，遵循其许可协议。
+项目代码仅供学习参考。Live2D 模型及 Cubism Core 的版权与许可归各自权利人所有。

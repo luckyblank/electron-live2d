@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' file: data:">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Live2D 桌面伙伴</title>
+  <link rel="stylesheet" href="settings.css">
+</head>
+<body>
+  <div class="window-shell">
+    <header class="titlebar">
+      <div class="brand-lockup">
+        <img src="../resources/icon-32.png" width="28" height="28" alt="">
+        <div>
+          <strong>桌面伙伴</strong>
+          <span>Live2D Companion</span>
+        </div>
+      </div>
+      <div class="window-actions" aria-label="窗口控制">
+        <button id="minimize-window" type="button" aria-label="最小化">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8.5h10"/></svg>
+        </button>
+        <button id="close-window" type="button" aria-label="关闭">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <section id="onboarding" class="onboarding" hidden>
+      <div>
+        <span class="eyebrow">初次见面</span>
+        <h1>让桌面伙伴安静地陪着你</h1>
+        <p>拖动角色调整位置，轻点触发互动，右键随时打开快捷菜单。</p>
+      </div>
+      <button id="finish-onboarding" class="primary-button" type="button">开始使用</button>
+    </section>
+
+    <nav class="section-tabs" aria-label="设置分类">
+      <button class="section-tab is-active" type="button" data-section="characters" aria-current="page">角色</button>
+      <button class="section-tab" type="button" data-section="behavior">行为</button>
+      <button class="section-tab" type="button" data-section="system">系统</button>
+    </nav>
+
+    <main class="settings-content">
+      <section class="settings-section is-active" data-view="characters">
+        <div class="section-heading">
+          <div>
+            <span class="eyebrow">当前角色</span>
+            <h1 id="current-model-name">正在准备</h1>
+          </div>
+          <span id="runtime-status" class="runtime-status is-loading">启动中</span>
+        </div>
+
+        <div class="scale-control">
+          <div class="setting-copy">
+            <label for="scale-range">角色尺寸</label>
+            <p>只改变角色显示大小，不影响窗口位置。</p>
+          </div>
+          <output id="scale-value" for="scale-range">100%</output>
+          <input id="scale-range" type="range" min="0.5" max="2" step="0.05" value="1">
+        </div>
+
+        <div class="subheading-row">
+          <h2>选择角色</h2>
+          <span id="model-count">0 个可用</span>
+        </div>
+        <div id="model-list" class="model-list" role="radiogroup" aria-label="角色列表"></div>
+
+        <button id="reset-position" class="secondary-button" type="button">将角色移回屏幕右下角</button>
+      </section>
+
+      <section class="settings-section" data-view="behavior" hidden>
+        <div class="section-heading compact">
+          <div>
+            <span class="eyebrow">行为</span>
+            <h1>克制，但有回应</h1>
+          </div>
+        </div>
+
+        <div class="setting-list">
+          <label class="setting-row">
+            <span class="setting-copy"><strong>近距离跟随</strong><small>指针靠近时轻微转头，远离后自动回正。</small></span>
+            <input class="switch-input" type="checkbox" data-setting="cursorFollow">
+            <span class="switch-track" aria-hidden="true"></span>
+          </label>
+          <label class="setting-row">
+            <span class="setting-copy"><strong>轻量点击反馈</strong><small>保留一次柔和光点，不产生大规模粒子。</small></span>
+            <input class="switch-input" type="checkbox" data-setting="effects">
+            <span class="switch-track" aria-hidden="true"></span>
+          </label>
+          <label class="setting-row">
+            <span class="setting-copy"><strong>闲置与睡眠</strong><small>长时间无操作时降低帧率并进入休息状态。</small></span>
+            <input class="switch-input" type="checkbox" data-setting="idleEnabled">
+            <span class="switch-track" aria-hidden="true"></span>
+          </label>
+          <label class="setting-row">
+            <span class="setting-copy"><strong>锁定宠物</strong><small>完全穿透鼠标；可从系统托盘菜单解锁。</small></span>
+            <input class="switch-input" type="checkbox" data-setting="interactionMode">
+            <span class="switch-track" aria-hidden="true"></span>
+          </label>
+        </div>
+
+        <fieldset class="quality-fieldset">
+          <legend>性能模式</legend>
+          <div class="segmented-control" role="radiogroup" aria-label="性能模式">
+            <button type="button" data-quality="auto">自适应</button>
+            <button type="button" data-quality="eco">省资源</button>
+            <button type="button" data-quality="high">高质量</button>
+          </div>
+          <p id="quality-description">互动时保持流畅，闲置后自动降低资源占用。</p>
+        </fieldset>
+      </section>
+
+      <section class="settings-section" data-view="system" hidden>
+        <div class="section-heading compact">
+          <div>
+            <span class="eyebrow">系统</span>
+            <h1>与桌面自然共处</h1>
+          </div>
+        </div>
+
+        <div class="setting-list">
+          <label class="setting-row">
+            <span class="setting-copy"><strong>始终置顶</strong><small>让角色保持在其他窗口上方。</small></span>
+            <input class="switch-input" type="checkbox" data-setting="alwaysOnTop">
+            <span class="switch-track" aria-hidden="true"></span>
+          </label>
+          <label class="setting-row">
+            <span class="setting-copy"><strong>开机启动</strong><small>登录 Windows 后自动启动桌面伙伴。</small></span>
+            <input class="switch-input" type="checkbox" data-setting="launchAtLogin">
+            <span class="switch-track" aria-hidden="true"></span>
+          </label>
+          <label class="setting-row">
+            <span class="setting-copy"><strong>减少动态效果</strong><small>关闭附加反馈并限制动画刷新频率。</small></span>
+            <input class="switch-input" type="checkbox" data-setting="reducedMotion">
+            <span class="switch-track" aria-hidden="true"></span>
+          </label>
+        </div>
+
+        <div class="shortcut-panel">
+          <div><span>打开设置</span><kbd>右键角色</kbd></div>
+          <div><span>锁定后管理</span><kbd>系统托盘</kbd></div>
+        </div>
+
+        <div class="system-actions">
+          <button id="reset-settings" class="text-button" type="button">恢复默认设置</button>
+          <button id="quit-app" class="text-button is-danger" type="button">退出桌面伙伴</button>
+        </div>
+      </section>
+    </main>
+
+    <footer class="app-footer">
+      <span>Live2D 桌面伙伴</span>
+      <span id="app-version">v1.0.0</span>
+    </footer>
+  </div>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script src="settings.js"></script>
+</body>
+</html>

@@ -1,788 +1,754 @@
-;(async function() {
+(async function () {
+  const pathModule = require('path')
+  const originalJoin = pathModule.join
+  const originalDirname = pathModule.dirname
+  const normalizePath = value => typeof value === 'string' ? value.replace(/\\/g, '/') : value
+  pathModule.join = (...parts) => normalizePath(originalJoin(...parts))
+  pathModule.dirname = value => normalizePath(originalDirname(value))
+
   const { Live2DCubismModel } = require('live2d-renderer')
-  const canvas = document.getElementById('c')
-  const fxLayer = document.getElementById('fx-layer')
+  const stage = document.getElementById('pet-stage')
+  const effectsCanvas = document.getElementById('fx-canvas')
+  const effectsContext = effectsCanvas.getContext('2d')
+  const statusToast = document.getElementById('status-toast')
 
-  // ── Canvas sizing ──────────────────────────────────
-  let _lastCW = 0, _lastCH = 0
-  function resizeCanvas() {
-    const w = document.documentElement.clientWidth
-    const h = document.documentElement.clientHeight
-    const changed = w !== _lastCW || h !== _lastCH
-    _lastCW = w
-    _lastCH = h
-    canvas.style.width = w + 'px'
-    canvas.style.height = h + 'px'
-    canvas.width = Math.max(1, Math.floor(w))
-    canvas.height = Math.max(1, Math.floor(h))
-    return changed
+  const motionPriority = { idle: 1, normal: 2, force: 3 }
+  const idleCopy = ['在这里陪你', '休息一下', '安静待会儿']
+  const particleColors = ['#7164d8', '#b7aef0', '#efb5c8', '#fffdf9']
+  const state = {
+    snapshot: null,
+    preferences: null,
+    model: null,
+    modelMeta: null,
+    liveCanvas: null,
+    pendingModelId: null,
+    loadingModelId: null,
+    loading: false,
+    paused: false,
+    visible: !document.hidden,
+    lastInteraction: performance.now(),
+    activeUntil: performance.now() + 2500,
+    idleStage: 0,
+    frameTimer: null,
+    frameRequest: null,
+    lastFrame: 0,
+    followPoint: { clientX: 200, clientY: 300, near: false },
+    pointer: { clientX: 0, clientY: 0 },
+    capture: false,
+    pointerDown: null,
+    dragging: false,
+    dragCamera: null,
+    motionGroups: { idle: [], tap: [] },
+    hitMask: null,
+    hitMaskPending: false,
+    particles: [],
+    bubble: null,
+    lastFxFrame: 0,
   }
-  window.addEventListener('resize', () => {
-    if (!resizeCanvas()) return
-    if (model && model.loaded) {
-      if (typeof model.centerModel === 'function') {
-        model.centerModel()
-      }
-      applyVerticalOffset(model)
+
+  let toastTimer = null
+
+  function showStatus(message, type = 'info', duration = 0) {
+    statusToast.textContent = message
+    statusToast.classList.toggle('is-error', type === 'error')
+    statusToast.classList.add('is-visible')
+    if (toastTimer) clearTimeout(toastTimer)
+    if (duration > 0) {
+      toastTimer = setTimeout(() => statusToast.classList.remove('is-visible'), duration)
     }
-  })
-  resizeCanvas()
+  }
 
-  // ── Fix: Node.js path module produces backslashes on Windows ──
-  try {
-    const p = require('path')
-    const _join = p.join
-    const _dirname = p.dirname
-    const _basename = p.basename
-    const _extname = p.extname
-    const fwd = (s) => (typeof s === 'string' ? s.replace(/\\/g, '/') : s)
-    p.join = function (...args) { return fwd(_join.apply(p, args)) }
-    p.dirname = function (arg) { return fwd(_dirname.call(p, arg)) }
-    p.basename = function (arg, ext) { return fwd(_basename.call(p, arg, ext)) }
-    p.extname = function (arg) { return fwd(_extname.call(p, arg)) }
-  } catch (e) { console.warn('path fix failed:', e.message) }
+  function hideStatus(delay = 0) {
+    if (toastTimer) clearTimeout(toastTimer)
+    toastTimer = setTimeout(() => statusToast.classList.remove('is-visible'), delay)
+  }
 
-  // ── Model (created on demand) ───────────────────────
-  let model = null
+  function reducedMotionEnabled() {
+    if (!state.preferences) return false
+    if (state.preferences.reducedMotion === 'on') return true
+    if (state.preferences.reducedMotion === 'off') return false
+    return window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  }
 
-  // Nudge model up slightly after centering for better visual positioning
-  const VERTICAL_OFFSET = 1.0  // 1.0 = no offset; centerModel() handles positioning
-  function applyVerticalOffset(m) { m.y = m.y * VERTICAL_OFFSET }
+  function resizeEffectsCanvas() {
+    const dpr = Math.min(window.devicePixelRatio || 1, 1.5)
+    const width = document.documentElement.clientWidth
+    const height = document.documentElement.clientHeight
+    effectsCanvas.width = Math.max(1, Math.round(width * dpr))
+    effectsCanvas.height = Math.max(1, Math.round(height * dpr))
+    effectsCanvas.style.width = `${width}px`
+    effectsCanvas.style.height = `${height}px`
+    effectsContext.setTransform(dpr, 0, 0, dpr, 0, 0)
+    state.hitMaskPending = true
+  }
 
-  function createModelInstance() {
-    const m = new Live2DCubismModel(canvas, {
+  function createLiveCanvas() {
+    const canvas = document.createElement('canvas')
+    canvas.id = 'live2d-canvas'
+    canvas.width = Math.max(1, document.documentElement.clientWidth)
+    canvas.height = Math.max(1, document.documentElement.clientHeight)
+    canvas.style.width = '100%'
+    canvas.style.height = '100%'
+    stage.appendChild(canvas)
+    return canvas
+  }
+
+  function createFrozenFrame() {
+    if (!state.liveCanvas) return null
+    try {
+      const frozen = document.createElement('canvas')
+      frozen.className = 'model-snapshot'
+      frozen.width = state.liveCanvas.width
+      frozen.height = state.liveCanvas.height
+      frozen.getContext('2d').drawImage(state.liveCanvas, 0, 0)
+      stage.appendChild(frozen)
+      return frozen
+    } catch (error) {
+      return null
+    }
+  }
+
+  function releaseModel(instance, canvas) {
+    if (instance) {
+      try {
+        instance.touchController && instance.touchController.cancelInteractions()
+        instance.cameraController && instance.cameraController.removeListeners()
+      } catch (error) {
+        console.warn('Interaction cleanup failed:', error.message)
+      }
+      if (instance.loaded) {
+        try { instance.destroy() } catch (error) { console.warn('Model cleanup failed:', error.message) }
+      } else {
+        try { instance.webGLRenderer.deleteShader() } catch (error) { console.warn('Shader cleanup failed:', error.message) }
+      }
+      try {
+        if (instance.audioContext && instance.audioContext.state !== 'closed') instance.audioContext.close()
+      } catch (error) {
+        console.warn('Audio cleanup failed:', error.message)
+      }
+    }
+    if (canvas) {
+      try {
+        const context = canvas.getContext('webgl2')
+        const contextLoss = context && context.getExtension('WEBGL_lose_context')
+        if (contextLoss) contextLoss.loseContext()
+      } catch (error) {
+        console.warn('WebGL cleanup failed:', error.message)
+      }
+    }
+    if (canvas && canvas.isConnected) canvas.remove()
+  }
+
+  function createModelInstance(canvas) {
+    const qualityMode = state.preferences ? state.preferences.qualityMode : 'auto'
+    const maxTextureSize = qualityMode === 'high' ? 4096 : qualityMode === 'eco' ? 1024 : 2048
+    const model = new Live2DCubismModel(canvas, {
       cubismCorePath: window.petAPI.cubismCorePath,
-      autoAnimate: true,
-      autoInteraction: true,
-      tapInteraction: true,
-      randomMotion: true,
+      autoAnimate: false,
+      autoInteraction: false,
+      tapInteraction: false,
+      randomMotion: false,
+      zoomEnabled: false,
+      enablePan: false,
+      doubleClickReset: false,
       enablePhysics: true,
       enableEyeblink: true,
       enableBreath: true,
-      enableMovement: false,
+      enableMovement: true,
+      enableMotion: false,
       enablePose: true,
       premultipliedAlpha: true,
+      maxTextureSize,
       scale: 1,
     })
 
-    // Fix: Cubism Core with nodeIntegration=true
-    const _origLoadCC = m.loadCubismCore.bind(m)
-    m.loadCubismCore = async function () {
-      await _origLoadCC()
+    const originalLoadBuffers = model.loadBuffers.bind(model)
+    model.loadBuffers = async link => {
+      const buffers = await originalLoadBuffers(link)
+      buffers.motionGroups = buffers.motionGroups.filter(group => typeof group.group === 'string' && group.group.trim().length > 0)
+      model.motionIds = model.motionIds.filter(id => !id.startsWith('_'))
+      return buffers
+    }
+
+    const originalLoadCubismCore = model.loadCubismCore.bind(model)
+    model.loadCubismCore = async function () {
+      await originalLoadCubismCore()
       try {
         const { fileURLToPath } = require('url')
-        const corePath = fileURLToPath(window.petAPI.cubismCorePath)
-        const api = require(corePath)
-        if (api && api._malloc) {
-          window.Live2DCubismCore = api
-        }
-      } catch (e) { console.warn('Cubism Core fix failed:', e.message) }
+        const coreModule = require(fileURLToPath(window.petAPI.cubismCorePath))
+        if (coreModule && coreModule._malloc) window.Live2DCubismCore = coreModule
+      } catch (error) {
+        console.warn('Cubism Core bridge failed:', error.message)
+      }
     }
 
-    return m
+    return model
   }
 
-  // ── State ──────────────────────────────────────────
-  let clickStart = null          // { sx, sy, cx, cy, time }
-  let lastClickTime = 0
-  let clickCount = 0
-  let cursorNearPet = false
-  let isDragging = false
-  let mouseDown = false
-  let mouseCaptureEnabled = false
-  let clickThroughEnabled = false
+  function classifyMotionGroups(model) {
+    const groups = ((model.buffers && model.buffers.motionGroups) || [])
+      .filter(item => item.motionData && item.motionData.motionBuffers && item.motionData.motionBuffers.length)
+      .map(item => item.group)
 
-  // Idle tracking
-  let lastInteractionTime = Date.now()
-  let idleStage = 0
-
-  // Cursor follow
-  let cursorOffset = { x: 0, y: 0 }
-  let followTarget = { x: 0, y: 0 }
-  let currentLean = { x: 0, y: 0 }
-
-  // ── Constants ──────────────────────────────────────
-  const COLORS = ['#FF6B6B','#FFE66D','#4ECDC4','#FF8E72','#A78BFA','#F472B6','#67E8F9','#34D399','#FB923C']
-  const BUBBLES_GREET = ['你好呀~','嗨！','今天天气不错呢','来玩吧！','(◕‿◕)']
-  const BUBBLES_HAPPY = ['嘻嘻','好开心！','耶~','好舒服~','❤','✨','再点一下！']
-  const BUBBLES_ANNOYED = ['哼！','别弄了啦~','呜...','好痒！','呀！！','不要嘛~']
-  const BUBBLES_IDLE = ['好无聊哦...','有人吗？','发发呆...','嗯？','呼...']
-  const BUBBLES_SLEEPY = ['有点困了...','zzZ...','眼皮好重...','打个盹...']
-  const EMOTES_LOVE = ['❤️','💕','💝','🥰','😍']
-  const EMOTES_HAPPY = ['✨','🌟','💫','🎀','🎵','🌈']
-  const EMOTES_SHOCK = ['💦','😱','💢','😤','💥']
-  const STARS = ['✦','✧','⋆','·','✶']
-
-  // ── FX helpers ─────────────────────────────────────
-  function rand(arr) { return arr[Math.floor(Math.random() * arr.length)] }
-
-  function fxBubble(x, y, text) {
-    const el = document.createElement('div')
-    el.className = 'bubble'
-    el.textContent = text
-    el.style.left = x + 'px'
-    el.style.top = y + 'px'
-    fxLayer.appendChild(el)
-    setTimeout(() => el.remove(), 2900)
-  }
-
-  function fxEmote(x, y, emoji) {
-    const el = document.createElement('div')
-    el.className = 'emote'
-    el.textContent = emoji || rand(EMOTES_HAPPY)
-    el.style.left = (x - 22) + 'px'
-    el.style.top = (y - 22) + 'px'
-    fxLayer.appendChild(el)
-    setTimeout(() => el.remove(), 1700)
-  }
-
-  function fxParticles(x, y, count, sizeRange) {
-    const [minS, maxS] = sizeRange || [5, 10]
-    for (let i = 0; i < (count || 8); i++) {
-      const p = document.createElement('div')
-      p.className = 'particle'
-      p.style.left = x + 'px'
-      p.style.top = y + 'px'
-      p.style.width = (minS + Math.random() * (maxS - minS)) + 'px'
-      p.style.height = p.style.width
-      p.style.background = rand(COLORS)
-      const angle = Math.random() * Math.PI * 2
-      const dist = 20 + Math.random() * 50
-      p.style.setProperty('--tx', Math.cos(angle) * dist + 'px')
-      p.style.setProperty('--ty', Math.sin(angle) * dist + 'px')
-      fxLayer.appendChild(p)
-      setTimeout(() => p.remove(), 800)
+    return {
+      idle: groups.filter(name => /idle|wait|stand|tick/i.test(name)),
+      tap: groups.filter(name => /tap|touch|body|head|happy|smile/i.test(name)),
     }
   }
 
-  function fxStars(x, y, count) {
-    for (let i = 0; i < (count || 5); i++) {
-      const s = document.createElement('div')
-      s.className = 'star'
-      s.textContent = rand(STARS)
-      s.style.left = x + 'px'
-      s.style.top = y + 'px'
-      s.style.color = rand(COLORS)
-      const angle = Math.random() * Math.PI * 2
-      const dist = 25 + Math.random() * 45
-      s.style.setProperty('--tx', Math.cos(angle) * dist + 'px')
-      s.style.setProperty('--ty', Math.sin(angle) * dist + 'px')
-      fxLayer.appendChild(s)
-      setTimeout(() => s.remove(), 1100)
-    }
+  function randomItem(items) {
+    return items[Math.floor(Math.random() * items.length)]
   }
 
-  function fxZzz(x, y) {
-    const el = document.createElement('div')
-    el.className = 'zzz'
-    el.textContent = 'z'.repeat(2 + Math.floor(Math.random() * 3))
-    el.style.left = x + 'px'
-    el.style.top = y + 'px'
-    fxLayer.appendChild(el)
-    setTimeout(() => el.remove(), 2600)
-  }
-
-  function shakeCanvas() {
-    canvas.classList.remove('shake')
-    void canvas.offsetWidth
-    canvas.classList.add('shake')
-  }
-
-  // ── Hit testing ────────────────────────────────────
-  function screenToModel(sx, sy) {
-    const rect = canvas.getBoundingClientRect()
-    const scale = (model && model.scale) || 1
-    return { x: (sx - rect.left) / scale, y: (sy - rect.top) / scale }
-  }
-
-  function isOnPet(clientX, clientY) {
-    if (!model || !model.loaded) return false
+  function playMotion(kind, priority = motionPriority.normal) {
+    if (!state.model || !state.model.loaded) return
+    const groups = state.motionGroups[kind] || []
+    if (!groups.length) return
     try {
-      const m = screenToModel(clientX, clientY)
-      return model.hitTest('body', m.x, m.y)
-    } catch (_) { return false }
+      state.model.startRandomMotion(randomItem(groups), priority)
+      state.activeUntil = performance.now() + 2600
+    } catch (error) {
+      console.warn('Motion start failed:', error.message)
+    }
   }
 
-  function hitPart(clientX, clientY) {
-    if (!model || !model.loaded) return null
+  function reportStatus(phase, modelId, message) {
+    window.petAPI.reportModelStatus({ phase, modelId, message })
+  }
+
+  async function switchModel(modelMeta) {
+    const frozen = createFrozenFrame()
+    const previousModel = state.model
+    const previousMeta = state.modelMeta
+    const previousCanvas = state.liveCanvas
+    state.model = null
+    state.liveCanvas = null
+    state.hitMask = null
+    reportStatus('loading', modelMeta.id, `正在加载 ${modelMeta.name}`)
+
+    releaseModel(previousModel, previousCanvas)
+
+    const canvas = createLiveCanvas()
+    const nextModel = createModelInstance(canvas)
     try {
-      const m = screenToModel(clientX, clientY)
-      if (model.hitTest('head', m.x, m.y)) return 'head'
-      if (model.hitTest('body', m.x, m.y)) return 'body'
-      return null
-    } catch (_) { return null }
+      await nextModel.load(modelMeta.path)
+      nextModel.touchController.cancelInteractions()
+      nextModel.cameraController.removeListeners()
+      nextModel.centerModel()
+      nextModel.scale = state.preferences.scale
+      nextModel.enableMotion = false
+      nextModel.paused = false
+
+      state.model = nextModel
+      state.modelMeta = modelMeta
+      state.liveCanvas = canvas
+      state.motionGroups = classifyMotionGroups(nextModel)
+      state.hitMaskPending = true
+      state.lastInteraction = performance.now()
+      state.activeUntil = performance.now() + 2200
+      state.idleStage = 0
+      reportStatus('ready', modelMeta.id, `${modelMeta.name} 已就绪`)
+      hideStatus(650)
+
+      document.querySelectorAll('.model-snapshot').forEach(snapshot => {
+        snapshot.classList.add('is-leaving')
+        setTimeout(() => snapshot.remove(), 200)
+      })
+    } catch (error) {
+      releaseModel(nextModel, canvas)
+      const message = error && error.message ? error.message : String(error)
+      console.error(`Model ${modelMeta.id} failed:`, error)
+      reportStatus('error', modelMeta.id, `${modelMeta.name} 加载失败`)
+      showStatus(`${modelMeta.name} 加载失败，右键打开设置`, 'error')
+      state.modelMeta = null
+      if (previousMeta && previousMeta.id !== modelMeta.id) {
+        window.petAPI.selectModel(previousMeta.id).catch(() => {})
+      } else if (frozen) {
+        setTimeout(() => frozen.remove(), 2400)
+      }
+      throw new Error(message)
+    }
   }
 
-  function petScreenPos() {
-    if (!model) return { x: 0, y: 0 }
-    const rect = canvas.getBoundingClientRect()
-    return { x: rect.left + model.x - 10, y: rect.top + model.y - 120 }
+  async function processModelQueue() {
+    if (state.loading) return
+    state.loading = true
+    while (state.pendingModelId) {
+      const modelId = state.pendingModelId
+      state.pendingModelId = null
+      state.loadingModelId = modelId
+      const modelMeta = state.snapshot.models.find(item => item.id === modelId)
+      if (!modelMeta) {
+        state.loadingModelId = null
+        continue
+      }
+      try {
+        await switchModel(modelMeta)
+      } catch (error) {
+        console.warn('Model switch stopped:', error.message)
+      }
+      state.loadingModelId = null
+    }
+    state.loading = false
+    ensureScheduler()
   }
 
-  // ── Click-through + manual drag ───────────────────
-  // Transparent areas pass mouse events to windows behind (taskbar, desktop).
-  // When the cursor is over the model or UI panel, re-enable mouse capture.
-  function shouldCaptureMouse(clientX, clientY) {
-    const panelEl = document.getElementById('control-panel')
-    const toggleEl = document.getElementById('panel-toggle')
-    if (panelEl && panelEl.classList.contains('active')) {
-      const r = panelEl.getBoundingClientRect()
-      if (clientX >= r.left && clientX <= r.right && clientY >= r.top && clientY <= r.bottom) return true
+  function requestModel(modelId) {
+    if (!modelId) return
+    if (state.loadingModelId === modelId) return
+    if (state.modelMeta && state.modelMeta.id === modelId && state.model) return
+    state.pendingModelId = modelId
+    processModelQueue()
+  }
+
+  function rebuildHitMask() {
+    state.hitMaskPending = false
+    if (!state.liveCanvas || !state.model || !state.model.loaded) return
+    try {
+      const width = 100
+      const height = 150
+      const maskCanvas = document.createElement('canvas')
+      maskCanvas.width = width
+      maskCanvas.height = height
+      const context = maskCanvas.getContext('2d', { willReadFrequently: true })
+      context.drawImage(state.liveCanvas, 0, 0, width, height)
+      const data = context.getImageData(0, 0, width, height).data
+      let opaquePixels = 0
+      for (let index = 3; index < data.length; index += 4) {
+        if (data[index] > 16) opaquePixels++
+      }
+      state.hitMask = opaquePixels >= 12 ? { width, height, data } : null
+    } catch (error) {
+      state.hitMask = null
     }
-    if (toggleEl) {
-      const r = toggleEl.getBoundingClientRect()
-      if (clientX >= r.left && clientX <= r.right && clientY >= r.top && clientY <= r.bottom) return true
+  }
+
+  function alphaHit(clientX, clientY) {
+    const mask = state.hitMask
+    if (!mask) return false
+    const x = Math.round((clientX / window.innerWidth) * (mask.width - 1))
+    const y = Math.round((clientY / window.innerHeight) * (mask.height - 1))
+    if (x < 0 || y < 0 || x >= mask.width || y >= mask.height) return false
+
+    for (let offsetY = -2; offsetY <= 2; offsetY++) {
+      for (let offsetX = -2; offsetX <= 2; offsetX++) {
+        const sampleX = x + offsetX
+        const sampleY = y + offsetY
+        if (sampleX < 0 || sampleY < 0 || sampleX >= mask.width || sampleY >= mask.height) continue
+        if (mask.data[(sampleY * mask.width + sampleX) * 4 + 3] > 16) return true
+      }
     }
-    if (isOnPet(clientX, clientY)) return true
     return false
   }
 
+  function hitAreasAt(clientX, clientY) {
+    if (!state.model || !state.model.loaded || !state.model.settings) return []
+    try {
+      const x = state.model.transformX(clientX)
+      const y = state.model.transformY(clientY)
+      const matches = []
+      const count = state.model.settings.getHitAreasCount()
+      for (let index = 0; index < count; index++) {
+        const name = state.model.settings.getHitAreaName(index)
+        if (state.model.hitTest(name, x, y)) matches.push(String(name).toLowerCase())
+      }
+      return matches
+    } catch (error) {
+      return []
+    }
+  }
+
+  function isOnPet(clientX, clientY) {
+    if (!state.model || !state.model.loaded) return false
+    if (alphaHit(clientX, clientY)) return true
+    if (hitAreasAt(clientX, clientY).length) return true
+    if (state.hitMask) return false
+    const dx = (clientX - window.innerWidth * 0.5) / (window.innerWidth * 0.34)
+    const dy = (clientY - window.innerHeight * 0.56) / (window.innerHeight * 0.43)
+    return dx * dx + dy * dy <= 1
+  }
+
   function updateMouseCapture(clientX, clientY) {
-    if (!clickThroughEnabled || mouseDown) return
-    const capture = shouldCaptureMouse(clientX, clientY)
-    if (capture !== mouseCaptureEnabled) {
-      mouseCaptureEnabled = capture
-      window.petAPI.setIgnoreMouseEvents(!capture)
-    }
-  }
-
-  // Track mousemove globally: handles both click-through detection and dragging.
-  // mousemove events are forwarded even when setIgnoreMouseEvents is true.
-  document.addEventListener('mousemove', (e) => {
-    if (mouseDown && clickStart) {
-      const dx = e.screenX - clickStart.sx
-      const dy = e.screenY - clickStart.sy
-      if (!isDragging) {
-        if (Math.abs(dx) > 5 || Math.abs(dy) > 5) {
-          isDragging = true
-          window.petAPI.dragStart()
-        }
-      }
-      if (isDragging) {
-        window.petAPI.dragTo(dx, dy)
+    state.pointer = { clientX, clientY }
+    if (!state.preferences || state.preferences.interactionMode === 'locked') {
+      if (state.capture) {
+        state.capture = false
+        window.petAPI.setMouseCapture(false)
       }
       return
     }
-    updateMouseCapture(e.clientX, e.clientY)
-  })
-
-  // Safety: reset drag state if window loses focus mid-drag
-  window.addEventListener('blur', () => {
-    if (isDragging) {
-      window.petAPI.dragEnd()
-      isDragging = false
-    }
-    mouseDown = false
-    clickStart = null
-    if (clickThroughEnabled) {
-      mouseCaptureEnabled = false
-      window.petAPI.setIgnoreMouseEvents(true)
-    }
-  })
-
-  // ── Cursor follow (head/eye tracking) ──────────────
-  function updateCursorFollow() {
-    if (!model || !model.loaded) return
-    const speed = 0.08
-    followTarget.x += (cursorOffset.x - followTarget.x) * speed
-    followTarget.y += (cursorOffset.y - followTarget.y) * speed
-
-    const maxDist = 600
-    const nx = Math.max(-1, Math.min(1, followTarget.x / maxDist))
-    const ny = Math.max(-1, Math.min(1, followTarget.y / maxDist))
-
-    currentLean.x += (nx - currentLean.x) * 0.06
-    currentLean.y += (ny - currentLean.y) * 0.06
-
-    // Skip expensive param writes when cursor is still and model has settled
-    const settled = Math.abs(cursorOffset.x - followTarget.x) < 0.5 &&
-                    Math.abs(cursorOffset.y - followTarget.y) < 0.5 &&
-                    Math.abs(nx - currentLean.x) < 0.001 &&
-                    Math.abs(ny - currentLean.y) < 0.001
-    if (settled) return
-
-    try {
-      const im = model.internalModel
-      if (im) {
-        const setParam = (id, val, weight) => {
-          try { im.setParameterValueById(id, val, weight) } catch(_) {}
-        }
-        setParam('ParamAngleX', currentLean.x * 30, 0.5)
-        setParam('ParamAngleY', currentLean.y * 10, 0.3)
-        setParam('ParamEyeBallX', currentLean.x, 0.6)
-        setParam('ParamEyeBallY', currentLean.y * 0.5, 0.4)
-        setParam('ParamBodyAngleX', currentLean.x * 10, 0.3)
-      }
-    } catch(_) {}
-  }
-
-  // ── Idle system ────────────────────────────────────
-  function resetIdle() {
-    lastInteractionTime = Date.now()
-    idleStage = 0
-  }
-
-  function checkIdleStage() {
-    const elapsed = (Date.now() - lastInteractionTime) / 1000
-    if (elapsed > 120 && idleStage < 3) { idleStage = 3; idleStageEnter(3) }
-    else if (elapsed > 60 && idleStage < 2) { idleStage = 2; idleStageEnter(2) }
-    else if (elapsed > 30 && idleStage < 1) { idleStage = 1; idleStageEnter(1) }
-  }
-
-  function idleStageEnter(stage) {
-    if (!model || !model.loaded) return
-    const pet = petScreenPos()
-    switch (stage) {
-      case 1: fxBubble(pet.x - 20, pet.y - 30, rand(BUBBLES_IDLE)); break
-      case 2:
-        fxBubble(pet.x - 10, pet.y - 25, rand(BUBBLES_SLEEPY))
-        fxZzz(pet.x + 40, pet.y - 50)
-        break
-      case 3:
-        fxZzz(pet.x + 30, pet.y - 40)
-        setTimeout(() => fxZzz(pet.x + 50, pet.y - 55), 2000)
-        break
+    if (state.pointerDown) return
+    const capture = isOnPet(clientX, clientY)
+    if (capture !== state.capture) {
+      state.capture = capture
+      window.petAPI.setMouseCapture(capture)
     }
   }
 
-  setInterval(() => { if (document.hidden) return; if (model && model.loaded) checkIdleStage() }, 5000)
+  function markInteraction(duration = 2200) {
+    const now = performance.now()
+    state.lastInteraction = now
+    state.activeUntil = now + duration
+    state.idleStage = 0
+    ensureScheduler()
+  }
 
-  // ── Click handling (via mousedown/mouseup timing) ──
-  canvas.addEventListener('mousedown', (e) => {
-    if (e.button !== 0) return
-    clickStart = {
-      sx: e.screenX, sy: e.screenY,
-      cx: e.clientX, cy: e.clientY,
-      time: Date.now(),
+  function addClickEffect(x, y) {
+    if (!state.preferences || state.preferences.effects !== 'subtle' || reducedMotionEnabled()) return
+    const available = Math.max(0, 10 - state.particles.length)
+    const count = Math.min(6, available)
+    for (let index = 0; index < count; index++) {
+      const angle = (Math.PI * 2 * index) / count + Math.random() * 0.28
+      const speed = 24 + Math.random() * 24
+      state.particles.push({
+        x,
+        y,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed - 8,
+        radius: 2.5 + Math.random() * 2.5,
+        color: randomItem(particleColors),
+        life: 0,
+        duration: 0.55 + Math.random() * 0.2,
+      })
     }
-    mouseDown = true
-    isDragging = false
-  })
+  }
 
-  document.addEventListener('mouseup', (e) => {
-    if (!clickStart) return
+  function showBubble(text, duration = 2400) {
+    if (!state.preferences || state.preferences.effects !== 'subtle' || reducedMotionEnabled()) return
+    state.bubble = { text, startedAt: performance.now(), duration }
+  }
 
-    // If this was a drag, finalize window move and skip click logic
-    if (isDragging) {
-      window.petAPI.dragEnd()
-      isDragging = false
-      mouseDown = false
-      clickStart = null
-      updateMouseCapture(e.clientX, e.clientY)
+  function roundedRect(context, x, y, width, height, radius) {
+    context.beginPath()
+    context.roundRect(x, y, width, height, radius)
+    context.fill()
+    context.stroke()
+  }
+
+  function drawEffects(timestamp) {
+    const width = window.innerWidth
+    const height = window.innerHeight
+    const delta = state.lastFxFrame ? Math.min(0.05, (timestamp - state.lastFxFrame) / 1000) : 0
+    state.lastFxFrame = timestamp
+    effectsContext.clearRect(0, 0, width, height)
+
+    if (!state.preferences || state.preferences.effects === 'off' || reducedMotionEnabled()) {
+      state.particles.length = 0
+      state.bubble = null
       return
     }
-    mouseDown = false
 
-    const ds = Math.abs(e.screenX - clickStart.sx) + Math.abs(e.screenY - clickStart.sy)
-    const dt = Date.now() - clickStart.time
-
-    if (ds < 5 && dt < 400) {
-      // ── It was a click (not a drag) ────────────────
-      if (!isOnPet(clickStart.cx, clickStart.cy)) {
-        clickStart = null
-        return
-      }
-      resetIdle()
-
-      const now = Date.now()
-      clickCount = (now - lastClickTime < 400) ? clickCount + 1 : 1
-      lastClickTime = now
-
-      const rect = canvas.getBoundingClientRect()
-      const lx = clickStart.cx - rect.left
-      const ly = clickStart.cy - rect.top
-      const mx = (lx - model.x) / model.scale
-      const my = (ly - model.y) / model.scale
-      const part = hitPart(clickStart.cx, clickStart.cy)
-      const pet = petScreenPos()
-
-      if (clickCount >= 3) {
-        model.startRandomMotion(null, 3)
-        fxEmote(pet.x + 20, pet.y, rand(EMOTES_LOVE))
-        fxStars(pet.x + 35, pet.y + 10, 14)
-        fxParticles(pet.x + 30, pet.y + 30, 20)
-        fxBubble(pet.x - 35, pet.y - 50, '啊啊啊！！')
-        clickCount = 0
-        shakeCanvas()
-      } else if (clickCount >= 2) {
-        model.startRandomMotion(null, 2)
-        fxEmote(pet.x + 10, pet.y, rand(EMOTES_HAPPY))
-        fxParticles(pet.x + 40, pet.y + 20, 14)
-        fxBubble(pet.x - 30, pet.y - 45, part === 'head' ? '呀！！' : '干嘛呀~')
-        clickCount = 0
-      } else {
-        model.touchController.tap(mx, my)
-        if (part === 'head') {
-          fxEmote(pet.x + 20, pet.y, rand(EMOTES_LOVE))
-          fxParticles(pet.x + 40, pet.y - 10, 8, [3, 7])
-          if (Math.random() < 0.4) fxBubble(pet.x - 20, pet.y - 50, rand(BUBBLES_HAPPY))
-        } else {
-          fxParticles(pet.x + 30, pet.y + 30, 6)
-          if (Math.random() < 0.35) fxBubble(pet.x - 20, pet.y - 50, Math.random() < 0.5 ? rand(BUBBLES_HAPPY) : rand(BUBBLES_ANNOYED))
-        }
-      }
-    }
-
-    clickStart = null
-  })
-
-  // ── Right click ────────────────────────────────────
-  canvas.addEventListener('contextmenu', (e) => {
-    e.preventDefault()
-    if (isOnPet(e.clientX, e.clientY)) {
-      resetIdle()
-      const pet = petScreenPos()
-      const part = hitPart(e.clientX, e.clientY)
-      fxEmote(pet.x + 10, pet.y, '💢')
-      fxBubble(pet.x - 20, pet.y - 45, part === 'head' ? '别点这里！' : '哼！不要！')
-      shakeCanvas()
-      try { model.startRandomMotion(null, 1) } catch(_) {}
-    }
-  })
-
-  // ── Keyboard shortcuts ─────────────────────────────
-  document.addEventListener('keydown', (e) => {
-    if (!model || !model.loaded) return
-    const pet = petScreenPos()
-    resetIdle()
-    switch (e.key.toLowerCase()) {
-      case 'h':
-        fxEmote(pet.x + 10, pet.y, rand(EMOTES_LOVE))
-        fxParticles(pet.x + 30, pet.y + 30, 12)
-        try { model.startRandomMotion(null, 2) } catch(_) {}
-        break
-      case 's':
-        fxEmote(pet.x + 10, pet.y, rand(EMOTES_SHOCK))
-        fxBubble(pet.x - 20, pet.y - 40, '哇！')
-        shakeCanvas()
-        break
-      case 'b':
-        fxBubble(pet.x - 20, pet.y - 40, rand(BUBBLES_HAPPY))
-        break
-      case 'f':
-        fxEmote(pet.x + 10, pet.y, rand(EMOTES_LOVE))
-        fxStars(pet.x + 30, pet.y + 10, 10)
-        fxParticles(pet.x + 25, pet.y + 35, 16)
-        fxBubble(pet.x - 30, pet.y - 50, '好开心！！')
-        try { model.startRandomMotion(null, 3) } catch(_) {}
-        break
-    }
-  })
-
-  // ── Control Panel ──────────────────────────
-  const panel = document.getElementById('control-panel')
-  const panelToggle = document.getElementById('panel-toggle')
-  const panelClose = document.getElementById('panel-close')
-  const scaleSlider = document.getElementById('scale-slider')
-  const scaleDisplay = document.getElementById('scale-display')
-  const scaleMinus = document.getElementById('scale-minus')
-  const scalePlus = document.getElementById('scale-plus')
-  const modelSelect = document.getElementById('model-select')
-  const modelStatus = document.getElementById('model-status')
-  const btnReset = document.getElementById('btn-reset')
-  const btnExit = document.getElementById('btn-exit')
-  const clickThroughToggle = document.getElementById('click-through-toggle')
-  clickThroughToggle.addEventListener('change', () => {
-    clickThroughEnabled = clickThroughToggle.checked
-    window.petAPI.setClickThrough(clickThroughEnabled)
-    mouseCaptureEnabled = !clickThroughEnabled
-  })
-  let scaleSaveTimer = null
-
-  function setModelStatus(text, color) {
-    modelStatus.textContent = text
-    modelStatus.style.color = color || '#777'
-  }
-
-  function togglePanel() {
-    const isActive = panel.classList.toggle('active')
-    // Don't hide the toggle button - always keep it visible
-    if (isActive) {
-      panelToggle.style.opacity = '0.3'
-      panelToggle.title = '关闭控制面板 (Ctrl+M)'
-      console.log('[Panel] Opened')
-    } else {
-      panelToggle.style.opacity = '1'
-      panelToggle.title = '打开控制面板 (Ctrl+M)'
-      console.log('[Panel] Closed')
-    }
-  }
-
-  function updateScaleDisplay() {
-    const val = parseFloat(scaleSlider.value)
-    if (model) model.scale = val
-    scaleDisplay.textContent = Math.round(val * 100) + '%'
-    if (scaleSaveTimer) clearTimeout(scaleSaveTimer)
-    scaleSaveTimer = setTimeout(() => {
-      scaleSaveTimer = null
-      window.petAPI.setScale(val).catch((error) => console.warn('Failed to save scale:', error))
-    }, 200)
-  }
-
-  panelToggle.addEventListener('click', () => {
-    console.log('[Debug] Panel toggle clicked')
-    togglePanel()
-  })
-  panelClose.addEventListener('click', togglePanel)
-  scaleSlider.addEventListener('input', updateScaleDisplay)
-
-  scaleMinus.addEventListener('click', () => {
-    scaleSlider.value = Math.max(0.5, parseFloat(scaleSlider.value) - 0.1).toFixed(1)
-    updateScaleDisplay()
-  })
-
-  scalePlus.addEventListener('click', () => {
-    scaleSlider.value = Math.min(2, parseFloat(scaleSlider.value) + 0.1).toFixed(1)
-    updateScaleDisplay()
-  })
-
-  modelSelect.addEventListener('change', async (e) => {
-    if (e.target.value && typeof models !== 'undefined' && models.length > 0) {
-      const selected = models.find(m => m.path === e.target.value)
-      if (selected) {
-        window.petAPI.selectModel(selected.path)
-      }
-    }
-  })
-
-  btnReset.addEventListener('click', async () => {
-    if (model && model.loaded) {
-      if (typeof model.centerModel === 'function') {
-        model.centerModel()
-        applyVerticalOffset(model)
-      }
-      console.log('Model position reset')
-    }
-  })
-
-  btnExit.addEventListener('click', () => {
-    window.petAPI.quitApp()
-  })
-
-  document.addEventListener('keydown', (e) => {
-    if (e.ctrlKey && e.key.toLowerCase() === 'm') {
-      e.preventDefault()
-      togglePanel()
-    }
-  })
-
-  // ── Cursor follow: main process provides position ──
-  window.petAPI.onCursorMove((pos) => {
-    cursorOffset = pos
-    // Hover detection via cursor position (since -webkit-app-region:drag blocks mousemove)
-    const dist = Math.sqrt(pos.x ** 2 + pos.y ** 2)
-    const wasNear = cursorNearPet
-    cursorNearPet = dist < 180 && model && model.loaded
-    if (cursorNearPet && !wasNear) {
-      canvas.style.cursor = 'pointer'
-    } else if (!cursorNearPet && wasNear) {
-      canvas.style.cursor = 'grab'
-    }
-  })
-
-  // ── Cursor follow animation loop ───────────────────
-  let rafActive = true
-  function followLoop() {
-    if (rafActive) updateCursorFollow()
-    requestAnimationFrame(followLoop)
-  }
-  requestAnimationFrame(followLoop)
-
-  // Pause heavy work when the window is hidden (tray hide) to save CPU
-  document.addEventListener('visibilitychange', () => {
-    rafActive = !document.hidden
-  })
-
-  // ── Idle ambient bubbles ───────────────────────────
-  function scheduleIdleAmbient() {
-    const delay = 18000 + Math.random() * 35000
-    setTimeout(() => {
-      if (!model || !model.loaded) { scheduleIdleAmbient(); return }
-      const pet = petScreenPos()
-      const elapsed = (Date.now() - lastInteractionTime) / 1000
-      if (elapsed > 90) {
-        fxZzz(pet.x + 30, pet.y - 40)
-        if (Math.random() < 0.5) fxBubble(pet.x - 15, pet.y - 35, rand(BUBBLES_SLEEPY))
-      } else if (elapsed > 40) {
-        fxBubble(pet.x - 15, pet.y - 35, rand(BUBBLES_IDLE))
-      } else {
-        if (Math.random() < 0.4) fxBubble(pet.x - 20, pet.y - 40, rand(BUBBLES_GREET))
-      }
-      scheduleIdleAmbient()
-    }, delay)
-  }
-  setTimeout(scheduleIdleAmbient, 15000)
-
-  // ── Hover idle detection (via cursor tracking) ─────
-  let hoverIdleCount = 0
-  setInterval(() => {
-    if (document.hidden) return
-    if (cursorNearPet && model && model.loaded) {
-      hoverIdleCount++
-      if (hoverIdleCount > 10) {
-        const pet = petScreenPos()
-        if (Math.random() < 0.35) fxEmote(pet.x + 20, pet.y - 5, rand(EMOTES_LOVE))
-        hoverIdleCount = 0
-      }
-    } else {
-      hoverIdleCount = 0
-    }
-  }, 250)
-
-  // ── Diagnostic helper ─────────────────────────────
-  async function diagnoseModelError(modelPath, err) {
-    console.error('Model error:', err && (err.stack || err.message || err))
-    try {
-      const fs = require('fs')
-      const p = require('path')
-      const { fileURLToPath } = require('url')
-      let fp = modelPath
-      if (typeof fp === 'string' && fp.startsWith('file://')) fp = fileURLToPath(fp)
-
-      try {
-        const stat = fs.statSync(fp)
-        if (stat.isFile()) {
-          if (fp.endsWith('.model3.json')) {
-            const dir = p.dirname(fp)
-            console.error('Model folder:', dir)
-            try { console.error('Files:', fs.readdirSync(dir)) } catch(_) {}
-            try {
-              const json = JSON.parse(fs.readFileSync(fp, 'utf8'))
-              const moc = json.FileReferences && json.FileReferences.Moc
-              console.error('model3.json FileReferences.Moc ->', moc)
-            } catch (e) { console.error('Failed to parse model3.json:', e && e.message) }
-          } else if (fp.endsWith('.zip')) {
-            console.error('Model is a zip file; ensure it contains .model3.json and .moc3 files')
-          } else {
-            console.error('Model path is a file:', fp)
-          }
-        } else if (stat.isDirectory()) {
-          console.error('Model path is a directory; listing files:')
-          try { console.error('Files:', fs.readdirSync(fp)) } catch(_) {}
-        } else {
-          console.error('Model path exists but is neither file nor directory:', fp)
-        }
-      } catch (e) {
-        console.error('Model file/directory not found at path:', fp)
-      }
-    } catch (e) { console.error('Diagnosis failed:', e && e.message) }
-  }
-
-  // ── Load model ─────────────────────────────────────
-  let models = []
-  let modelLoadVersion = 0
-
-  async function releaseModel(instance) {
-    if (!instance) return
-    try {
-      if (typeof instance.destroy === 'function') {
-        instance.destroy()
-      } else if (typeof instance.release === 'function') {
-        await instance.release()
-      } else if (typeof instance.unload === 'function') {
-        await instance.unload()
-      } else if (instance.internalModel && typeof instance.internalModel._release === 'function') {
-        instance.internalModel._release()
-      }
-    } catch (error) {
-      console.warn('Model release failed:', error && error.message)
-    }
-  }
-
-  // Load the replacement first, then release the old model. A broken model
-  // package therefore leaves the currently visible pet usable.
-  async function loadModel(modelPath, modelName) {
-    const version = ++modelLoadVersion
-    const nextModel = createModelInstance()
-    setModelStatus(`正在加载 ${modelName || '模型'}...`, '#667eea')
-    try {
-      await nextModel.load(modelPath)
-      if (version !== modelLoadVersion) {
-        await releaseModel(nextModel)
-        return false
-      }
-      if (typeof nextModel.centerModel === 'function') nextModel.centerModel()
-      applyVerticalOffset(nextModel)
-      nextModel.scale = parseFloat(scaleSlider.value) || 1
-
-      const previousModel = model
-      model = nextModel
-      modelSelect.value = modelPath
-      updateScaleDisplay()
-      await releaseModel(previousModel)
-      setModelStatus(`${modelName || '模型'} 已就绪`, '#2f9e44')
-      console.log('Model loaded:', modelName || modelPath, 'at position:', model.x, model.y)
+    state.particles = state.particles.filter(particle => {
+      particle.life += delta
+      if (particle.life >= particle.duration) return false
+      particle.x += particle.vx * delta
+      particle.y += particle.vy * delta
+      particle.vy += 36 * delta
+      const progress = particle.life / particle.duration
+      effectsContext.globalAlpha = 1 - progress
+      effectsContext.fillStyle = particle.color
+      effectsContext.beginPath()
+      effectsContext.arc(particle.x, particle.y, particle.radius * (1 - progress * 0.35), 0, Math.PI * 2)
+      effectsContext.fill()
       return true
-    } catch (error) {
-      await releaseModel(nextModel)
-      setModelStatus(`${modelName || '模型'} 加载失败，请查看日志`, '#d9480f')
-      throw error
+    })
+    effectsContext.globalAlpha = 1
+
+    if (state.bubble) {
+      const elapsed = timestamp - state.bubble.startedAt
+      if (elapsed >= state.bubble.duration) {
+        state.bubble = null
+      } else {
+        const progress = elapsed / state.bubble.duration
+        const opacity = Math.min(1, elapsed / 180, (state.bubble.duration - elapsed) / 280)
+        effectsContext.save()
+        effectsContext.globalAlpha = opacity * 0.94
+        effectsContext.font = '12px "Segoe UI Variable", "Microsoft YaHei UI", sans-serif'
+        const textWidth = effectsContext.measureText(state.bubble.text).width
+        const boxWidth = textWidth + 24
+        const x = Math.min(width - boxWidth - 14, Math.max(14, width * 0.54 - boxWidth / 2))
+        const y = Math.max(40, height * 0.27 - progress * 10)
+        effectsContext.fillStyle = '#fffdf9'
+        effectsContext.strokeStyle = 'rgba(113, 100, 216, 0.2)'
+        effectsContext.lineWidth = 1
+        roundedRect(effectsContext, x, y, boxWidth, 34, 12)
+        effectsContext.globalAlpha = opacity
+        effectsContext.fillStyle = '#4d4854'
+        effectsContext.textAlign = 'center'
+        effectsContext.textBaseline = 'middle'
+        effectsContext.fillText(state.bubble.text, x + boxWidth / 2, y + 17)
+        effectsContext.restore()
+      }
     }
   }
 
-  let savedModel = null
-  let savedSettings = { scale: 1 }
-  try {
-    [savedModel, savedSettings] = await Promise.all([
-      window.petAPI.getCurrentModel(),
-      window.petAPI.getSettings(),
-    ])
-    const savedScale = Number(savedSettings && savedSettings.scale)
-    if (Number.isFinite(savedScale)) scaleSlider.value = Math.min(2, Math.max(0.5, savedScale))
-    updateScaleDisplay()
-    clickThroughEnabled = !!(savedSettings && savedSettings.clickThrough)
-    if (clickThroughToggle) clickThroughToggle.checked = clickThroughEnabled
-    mouseCaptureEnabled = !clickThroughEnabled
-  } catch (error) {
-    console.warn('Failed to load saved settings:', error && error.message)
-  }
-
-  try {
-    models = await window.petAPI.listModels()
-  } catch (err) {
-    console.error('Failed to list models:', err && err.message)
-    setModelStatus('模型列表读取失败，请查看日志', '#d9480f')
-  }
-
-  // Populate model select
-  modelSelect.replaceChildren(...models.map((item) => {
-    const option = document.createElement('option')
-    option.value = item.path
-    option.textContent = item.name
-    option.selected = item.path === savedModel
-    return option
-  }))
-
-  if (models.length > 0) {
-    let modelToLoad = models[0]
-    if (savedModel) {
-      const found = models.find(m => m.path === savedModel)
-      if (found) modelToLoad = found
+  function updateFollow() {
+    if (!state.model || !state.model.loaded) return
+    if (state.dragging) {
+      state.model.setDragging(0, 0)
+      return
     }
-    try {
-      const loaded = await loadModel(modelToLoad.path, modelToLoad.name)
-      if (loaded) await window.petAPI.setCurrentModel(modelToLoad.path)
-    } catch (err) {
-      console.error('Model load failed:', err)
-      await diagnoseModelError(modelToLoad.path, err)
-    }
-  } else {
-    console.warn('No models in static/models/')
-    modelSelect.replaceChildren(new Option('暂无模型', ''))
-    setModelStatus('没有找到可用模型', '#d9480f')
-  }
-
-  window.petAPI.onModelChanged(async (modelPath) => {
-    const selected = models.find(item => item.path === modelPath)
-    if (!selected) {
-      console.warn('Ignoring unknown model path:', modelPath)
+    if (!state.preferences || state.preferences.cursorFollow !== 'near' || !state.followPoint.near) {
+      state.model.setDragging(0, 0)
       return
     }
     try {
-      await loadModel(modelPath, selected.name)
-    } catch (err) {
-      console.error('Model switch failed:', err)
-      await diagnoseModelError(modelPath, err)
+      const x = state.model.transformX(state.followPoint.clientX)
+      const y = state.model.transformY(state.followPoint.clientY)
+      state.model.setDragging(Math.max(-1, Math.min(1, x)), Math.max(-1, Math.min(1, y)))
+    } catch (error) {
+      state.model.setDragging(0, 0)
+    }
+  }
+
+  function restoreDragCamera() {
+    if (!state.model || !state.dragCamera) return
+    state.model.scale = state.dragCamera.scale
+    state.model.x = state.dragCamera.x
+    state.model.y = state.dragCamera.y
+    state.model.setDragging(0, 0)
+  }
+
+  function updateIdle(timestamp) {
+    if (!state.preferences || !state.preferences.idleEnabled) return
+    const idleFor = timestamp - state.lastInteraction
+    if (idleFor >= 180000 && state.idleStage < 3) {
+      state.idleStage = 3
+      showBubble('z · z · z', 3200)
+    } else if (idleFor >= 90000 && state.idleStage < 2) {
+      state.idleStage = 2
+      showBubble('有点困了', 2600)
+    } else if (idleFor >= 30000 && state.idleStage < 1) {
+      state.idleStage = 1
+      playMotion('idle', motionPriority.idle)
+      showBubble(randomItem(idleCopy), 2200)
+    }
+  }
+
+  function targetFrameRate(timestamp) {
+    if (state.paused || state.loading || !state.visible) return 2
+    if (!state.preferences) return 30
+    if (reducedMotionEnabled()) return 20
+    if (state.preferences.qualityMode === 'high') return 60
+    if (state.preferences.qualityMode === 'eco') return 30
+    const idleFor = timestamp - state.lastInteraction
+    if (state.preferences.idleEnabled && idleFor >= 180000) return 10
+    if (timestamp > state.activeUntil) return 30
+    return 60
+  }
+
+  function scheduleNextFrame() {
+    if (!state.visible || state.frameTimer || state.frameRequest) return
+    const fps = targetFrameRate(performance.now())
+    state.frameTimer = setTimeout(() => {
+      state.frameTimer = null
+      state.frameRequest = requestAnimationFrame(frame)
+    }, Math.max(0, Math.round(1000 / fps) - 2))
+  }
+
+  function frame(timestamp) {
+    state.frameRequest = null
+    state.lastFrame = timestamp
+    updateIdle(timestamp)
+
+    if (!state.paused && !state.loading && !state.dragging && state.model && state.model.loaded) {
+      updateFollow()
+      try {
+        state.model.update()
+        if (state.hitMaskPending) rebuildHitMask()
+      } catch (error) {
+        console.error('Render update failed:', error)
+        reportStatus('error', state.modelMeta ? state.modelMeta.id : '', '渲染发生错误')
+        state.paused = true
+      }
+    }
+    drawEffects(timestamp)
+    scheduleNextFrame()
+  }
+
+  function ensureScheduler() {
+    if (!state.visible || state.frameTimer || state.frameRequest) return
+    scheduleNextFrame()
+  }
+
+  function cancelScheduler() {
+    if (state.frameTimer) clearTimeout(state.frameTimer)
+    if (state.frameRequest) cancelAnimationFrame(state.frameRequest)
+    state.frameTimer = null
+    state.frameRequest = null
+  }
+
+  function applySnapshot(snapshot) {
+    const previousModelId = state.snapshot && state.snapshot.currentModelId
+    state.snapshot = snapshot
+    state.preferences = snapshot.preferences
+    state.paused = Boolean(snapshot.runtime && snapshot.runtime.paused)
+
+    if (state.model) {
+      const newScale = Number(snapshot.preferences.scale)
+      if (Number.isFinite(newScale) && Math.abs(state.model.scale - newScale) > 0.001) {
+        state.model.scale = newScale
+        state.hitMaskPending = true
+        markInteraction(900)
+      }
+    }
+
+    if (snapshot.preferences.interactionMode === 'locked') {
+      state.capture = false
+      window.petAPI.setMouseCapture(false)
+    } else {
+      updateMouseCapture(state.pointer.clientX, state.pointer.clientY)
+    }
+
+    if (!previousModelId || previousModelId !== snapshot.currentModelId || !state.model) {
+      requestModel(snapshot.currentModelId)
+    }
+    ensureScheduler()
+  }
+
+  document.addEventListener('mousemove', event => {
+    updateMouseCapture(event.clientX, event.clientY)
+    if (!state.pointerDown) return
+    const dx = event.screenX - state.pointerDown.screenX
+    const dy = event.screenY - state.pointerDown.screenY
+    if (!state.dragging && Math.hypot(dx, dy) >= 6) {
+      state.dragging = true
+      if (state.model) {
+        state.dragCamera = {
+          scale: state.model.scale,
+          x: state.model.x,
+          y: state.model.y,
+        }
+        state.model.setDragging(0, 0)
+      }
+      if (state.liveCanvas) state.liveCanvas.classList.add('is-dragging')
+      window.petAPI.dragStart()
+    }
+    if (state.dragging) {
+      markInteraction(700)
     }
   })
+
+  document.addEventListener('mousedown', event => {
+    if (!state.preferences || event.button !== 0 || state.preferences.interactionMode === 'locked' || !isOnPet(event.clientX, event.clientY)) return
+    state.pointerDown = {
+      screenX: event.screenX,
+      screenY: event.screenY,
+      clientX: event.clientX,
+      clientY: event.clientY,
+      time: performance.now(),
+    }
+    state.dragging = false
+    state.dragCamera = null
+    state.capture = true
+    window.petAPI.setMouseCapture(true)
+    window.petAPI.dragPrime()
+    markInteraction()
+  })
+
+  document.addEventListener('mouseup', event => {
+    if (!state.pointerDown) return
+    const pointerDown = state.pointerDown
+    const moved = Math.hypot(event.screenX - pointerDown.screenX, event.screenY - pointerDown.screenY)
+    const elapsed = performance.now() - pointerDown.time
+
+    if (state.dragging) {
+      window.petAPI.dragEnd()
+      if (state.liveCanvas) state.liveCanvas.classList.remove('is-dragging')
+    } else if (moved < 6 && elapsed < 420 && isOnPet(pointerDown.clientX, pointerDown.clientY)) {
+      const hitAreas = hitAreasAt(pointerDown.clientX, pointerDown.clientY)
+      playMotion('tap', motionPriority.normal)
+      addClickEffect(pointerDown.clientX, pointerDown.clientY)
+      if (hitAreas.some(name => name.includes('head')) && Math.random() < 0.35) showBubble('嗯？')
+    }
+
+    restoreDragCamera()
+    if (!state.dragging) window.petAPI.dragEnd()
+    state.pointerDown = null
+    state.dragging = false
+    state.dragCamera = null
+    updateMouseCapture(event.clientX, event.clientY)
+  })
+
+  document.addEventListener('contextmenu', event => {
+    event.preventDefault()
+    if (state.preferences && state.preferences.interactionMode !== 'locked' && isOnPet(event.clientX, event.clientY)) {
+      markInteraction(900)
+      window.petAPI.showContextMenu()
+    }
+  })
+
+  window.addEventListener('blur', () => {
+    if (state.pointerDown) window.petAPI.dragEnd()
+    restoreDragCamera()
+    state.pointerDown = null
+    state.dragging = false
+    state.dragCamera = null
+    if (state.liveCanvas) state.liveCanvas.classList.remove('is-dragging')
+    state.capture = false
+    window.petAPI.setMouseCapture(false)
+  })
+
+  document.addEventListener('keydown', event => {
+    if (!event.ctrlKey) return
+    if (event.key.toLowerCase() === 'm') {
+      event.preventDefault()
+      window.petAPI.openSettings('characters')
+    }
+    if (event.key.toLowerCase() === 'l') {
+      event.preventDefault()
+      if (!state.preferences) return
+      const locked = state.preferences.interactionMode === 'locked'
+      window.petAPI.updatePreferences({ interactionMode: locked ? 'smart' : 'locked' })
+    }
+  })
+
+  window.petAPI.onCursorMove(point => {
+    state.followPoint = point
+    if (point.near) {
+      state.activeUntil = Math.max(state.activeUntil, performance.now() + 500)
+      ensureScheduler()
+    }
+  })
+
+  window.petAPI.onPauseChanged(paused => {
+    state.paused = Boolean(paused)
+    ensureScheduler()
+  })
+
+  window.petAPI.onStateChanged(payload => {
+    if (payload && payload.snapshot) applySnapshot(payload.snapshot)
+  })
+
+  document.addEventListener('visibilitychange', () => {
+    state.visible = !document.hidden
+    if (state.visible) {
+      state.lastFrame = performance.now()
+      ensureScheduler()
+    } else {
+      cancelScheduler()
+    }
+  })
+
+  window.addEventListener('resize', () => {
+    resizeEffectsCanvas()
+    if (state.model && state.model.loaded) {
+      state.model.needsResize = true
+      state.hitMaskPending = true
+    }
+  })
+
+  resizeEffectsCanvas()
+  try {
+    const snapshot = await window.petAPI.getSnapshot()
+    applySnapshot(snapshot)
+    if (!snapshot.models.length) {
+      showStatus('没有找到可用模型', 'error')
+      reportStatus('empty', '', '没有找到可用模型')
+    }
+  } catch (error) {
+    console.error('App initialization failed:', error)
+    showStatus('启动失败，请从托盘退出后重试', 'error')
+    reportStatus('error', '', '应用初始化失败')
+  }
 })()
