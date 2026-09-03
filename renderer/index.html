@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' 'unsafe-eval' file: data: blob:;">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="fx-layer"></div>
+
+<!-- ── Control Panel ────────────────────────── -->
+<div id="control-panel" class="control-panel">
+  <div class="panel-header">
+    <span>控制</span>
+    <button id="panel-close" class="panel-btn" type="button" aria-label="关闭控制面板">✕</button>
+  </div>
+  <div class="panel-body">
+    <!-- Scale section -->
+    <div class="control-section">
+      <label>缩放</label>
+      <div class="scale-controls">
+        <button id="scale-minus" class="scale-btn" type="button" aria-label="缩小">−</button>
+        <input id="scale-slider" type="range" min="0.5" max="2" step="0.1" value="1" aria-label="角色缩放">
+        <button id="scale-plus" class="scale-btn" type="button" aria-label="放大">+</button>
+      </div>
+      <div class="scale-display" id="scale-display">100%</div>
+    </div>
+
+    <!-- Model section -->
+    <div class="control-section">
+      <label>角色</label>
+      <select id="model-select" style="width: 100%; padding: 6px; border-radius: 4px; border: 1px solid #ccc; -webkit-app-region: no-drag;">
+        <option>加载中...</option>
+      </select>
+      <div id="model-status" style="margin-top: 6px; font-size: 11px; color: #777;" role="status" aria-live="polite">正在准备模型...</div>
+    </div>
+
+    <!-- Interaction tips -->
+    <div class="control-section">
+      <label>交互方式</label>
+      <div class="tips">
+        <div class="tip">🖱️ 左键 × 3: 兴奋</div>
+        <div class="tip">🖱️ 左键 × 2: 高兴</div>
+        <div class="tip">🖱️ 左键 × 1: 触摸</div>
+        <div class="tip">🖱️ 右键: 不满</div>
+        <div class="tip">⌨️ H: 爱心</div>
+        <div class="tip">⌨️ S: 惊讶</div>
+        <div class="tip">⌨️ F: 开心</div>
+      </div>
+    </div>
+
+    <!-- Click-through toggle -->
+    <div class="control-section">
+      <label>鼠标穿透</label>
+      <div class="toggle-row">
+        <span class="toggle-label">启用后透明区域可点击穿透</span>
+        <label class="switch">
+          <input id="click-through-toggle" type="checkbox">
+          <span class="slider"></span>
+        </label>
+      </div>
+    </div>
+
+    <!-- Settings -->
+    <div class="control-section">
+      <div style="display: flex; gap: 8px; margin-top: 12px;">
+        <button id="btn-reset" class="action-btn" type="button">重置位置</button>
+        <button id="btn-exit" class="action-btn" type="button" style="background: #ff6b6b;">退出</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Floating toggle button -->
+<button id="panel-toggle" class="panel-toggle" type="button" title="打开控制面板 (Ctrl+M)" aria-label="打开控制面板">⚙️</button>
+<script src="app.js"></script>
+</body>
+</html>
