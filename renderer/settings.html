@@ -67,7 +67,27 @@
         </div>
         <div id="model-list" class="model-list" role="radiogroup" aria-label="角色列表"></div>
 
-        <button id="reset-position" class="secondary-button" type="button">将角色移回屏幕右下角</button>
+        <div class="models-hint">
+          <p>更多角色：把模型文件夹或 <code>.zip</code> 放进下面的 <code>models</code> 文件夹（卸载或更新程序都不会删除），然后点击托盘「刷新模型列表」。</p>
+          <div class="models-hint-row">
+            <span id="models-folder-path" class="models-folder-path"></span>
+            <button id="open-models-folder" class="text-button" type="button">打开模型文件夹</button>
+          </div>
+        </div>
+
+        <div class="position-panel">
+          <div class="setting-copy">
+            <label for="preset-grid">窗口位置</label>
+            <p>把角色移动到当前屏幕的常用位置。</p>
+          </div>
+          <div id="preset-grid" class="preset-grid" role="group" aria-label="窗口位置">
+            <button type="button" data-preset="top-left">左上角</button>
+            <button type="button" data-preset="top-right">右上角</button>
+            <button type="button" data-preset="bottom-left">左下角</button>
+            <button type="button" data-preset="bottom-right">右下角</button>
+            <button type="button" data-preset="center">居中</button>
+          </div>
+        </div>
       </section>
 
       <section class="settings-section" data-view="behavior" hidden>
@@ -143,6 +163,18 @@
           <div><span>锁定后管理</span><kbd>系统托盘</kbd></div>
         </div>
 
+        <div class="update-panel">
+          <div class="update-copy">
+            <strong>版本更新</strong>
+            <small id="update-status">正在检查…</small>
+          </div>
+          <div class="update-actions">
+            <button id="check-update" class="text-button" type="button">检查更新</button>
+            <button id="update-download" class="primary-button" type="button" hidden>下载更新</button>
+          </div>
+        </div>
+        <div id="release-notes" class="release-notes" hidden></div>
+
         <div class="system-actions">
           <button id="reset-settings" class="text-button" type="button">恢复默认设置</button>
           <button id="quit-app" class="text-button is-danger" type="button">退出桌面伙伴</button>
@@ -152,7 +184,12 @@
 
     <footer class="app-footer">
       <span>Live2D 桌面伙伴</span>
-      <span id="app-version">v1.0.0</span>
+      <div class="footer-right">
+        <button id="footer-update" class="footer-update" type="button" hidden title="发现新版本，点击下载">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5v7.5m0 0 3-3m-3 3L5 7M3.5 12.5h9"/></svg>
+        </button>
+        <span id="app-version">v1.0.0</span>
+      </div>
     </footer>
   </div>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>

@@ -41,6 +41,8 @@
     motionGroups: { idle: [], tap: [] },
     hitMask: null,
     hitMaskPending: false,
+    lastMaskRebuild: 0,
+    lastHitBounds: null,
     particles: [],
     bubble: null,
     lastFxFrame: 0,
@@ -314,31 +316,40 @@
       context.drawImage(state.liveCanvas, 0, 0, width, height)
       const data = context.getImageData(0, 0, width, height).data
       let opaquePixels = 0
-      for (let index = 3; index < data.length; index += 4) {
-        if (data[index] > 16) opaquePixels++
+      let minX = width
+      let minY = height
+      let maxX = -1
+      let maxY = -1
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          if (data[(y * width + x) * 4 + 3] > 8) {
+            opaquePixels++
+            if (x < minX) minX = x
+            if (x > maxX) maxX = x
+            if (y < minY) minY = y
+            if (y > maxY) maxY = y
+          }
+        }
       }
       state.hitMask = opaquePixels >= 12 ? { width, height, data } : null
+      state.lastMaskRebuild = performance.now()
+
+      // 角色包围盒（窗口局部 DIP），发给主进程用于位置预设贴角
+      const bounds = opaquePixels >= 12
+        ? {
+            x: Math.round(minX * (window.innerWidth / width)),
+            y: Math.round(minY * (window.innerHeight / height)),
+            width: Math.round((maxX - minX + 1) * (window.innerWidth / width)),
+            height: Math.round((maxY - minY + 1) * (window.innerHeight / height)),
+          }
+        : null
+      if (JSON.stringify(bounds) !== JSON.stringify(state.lastHitBounds)) {
+        state.lastHitBounds = bounds
+        window.petAPI.reportHitBounds(bounds)
+      }
     } catch (error) {
       state.hitMask = null
     }
-  }
-
-  function alphaHit(clientX, clientY) {
-    const mask = state.hitMask
-    if (!mask) return false
-    const x = Math.round((clientX / window.innerWidth) * (mask.width - 1))
-    const y = Math.round((clientY / window.innerHeight) * (mask.height - 1))
-    if (x < 0 || y < 0 || x >= mask.width || y >= mask.height) return false
-
-    for (let offsetY = -2; offsetY <= 2; offsetY++) {
-      for (let offsetX = -2; offsetX <= 2; offsetX++) {
-        const sampleX = x + offsetX
-        const sampleY = y + offsetY
-        if (sampleX < 0 || sampleY < 0 || sampleX >= mask.width || sampleY >= mask.height) continue
-        if (mask.data[(sampleY * mask.width + sampleX) * 4 + 3] > 16) return true
-      }
-    }
-    return false
   }
 
   function hitAreasAt(clientX, clientY) {
@@ -359,13 +370,11 @@
   }
 
   function isOnPet(clientX, clientY) {
+    // 模型加载后整个窗口一律可交互：拖拽区域 = 整个窗口，
+    // 保证任何位置都能抓住角色（边缘/头顶/尾巴都不再失效）。
+    // 角色精细命中（hitAreasAt）仅用于点击反馈选择。
     if (!state.model || !state.model.loaded) return false
-    if (alphaHit(clientX, clientY)) return true
-    if (hitAreasAt(clientX, clientY).length) return true
-    if (state.hitMask) return false
-    const dx = (clientX - window.innerWidth * 0.5) / (window.innerWidth * 0.34)
-    const dy = (clientY - window.innerHeight * 0.56) / (window.innerHeight * 0.43)
-    return dx * dx + dy * dy <= 1
+    return clientX >= 0 && clientX < window.innerWidth && clientY >= 0 && clientY < window.innerHeight
   }
 
   function updateMouseCapture(clientX, clientY) {
@@ -378,7 +387,10 @@
       return
     }
     if (state.pointerDown) return
-    const capture = isOnPet(clientX, clientY)
+    // 迟滞：命中过一次角色后，整个窗口保持可交互直到光标离开窗口，
+    // 避免在角色边缘（裙摆/尾巴）反复抖动导致按下穿透
+    const insideWindow = clientX >= 0 && clientX < window.innerWidth && clientY >= 0 && clientY < window.innerHeight
+    const capture = state.capture ? insideWindow : isOnPet(clientX, clientY)
     if (capture !== state.capture) {
       state.capture = capture
       window.petAPI.setMouseCapture(capture)
@@ -555,7 +567,8 @@
       updateFollow()
       try {
         state.model.update()
-        if (state.hitMaskPending) rebuildHitMask()
+        // 角色动画会让裙摆/尾巴摆动，定期重建蒙版避免命中区域过时
+        if (state.hitMaskPending || timestamp - state.lastMaskRebuild > 2000) rebuildHitMask()
       } catch (error) {
         console.error('Render update failed:', error)
         reportStatus('error', state.modelMeta ? state.modelMeta.id : '', '渲染发生错误')
@@ -596,9 +609,9 @@
     if (snapshot.preferences.interactionMode === 'locked') {
       state.capture = false
       window.petAPI.setMouseCapture(false)
-    } else {
-      updateMouseCapture(state.pointer.clientX, state.pointer.clientY)
     }
+    // 解锁等模式变化时不按陈旧指针位置重判：窗口内命中由主进程
+    // cursor:move 通道在每个轮询周期驱动，避免把窗口误开成穿透/遮挡
 
     if (!previousModelId || previousModelId !== snapshot.currentModelId || !state.model) {
       requestModel(snapshot.currentModelId)
@@ -709,11 +722,62 @@
       state.activeUntil = Math.max(state.activeUntil, performance.now() + 500)
       ensureScheduler()
     }
+    // 主进程轮询的光标位置驱动命中穿透，不依赖 OS 鼠标事件送达；
+    // 光标离开窗口时重置迟滞状态
+    if (point.inside) updateMouseCapture(point.clientX, point.clientY)
+    else if (state.capture) {
+      state.capture = false
+      window.petAPI.setMouseCapture(false)
+    }
   })
 
   window.petAPI.onPauseChanged(paused => {
     state.paused = Boolean(paused)
     ensureScheduler()
+  })
+
+  // ---- 角色封面生成：串行加载其他模型并截取首帧缩略图 ----
+  let coverQueue = []
+  let coverBusy = false
+
+  async function renderModelCover(item) {
+    const canvas = document.createElement('canvas')
+    canvas.width = 220
+    canvas.height = 280
+    const model = createModelInstance(canvas)
+    try {
+      await model.load(item.path)
+      model.touchController.cancelInteractions()
+      model.cameraController.removeListeners()
+      model.centerModel()
+      model.scale = 0.5
+      model.paused = false
+      model.update()
+      await new Promise(resolve => setTimeout(resolve, 80))
+      model.update()
+      const dataURL = canvas.toDataURL('image/png')
+      window.petAPI.saveCover(item.id, dataURL)
+    } catch (error) {
+      console.warn(`Cover ${item.id} failed:`, error.message)
+    } finally {
+      releaseModel(model, canvas)
+    }
+  }
+
+  async function processCoverQueue() {
+    if (coverBusy) return
+    coverBusy = true
+    while (coverQueue.length) {
+      const item = coverQueue.shift()
+      await renderModelCover(item)
+    }
+    coverBusy = false
+  }
+
+  window.petAPI.onCoversRequest(missing => {
+    if (!Array.isArray(missing)) return
+    coverQueue.push(...missing)
+    processCoverQueue()
   })
 
   window.petAPI.onStateChanged(payload => {

@@ -1,6 +1,6 @@
 {
   "name": "electron-live2d-pet",
-  "productName": "Live2D 桌面伙伴",
+  "productName": "Live2DCompanion",
   "version": "1.0.0",
   "description": "Live2D 桌面 Q 版宠物",
   "main": "main.js",
@@ -9,13 +9,15 @@
     "dev": "nodemon --exec \"electron . --dev\"",
     "check": "node --check main.js && node --check preload.js && node --check settings-preload.js && node --check renderer/app.js && node --check renderer/settings.js",
     "lint": "eslint .",
-    "package:win": "npm run check && electron-builder --win"
+    "package:win": "npm run check && electron-builder --win",
+    "release": "npm run check && electron-builder --win"
   },
   "build": {
     "appId": "com.luckyblank.live2d",
     "files": [
       "**/*",
       "!plan/**",
+      "!release/**",
       "!**/*.{bak,md}",
       "!test-electron.js",
       "!download-models.cjs",
@@ -40,12 +42,12 @@
     },
     "nsis": {
       "oneClick": false,
-      "perMachine": true,
+      "perMachine": false,
       "allowToChangeInstallationDirectory": true
     }
   },
   "devDependencies": {
-    "electron": "^36.2.1",
+    "electron": "^37.10.3",
     "electron-builder": "^26.0.12",
     "eslint": "^8.57.0",
     "nodemon": "^3.1.10",
