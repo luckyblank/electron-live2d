@@ -787,6 +787,20 @@ kbd {
   font-size: 12px;
 }
 
+.update-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: #d43f3f;
+  vertical-align: 1px;
+}
+
+.update-dot[hidden] {
+  display: none;
+}
+
 .update-actions .primary-button {
   min-height: 32px;
   padding: 0 14px;
@@ -805,12 +819,83 @@ kbd {
   color: var(--muted);
   font-size: 11px;
   line-height: 1.6;
-  white-space: pre-wrap;
   word-break: break-word;
 }
 
 .release-notes[hidden] {
   display: none;
+}
+
+/* 发布说明 Markdown 渲染样式（系统页说明区与更新弹窗共用） */
+.release-notes h1,
+.update-dialog-notes h1 {
+  margin: 0 0 6px;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 680;
+}
+
+.release-notes h2,
+.update-dialog-notes h2 {
+  margin: 10px 0 4px;
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 660;
+}
+
+.release-notes h3,
+.update-dialog-notes h3,
+.release-notes h4,
+.update-dialog-notes h4 {
+  margin: 8px 0 3px;
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 640;
+}
+
+.release-notes p,
+.update-dialog-notes p {
+  margin: 4px 0;
+}
+
+.release-notes ul,
+.update-dialog-notes ul {
+  margin: 4px 0;
+  padding-left: 16px;
+}
+
+.release-notes li,
+.update-dialog-notes li {
+  margin: 2px 0;
+}
+
+.release-notes strong,
+.update-dialog-notes strong {
+  color: var(--ink);
+  font-weight: 650;
+}
+
+.release-notes code,
+.update-dialog-notes code {
+  padding: 1px 4px;
+  border: 1px solid #ddd5cf;
+  border-radius: 4px;
+  background: var(--surface-soft);
+  color: var(--ink);
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 10px;
+}
+
+.release-notes a,
+.update-dialog-notes a {
+  color: var(--accent-ink);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.release-notes a:hover,
+.update-dialog-notes a:hover {
+  color: var(--accent);
 }
 
 .system-actions {
@@ -885,6 +970,113 @@ kbd {
   stroke-linecap: round;
   stroke-linejoin: round;
   stroke-width: 1.8;
+}
+
+.update-dialog {
+  position: fixed;
+  z-index: 20;
+  inset: 0;
+  display: grid;
+  background: rgba(41, 38, 48, 0.38);
+  place-items: center;
+}
+
+.update-dialog[hidden] {
+  display: none;
+}
+
+.update-dialog-card {
+  display: grid;
+  gap: 14px;
+  width: min(340px, calc(100% - 48px));
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-large);
+  background: var(--canvas);
+  box-shadow: 0 24px 70px rgba(56, 45, 72, 0.28);
+}
+
+.update-dialog-head {
+  display: grid;
+  gap: 3px;
+}
+
+.update-dialog-head strong {
+  font-size: 16px;
+  font-weight: 680;
+}
+
+.update-dialog-head span {
+  color: var(--quiet);
+  font-size: 11px;
+}
+
+.update-dialog-notes {
+  max-height: 180px;
+  padding: 10px 12px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.update-dialog-progress {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.update-dialog-progress[hidden] {
+  display: none;
+}
+
+.update-progress-track {
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--surface-soft);
+}
+
+.update-progress-fill {
+  width: 0%;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent);
+  transition: width 120ms ease;
+}
+
+.update-dialog-progress span {
+  min-width: 36px;
+  color: var(--accent-ink);
+  font-size: 11px;
+  font-weight: 650;
+  text-align: right;
+}
+
+.update-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.update-dialog-actions .text-button {
+  min-height: 34px;
+  padding: 0 12px;
+  border-radius: 9px;
+  font-size: 12px;
+}
+
+.update-dialog-actions .primary-button {
+  min-height: 34px;
+  padding: 0 16px;
+  border-radius: 9px;
+  font-size: 12px;
 }
 
 .toast {

@@ -169,11 +169,12 @@
             <small id="update-status">正在检查…</small>
           </div>
           <div class="update-actions">
-            <button id="check-update" class="text-button" type="button">检查更新</button>
-            <button id="update-download" class="primary-button" type="button" hidden>下载更新</button>
+            <button id="check-update" class="text-button" type="button">
+              <span id="update-dot" class="update-dot" hidden></span>
+              检查更新
+            </button>
           </div>
         </div>
-        <div id="release-notes" class="release-notes" hidden></div>
 
         <div class="system-actions">
           <button id="reset-settings" class="text-button" type="button">恢复默认设置</button>
@@ -193,6 +194,25 @@
     </footer>
   </div>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <div id="update-dialog" class="update-dialog" hidden>
+    <div class="update-dialog-card" role="dialog" aria-modal="true" aria-label="版本更新">
+      <header class="update-dialog-head">
+        <strong id="update-dialog-title">发现新版本</strong>
+        <span id="update-dialog-sub"></span>
+      </header>
+      <div id="update-dialog-notes" class="update-dialog-notes"></div>
+      <div id="update-dialog-progress" class="update-dialog-progress" hidden>
+        <div class="update-progress-track"><div id="update-progress-fill" class="update-progress-fill"></div></div>
+        <span id="update-progress-text">0%</span>
+      </div>
+      <footer class="update-dialog-actions">
+        <button id="update-ignore" class="text-button" type="button">忽略该版本</button>
+        <button id="update-later" class="text-button" type="button">稍后再说</button>
+        <button id="update-start" class="primary-button" type="button">更新</button>
+      </footer>
+    </div>
+  </div>
   <script src="settings.js"></script>
 </body>
 </html>

@@ -1,5 +1,6 @@
 const { app, BrowserWindow, Menu, Tray, ipcMain, nativeImage, screen, shell } = require('electron')
 const fs = require('fs')
+const { Readable } = require('stream')
 const path = require('path')
 const { pathToFileURL } = require('url')
 const Store = require('electron-store')
@@ -51,6 +52,7 @@ const store = new Store({
     windowX: undefined,
     windowY: undefined,
     currentModelId: '',
+    ignoredUpdateVersion: '',
     ...preferenceDefaults,
   },
 })
@@ -78,6 +80,8 @@ const HIDDEN_X = -10000
 const HIDDEN_Y = -10000
 const UPDATE_MANIFEST_URL = 'https://qny.luckyblank.cn/live2d-pet/latest.yml'
 let lastUpdateCheck = null
+let lastDownloadedPath = null
+let updateDownloadController = null
 
 function compareVersions(a, b) {
   const partsA = String(a).split('.').map(Number)
@@ -852,16 +856,62 @@ function setupIPC() {
           releaseNotes = ''
         }
       }
-      lastUpdateCheck = { ok: true, hasUpdate, current, latest, url, releaseNotes }
+      lastUpdateCheck = {
+        ok: true,
+        hasUpdate,
+        current,
+        latest,
+        url,
+        releaseNotes,
+        ignored: hasUpdate && store.get('ignoredUpdateVersion') === latest,
+      }
       return lastUpdateCheck
     } catch (error) {
       return { ok: false, reason: error.message }
     }
   })
 
-  ipcMain.on('update:open-download', () => {
-    if (lastUpdateCheck && lastUpdateCheck.ok && lastUpdateCheck.url) {
-      shell.openExternal(lastUpdateCheck.url)
+  ipcMain.on('update:ignore-version', (_event, version) => {
+    if (typeof version === 'string' && version) store.set('ignoredUpdateVersion', version)
+  })
+
+  ipcMain.handle('update:download', async () => {
+    const info = lastUpdateCheck
+    if (!info || !info.ok || !info.hasUpdate || !info.url) return { ok: false, reason: '没有可下载的更新' }
+    updateDownloadController = new AbortController()
+    try {
+      const response = await fetch(info.url, { signal: updateDownloadController.signal })
+      if (!response.ok || !response.body) return { ok: false, reason: `HTTP ${response.status}` }
+      const total = Number(response.headers.get('content-length')) || 0
+      const target = path.join(app.getPath('downloads'), `Live2DCompanion-Setup-${info.latest}.exe`)
+      const out = fs.createWriteStream(target)
+      let received = 0
+      await new Promise((resolve, reject) => {
+        const stream = Readable.fromWeb(response.body)
+        stream.on('data', chunk => {
+          received += chunk.length
+          sendToWindow(settingsWindow, 'update:progress', { received, total })
+        })
+        stream.pipe(out)
+        out.on('finish', resolve)
+        out.on('error', reject)
+      })
+      lastDownloadedPath = target
+      return { ok: true, path: target }
+    } catch (error) {
+      return { ok: false, reason: error.message, cancelled: error.name === 'AbortError' }
+    } finally {
+      updateDownloadController = null
+    }
+  })
+
+  ipcMain.on('update:cancel-download', () => {
+    if (updateDownloadController) updateDownloadController.abort()
+  })
+
+  ipcMain.on('update:open-installer', () => {
+    if (lastDownloadedPath && fs.existsSync(lastDownloadedPath)) {
+      shell.openPath(lastDownloadedPath)
     }
   })
 
@@ -872,6 +922,13 @@ function setupIPC() {
   ipcMain.handle('window:reset-pet-position', () => resetPetPosition())
   ipcMain.handle('window:move-pet', (_event, preset) => movePetToPreset(POSITION_PRESETS.includes(preset) ? preset : 'bottom-right'))
   ipcMain.handle('window:open-models-folder', () => shell.openPath(userModelsDir()).then(() => true).catch(() => false))
+  ipcMain.handle('window:open-external', (_event, url) => {
+    if (typeof url === 'string' && /^https?:\/\//i.test(url)) {
+      shell.openExternal(url)
+      return true
+    }
+    return false
+  })
 
   ipcMain.on('window:open-settings', (_event, section) => openSettings(section))
   ipcMain.on('window:settings-close', () => settingsWindow && settingsWindow.close())

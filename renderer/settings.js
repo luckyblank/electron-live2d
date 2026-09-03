@@ -12,8 +12,7 @@
     appVersion: document.getElementById('app-version'),
     modelsFolderPath: document.getElementById('models-folder-path'),
     updateStatus: document.getElementById('update-status'),
-    updateDownload: document.getElementById('update-download'),
-    releaseNotes: document.getElementById('release-notes'),
+    updateDot: document.getElementById('update-dot'),
     footerUpdate: document.getElementById('footer-update'),
     toast: document.getElementById('toast'),
   }
@@ -227,45 +226,184 @@
     if (!opened) showToast('无法打开模型文件夹')
   })
 
+  // ---- 版本更新：统一弹窗（图标点击 / 检查更新共用） ----
+  let lastCheck = null
+  let downloading = false
+
+  const updateDialog = {
+    root: document.getElementById('update-dialog'),
+    title: document.getElementById('update-dialog-title'),
+    sub: document.getElementById('update-dialog-sub'),
+    notes: document.getElementById('update-dialog-notes'),
+    progress: document.getElementById('update-dialog-progress'),
+    progressFill: document.getElementById('update-progress-fill'),
+    progressText: document.getElementById('update-progress-text'),
+    start: document.getElementById('update-start'),
+  }
+
+  // 轻量 Markdown 渲染：标题 / 列表 / 加粗 / 行内代码 / 链接
+  function renderMarkdown(text) {
+    const escapeHtml = value => String(value)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;')
+    const renderInline = value => escapeHtml(value)
+      .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+      .replace(/`([^`]+)`/g, '<code>$1</code>')
+      .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2">$1</a>')
+    const html = []
+    let inList = false
+    const closeList = () => { if (inList) { html.push('</ul>'); inList = false } }
+    for (const raw of String(text || '').split(/\r?\n/)) {
+      const line = raw.trim()
+      if (!line) { closeList(); continue }
+      const heading = line.match(/^(#{1,4})\s+(.*)/)
+      if (heading) {
+        closeList()
+        const level = heading[1].length
+        html.push(`<h${level}>${renderInline(heading[2])}</h${level}>`)
+        continue
+      }
+      if (/^[-*]\s+/.test(line)) {
+        if (!inList) { html.push('<ul>'); inList = true }
+        html.push(`<li>${renderInline(line.replace(/^[-*]\s+/, ''))}</li>`)
+        continue
+      }
+      closeList()
+      html.push(`<p>${renderInline(line)}</p>`)
+    }
+    closeList()
+    return html.join('')
+  }
+
+  function bindNotesLinks(container) {
+    container.addEventListener('click', event => {
+      if (event.target.tagName === 'A') {
+        event.preventDefault()
+        api.openExternalUrl(event.target.href)
+      }
+    })
+  }
+  bindNotesLinks(document.getElementById('update-dialog-notes'))
+
+  function openUpdateDialog(result) {
+    updateDialog.title.textContent = `发现新版本 v${result.latest}`
+    updateDialog.sub.textContent = `当前版本 v${result.current}`
+    updateDialog.notes.innerHTML = renderMarkdown(result.releaseNotes || '该版本没有提供更新说明。')
+    updateDialog.progress.hidden = true
+    updateDialog.progressFill.style.width = '0%'
+    updateDialog.progressText.textContent = '0%'
+    updateDialog.start.disabled = false
+    updateDialog.start.textContent = '更新'
+    updateDialog.root.hidden = false
+  }
+
+  function closeUpdateDialog() {
+    updateDialog.root.hidden = true
+    // 关闭弹窗即取消进行中的下载（进度只属于本次弹窗会话）
+    if (downloading) {
+      downloading = false
+      api.cancelUpdateDownload()
+    }
+  }
+
+  function setDownloadProgress(percent) {
+    updateDialog.progress.hidden = false
+    updateDialog.progressFill.style.width = `${percent}%`
+    updateDialog.progressText.textContent = `${percent}%`
+  }
+
+  async function startUpdateDownload() {
+    if (downloading) return
+    downloading = true
+    updateDialog.start.disabled = true
+    updateDialog.start.textContent = '下载中…'
+    setDownloadProgress(0)
+    try {
+      const result = await api.downloadUpdate()
+      if (result && result.ok) {
+        if (updateDialog.root.hidden) return
+        setDownloadProgress(100)
+        updateDialog.start.textContent = '正在启动安装程序…'
+        updateDialog.title.textContent = '下载完成'
+        const fileName = result.path ? result.path.split(/[\\/]/).pop() : '安装包'
+        updateDialog.notes.innerHTML = `<p>${fileName} 已保存到下载目录，正在启动安装程序…</p>`
+        // 下载完成自动安装
+        setTimeout(() => {
+          if (updateDialog.root.hidden) return
+          api.openUpdateInstaller()
+          closeUpdateDialog()
+        }, 600)
+      } else {
+        updateDialog.start.disabled = false
+        updateDialog.start.textContent = '重新下载'
+        updateDialog.notes.textContent = '下载失败，请稍后重试。'
+      }
+    } catch (error) {
+      updateDialog.start.disabled = false
+      updateDialog.start.textContent = '重新下载'
+      updateDialog.notes.textContent = '下载失败，请稍后重试。'
+    } finally {
+      downloading = false
+    }
+  }
+
   async function checkUpdate() {
     elements.updateStatus.textContent = '正在检查…'
-    elements.updateDownload.hidden = true
+    elements.updateDot.hidden = true
     elements.footerUpdate.hidden = true
     try {
       const result = await api.checkUpdate()
       if (result && result.ok) {
-        if (result.hasUpdate) {
+        lastCheck = result
+        if (result.hasUpdate && !result.ignored) {
           elements.updateStatus.textContent = `发现新版本 v${result.latest}（当前 v${result.current}）`
-          elements.updateDownload.hidden = false
+          elements.updateDot.hidden = false
           elements.footerUpdate.hidden = false
-          if (result.releaseNotes) {
-            elements.releaseNotes.textContent = result.releaseNotes
-            elements.releaseNotes.hidden = false
-          } else {
-            elements.releaseNotes.hidden = true
-          }
+          elements.footerUpdate.title = `发现新版本 v${result.latest}，点击下载`
+        } else if (result.hasUpdate && result.ignored) {
+          elements.updateStatus.textContent = `已忽略 v${result.latest}（当前 v${result.current}）`
         } else {
           elements.updateStatus.textContent = `已是最新版本（v${result.current}）`
-          elements.releaseNotes.hidden = true
         }
       } else {
         elements.updateStatus.textContent = '检查失败，请稍后重试'
-        showToast('无法检查更新')
       }
     } catch (error) {
       elements.updateStatus.textContent = '检查失败，请稍后重试'
     }
+    return lastCheck
   }
 
-  document.getElementById('check-update').addEventListener('click', checkUpdate)
-  document.getElementById('update-download').addEventListener('click', () => {
-    api.openUpdateDownload()
-    showToast('已打开下载页面')
+  async function checkAndShowDialog() {
+    const result = await checkUpdate()
+    if (result && result.ok && result.hasUpdate && !result.ignored) {
+      openUpdateDialog(result)
+    } else if (result && result.ok && !result.hasUpdate) {
+      showToast('已是最新版本')
+    }
+  }
+
+  api.onUpdateProgress(progress => {
+    // 只有本次弹窗会话内点击「更新」后的下载才显示进度
+    if (!downloading || !progress || progress.total <= 0 || updateDialog.root.hidden) return
+    const percent = Math.min(100, Math.round((progress.received / progress.total) * 100))
+    setDownloadProgress(percent)
   })
-  elements.footerUpdate.addEventListener('click', () => {
-    api.openUpdateDownload()
-    showToast('已打开下载页面')
+
+  document.getElementById('check-update').addEventListener('click', checkAndShowDialog)
+  elements.footerUpdate.addEventListener('click', checkAndShowDialog)
+  updateDialog.start.addEventListener('click', startUpdateDownload)
+  document.getElementById('update-later').addEventListener('click', closeUpdateDialog)
+  document.getElementById('update-ignore').addEventListener('click', () => {
+    if (lastCheck && lastCheck.latest) api.ignoreUpdateVersion(lastCheck.latest)
+    closeUpdateDialog()
+    checkUpdate()
   })
+  // 窗口重新获得焦点时自动重查（用户切回来就能看到最新状态）
+  window.addEventListener('focus', checkUpdate)
   checkUpdate()
 
   document.getElementById('reset-settings').addEventListener('click', async () => {

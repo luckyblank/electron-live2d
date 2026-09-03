@@ -18,18 +18,18 @@
 
    产物在 `dist/`：
 
-   - `Live2DCompanion Setup <version>.exe` — 安装包
+   - `Live2DCompanion-Setup-<version>.exe` — 安装包（`build.artifactName` 统一为连字符命名）
    - `latest.yml` — 更新清单（`version`、安装包文件名、sha512）
-   - `Live2DCompanion Setup <version>.exe.blockmap` — 差异更新用（当前未启用，可不上传）
+   - `Live2DCompanion-Setup-<version>.exe.blockmap` — 差异更新用（当前未启用，可不上传）
 
 3. **上传到 CDN**：把安装包、`latest.yml` 和发布说明上传到
    `https://qny.luckyblank.cn/live2d-pet/`（三者同目录）：
 
-   - `Live2DCompanion Setup <version>.exe`
+   - `Live2DCompanion-Setup-<version>.exe`
    - `latest.yml`
-   - `release-notes-<version>.md` —— 发布说明，内容取
-     `release/更新日志-<version>.md`（应用发现新版本时展示在
-     设置页更新面板中）
+   - 发布说明 —— 内容取 `release/release-notes-<version>.md`，
+     以同名文件上传（应用按 `release-notes-<version>.md` 查找并
+     以 Markdown 渲染展示）
 
    > 应用下载按钮的地址由 `latest.yml` 里的 `path` 字段相对
    > `latest.yml` 自身的 URL 解析，所以文件名必须与 CDN 上的

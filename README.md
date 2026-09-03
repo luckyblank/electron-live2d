@@ -60,7 +60,7 @@ npm run package:win
 
 Windows 安装包输出到 `dist/`。
 
-发版与更新发布流程见 [RELEASE.md](RELEASE.md)，更新日志见 [release/更新日志.md](release/更新日志.md)。
+发版与更新发布流程见 [RELEASE.md](RELEASE.md)，更新日志见 [release/release-notes.md](release/release-notes.md)。
 
 ## 使用方式
 
