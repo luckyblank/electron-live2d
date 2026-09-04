@@ -12,6 +12,13 @@ const SETTINGS_HEIGHT = 670
 const POSITION_SAVE_DELAY = 180
 const CURSOR_NEAR_DISTANCE = 220
 const PET_VISIBLE_MARGIN = 80
+const PET_INTERACTIONS = [
+  { label: '打个招呼', kind: 'greet' },
+  { label: '摸摸头', kind: 'head' },
+  { label: '夸夸她', kind: 'praise' },
+  { label: '投喂点心', kind: 'snack' },
+  { label: '随机互动', kind: 'random' },
+]
 
 const preferenceDefaults = {
   scale: 1,
@@ -67,12 +74,13 @@ let cursorTimer = null
 let dragCandidate = null
 let dragActive = false
 let dragTimer = null
+let dragOutsideSince = null // 拖拽中光标离开窗口的起始时刻（失联看门狗）
+const DRAG_OUTSIDE_TIMEOUT_MS = 150
 let appIsQuitting = false
 let animationPaused = false
 let runtimeStatus = { phase: 'starting', modelId: '', message: '正在启动' }
 let lastCursor = null
 let lastCursorNear = false
-let cursorInsideWindow = false
 let petShownOnce = false
 let petOffScreen = false
 let petLastPosition = null
@@ -288,6 +296,42 @@ const CORNER_ANCHOR_MARGIN = 24
 // 角色在窗口内的包围盒（局部 DIP），由渲染进程按渲染蒙版上报
 let characterBounds = null
 
+function interactionRegionFromBounds(bounds = characterBounds) {
+  const fallback = { x: 24, y: 0, width: PET_WIDTH - 48, height: PET_HEIGHT }
+  if (
+    !bounds || !Number.isFinite(bounds.x) || !Number.isFinite(bounds.y) ||
+    !Number.isFinite(bounds.width) || !Number.isFinite(bounds.height) ||
+    bounds.width <= 0 || bounds.height <= 0
+  ) return fallback
+
+  const padding = 32
+  const left = Math.max(0, Math.floor(bounds.x - padding))
+  const top = Math.max(0, Math.floor(bounds.y - padding))
+  const right = Math.min(PET_WIDTH, Math.ceil(bounds.x + bounds.width + padding))
+  const bottom = Math.min(PET_HEIGHT, Math.ceil(bounds.y + bounds.height + padding))
+  return {
+    x: left,
+    y: top,
+    width: Math.max(1, right - left),
+    height: Math.max(1, bottom - top),
+  }
+}
+
+function applyPetInteractionRegion() {
+  if (!petWindow || petWindow.isDestroyed()) return
+  const locked = getPreferences().interactionMode === 'locked'
+  petWindow.setIgnoreMouseEvents(locked)
+  if (locked || !['win32', 'linux'].includes(process.platform)) return
+
+  try {
+    // Windows 原生窗口形状同时限定绘制和鼠标命中区域。透明区域由系统
+    // 直接穿透，不再依赖悬停时反复切换 setIgnoreMouseEvents。
+    petWindow.setShape([interactionRegionFromBounds()])
+  } catch (error) {
+    console.warn('Failed to apply pet interaction region:', error.message)
+  }
+}
+
 function movePetToPreset(preset) {
   if (!petWindow || petWindow.isDestroyed()) return false
   const current = petWindow.getPosition()
@@ -314,7 +358,7 @@ function movePetToPreset(preset) {
   }
   const target = anchors[preset] || anchors['bottom-right']
   // 窗口左上角 = 目标 - 包围盒在窗口内的偏移，角色整体落在屏幕内
-  petWindow.setPosition(Math.round(target.x - box.x), Math.round(target.y - box.y), false)
+  placePetWindow(target.x - box.x, target.y - box.y)
   persistPetPosition()
   return true
 }
@@ -334,22 +378,25 @@ function safePetPosition(savedX, savedY) {
   }
 }
 
-function lockPetWindowSize() {
-  if (!petWindow || petWindow.isDestroyed()) return
-  const bounds = petWindow.getBounds()
-  if (bounds.width === PET_WIDTH && bounds.height === PET_HEIGHT) return
-  petWindow.setBounds({
-    x: bounds.x,
-    y: bounds.y,
-    width: PET_WIDTH,
-    height: PET_HEIGHT,
-  }, false)
-}
-
 function persistPetPosition() {
   if (!petWindow || petWindow.isDestroyed()) return
   const [windowX, windowY] = petWindow.getPosition()
   store.set({ windowX, windowY })
+}
+
+function placePetWindow(x, y) {
+  if (!petWindow || petWindow.isDestroyed()) return
+  // Windows 分数 DPI 缩放（125%/150%）下，对透明无边框窗口反复调用
+  // setPosition 会让系统读回的窗口尺寸每次 +1 DIP 不断累积（实测 125%
+  // 缩放连调 30 次 setPosition，窗口宽从 401 涨到 429），拖动中视口持续
+  // 变大，表现为"宠物越拖越偏"。setBounds 写入完整绝对几何，读回误差
+  // 有界（≤1 DIP 常量），不再累积。
+  petWindow.setBounds({
+    x: Math.round(x),
+    y: Math.round(y),
+    width: PET_WIDTH,
+    height: PET_HEIGHT,
+  }, false)
 }
 
 function schedulePositionSave() {
@@ -382,7 +429,6 @@ function createPetWindow() {
     frame: false,
     thickFrame: false,
     roundedCorners: false,
-    focusable: false,
     autoHideMenuBar: true,
     alwaysOnTop: preferences.alwaysOnTop,
     hasShadow: false,
@@ -406,9 +452,7 @@ function createPetWindow() {
   petWindow.setBackgroundColor('#00000000')
   petWindow.webContents.on('page-title-updated', event => event.preventDefault())
   petWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'))
-  // 注意：不使用 forward 选项 —— Electron 37 上 forward 钩子会泄漏，
-  // 反复切换后 setIgnoreMouseEvents(false) 无法清除穿透样式
-  petWindow.setIgnoreMouseEvents(true)
+  applyPetInteractionRegion()
 
   petWindow.once('ready-to-show', () => {
     // 首次启动（引导未完成）时先隐藏宠物，完成引导后再显示
@@ -425,7 +469,6 @@ function createPetWindow() {
   })
 
   petWindow.on('moved', schedulePositionSave)
-  petWindow.on('resize', lockPetWindowSize)
   petWindow.on('show', () => {
     petShownOnce = true
     startCursorTracking()
@@ -503,7 +546,7 @@ function togglePetVisibility() {
   // 输入子窗口（窗口能收到鼠标但网页收不到），改为移到屏幕外。
   if (!petOffScreen) {
     petLastPosition = petWindow.getPosition()
-    petWindow.setPosition(HIDDEN_X, HIDDEN_Y, false)
+    placePetWindow(HIDDEN_X, HIDDEN_Y)
     petOffScreen = true
     stopCursorTracking()
     broadcastState('pet-visibility')
@@ -513,8 +556,9 @@ function togglePetVisibility() {
   } else {
     const [x, y] = petLastPosition || [undefined, undefined]
     const position = safePetPosition(x, y)
-    petWindow.setPosition(position.x, position.y, false)
+    placePetWindow(position.x, position.y)
     petOffScreen = false
+    applyPetInteractionRegion()
     startCursorTracking()
     broadcastState('pet-visibility')
   }
@@ -540,9 +584,7 @@ function applyLoginPreference(enabled) {
 function applyPreferences() {
   const preferences = getPreferences()
   if (petWindow && !petWindow.isDestroyed()) {
-    if (preferences.interactionMode === 'locked') {
-      petWindow.setIgnoreMouseEvents(true)
-    }
+    applyPetInteractionRegion()
   }
   syncWindowLevels()
   applyLoginPreference(preferences.launchAtLogin)
@@ -616,10 +658,26 @@ function toggleAnimationPause() {
   updateTrayMenu()
 }
 
+function requestPetInteraction(kind = 'random') {
+  if (!petWindow || petWindow.isDestroyed()) return
+  if (petOffScreen) togglePetVisibility()
+  if (petOffScreen) return
+  sendToWindow(petWindow, 'pet:interact', { kind })
+}
+
+function interactionMenuTemplate() {
+  return PET_INTERACTIONS.map(item => ({
+    label: item.label,
+    click: () => requestPetInteraction(item.kind),
+  }))
+}
+
 function buildQuickMenu() {
   const current = selectedModel()
   const preferences = getPreferences()
   return Menu.buildFromTemplate([
+    { label: '和我互动', submenu: interactionMenuTemplate() },
+    { type: 'separator' },
     { label: animationPaused ? '继续动画' : '暂停动画', click: toggleAnimationPause },
     {
       label: '切换角色',
@@ -669,6 +727,7 @@ function updateTrayMenu() {
       click: togglePetVisibility,
     },
     { label: '打开设置', click: () => openSettings() },
+    { label: '和宠物互动', submenu: interactionMenuTemplate() },
     { type: 'separator' },
     {
       label: '切换角色',
@@ -717,18 +776,10 @@ function cursorTick() {
     const near = distanceToBounds(point, bounds) <= CURSOR_NEAR_DISTANCE
     const moved = !lastCursor || Math.abs(point.x - lastCursor.x) >= 3 || Math.abs(point.y - lastCursor.y) >= 3
 
-    // 鼠标进入/离开窗口矩形时立即切换穿透状态，消除按下空档。
-    // 窗口内的角色命中细分由渲染进程维护（迟滞 + 离开重置）。
     const inside = point.x >= bounds.x && point.x < bounds.x + bounds.width &&
       point.y >= bounds.y && point.y < bounds.y + bounds.height
-    if (inside !== cursorInsideWindow) {
-      cursorInsideWindow = inside
-      if (preferences.interactionMode !== 'locked') {
-        petWindow.setIgnoreMouseEvents(!inside)
-      }
-    }
 
-    // 光标位置经本轮询通道送渲染进程（OS 鼠标事件在穿透态下不可靠送达）
+    // 光标位置经本轮询通道送渲染进程，供视线跟随使用。
     const sendFollow = preferences.cursorFollow === 'near' && (moved || near !== lastCursorNear)
     if (sendFollow || inside) {
       lastCursor = point
@@ -761,27 +812,51 @@ function stopCursorTracking(reset = false) {
   if (reset) sendToWindow(petWindow, 'cursor:move', { clientX: PET_WIDTH / 2, clientY: PET_HEIGHT / 2, near: false })
 }
 
-function dragTick() {
-  dragTimer = null
+// 拖动以主进程轮询的真实光标为准（渲染进程鼠标事件经过 IPC 后有
+// 延迟，快速拖动/跨显示器时坐标还会滞后甚至错乱，用它算位置会让
+// 宠物追着过期目标来回跳、越拖越偏）。渲染进程只负责上报拖拽起止。
+function movePetDrag() {
   if (!dragActive || !dragCandidate || !petWindow || petWindow.isDestroyed()) return
-
   const cursor = screen.getCursorScreenPoint()
+  // 越窗松手/窗口失焦等场景下 mouseup 偶尔会丢失，dragActive 一直为真，
+  // 宠物会追着真实光标漂移（用户常描述为"自己往一边飘"）。真正按住拖
+  // 动时窗口跟随光标，光标应始终落在窗口内：光标离开窗口超过阈值即认
+  // 为已经松手，主动结束拖拽，避免追光标。
+  const bounds = petWindow.getBounds()
+  const cursorInside = cursor.x >= bounds.x && cursor.x < bounds.x + bounds.width &&
+    cursor.y >= bounds.y && cursor.y < bounds.y + bounds.height
+  if (!cursorInside) {
+    if (dragOutsideSince == null) dragOutsideSince = Date.now()
+    else if (Date.now() - dragOutsideSince > DRAG_OUTSIDE_TIMEOUT_MS) {
+      endPetDrag()
+      return
+    }
+  } else {
+    dragOutsideSince = null
+  }
+
   const targetX = Math.round(dragCandidate.bounds.x + cursor.x - dragCandidate.cursor.x)
   const targetY = Math.round(dragCandidate.bounds.y + cursor.y - dragCandidate.cursor.y)
   const [currentX, currentY] = petWindow.getPosition()
   if (currentX !== targetX || currentY !== targetY) {
-    petWindow.setBounds({
-      x: targetX,
-      y: targetY,
-      width: PET_WIDTH,
-      height: PET_HEIGHT,
-    }, false)
+    // 必须走 placePetWindow（setBounds 钉住尺寸）：分数 DPI 下纯
+    // setPosition 会让窗口尺寸每帧 +1 DIP 累积，越拖越偏。
+    placePetWindow(targetX, targetY)
   }
+}
+
+function dragTick() {
+  dragTimer = null
+  if (!dragActive || !dragCandidate) return
+  movePetDrag()
   dragTimer = setTimeout(dragTick, 16)
 }
 
 function primePetDrag() {
   if (!petWindow || petWindow.isDestroyed()) return
+  // 上一次拖拽若因 mouseup 丢失仍处于激活（宠物在追光标），这次按下
+  // 说明用户已重新抓取，先干净地结束上一次拖拽再记录新起点。
+  if (dragActive) endPetDrag()
   dragCandidate = {
     bounds: petWindow.getBounds(),
     cursor: screen.getCursorScreenPoint(),
@@ -792,6 +867,7 @@ function startPetDrag() {
   if (!petWindow || petWindow.isDestroyed()) return
   if (!dragCandidate) primePetDrag()
   dragActive = true
+  dragOutsideSince = null
   lastCursor = null
   lastCursorNear = false
   sendToWindow(petWindow, 'cursor:move', {
@@ -799,27 +875,32 @@ function startPetDrag() {
     clientY: PET_HEIGHT / 2,
     near: false,
   })
-  if (!dragTimer) dragTick()
+  movePetDrag()
+  if (!dragTimer) dragTimer = setTimeout(dragTick, 16)
+}
+
+function updatePetDrag() {
+  // 渲染进程 mousemove 只作为即时触发点，位置仍由真实光标决定
+  movePetDrag()
 }
 
 function endPetDrag() {
   const wasActive = dragActive
   dragActive = false
   dragCandidate = null
+  dragOutsideSince = null
   if (dragTimer) clearTimeout(dragTimer)
   dragTimer = null
   if (!petWindow || petWindow.isDestroyed()) return
 
   if (wasActive) {
-    const bounds = petWindow.getBounds()
-    const position = safePetPosition(bounds.x, bounds.y)
-    petWindow.setBounds({
-      x: position.x,
-      y: position.y,
-      width: PET_WIDTH,
-      height: PET_HEIGHT,
-    }, false)
+    const [windowX, windowY] = petWindow.getPosition()
+    const position = safePetPosition(windowX, windowY)
+    placePetWindow(position.x, position.y)
     persistPetPosition()
+    // 看门狗等场景下鼠标弹起事件丢失，渲染进程可能还停留在"拖动中"
+    // （模型冻结）。拖拽结束后通知它复位，复位函数全部幂等。
+    sendToWindow(petWindow, 'pet:drag-aborted')
   }
   lastCursor = null
   if (!appIsQuitting) startCursorTracking()
@@ -936,17 +1017,9 @@ function setupIPC() {
   ipcMain.on('app:quit', () => app.quit())
   ipcMain.on('pet:show-context-menu', showPetContextMenu)
 
-  ipcMain.on('pet:set-mouse-capture', (_event, capture) => {
-    if (!petWindow || petWindow.isDestroyed()) return
-    if (getPreferences().interactionMode === 'locked') {
-      petWindow.setIgnoreMouseEvents(true)
-      return
-    }
-    petWindow.setIgnoreMouseEvents(!capture)
-  })
-
   ipcMain.on('pet:drag-prime', primePetDrag)
   ipcMain.on('pet:drag-start', startPetDrag)
+  ipcMain.on('pet:drag-move', updatePetDrag)
   ipcMain.on('pet:drag-end', endPetDrag)
 
   ipcMain.on('pet:hit-bounds', (_event, bounds) => {
@@ -959,6 +1032,7 @@ function setupIPC() {
     } else {
       characterBounds = null
     }
+    applyPetInteractionRegion()
   })
 
   ipcMain.on('pet:save-cover', (_event, modelId, dataURL) => {
@@ -1002,8 +1076,7 @@ app.whenReady().then(() => {
 
 app.on('second-instance', () => openSettings())
 
-// 宠物窗口本身不可聚焦，残留标题栏通常在设置窗口失焦时出现。
-// 任一应用窗口失焦时重绘宠物窗口背景，清除 Windows 画出的白条。
+// 任一应用窗口失焦时重绘宠物窗口背景，清除 Windows 透明窗口偶发的残影。
 app.on('browser-window-blur', () => {
   if (petWindow && !petWindow.isDestroyed()) {
     petWindow.setBackgroundColor('#00000000')

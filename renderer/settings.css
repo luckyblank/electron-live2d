@@ -733,6 +733,10 @@ input:focus-visible {
   font-weight: 400;
 }
 
+.interaction-guide {
+  margin-top: 14px;
+}
+
 kbd {
   min-width: 28px;
   padding: 3px 7px;

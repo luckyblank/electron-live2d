@@ -10,11 +10,22 @@
   const stage = document.getElementById('pet-stage')
   const effectsCanvas = document.getElementById('fx-canvas')
   const effectsContext = effectsCanvas.getContext('2d')
+  const interactionBubble = document.getElementById('interaction-bubble')
   const statusToast = document.getElementById('status-toast')
 
   const motionPriority = { idle: 1, normal: 2, force: 3 }
   const idleCopy = ['在这里陪你', '休息一下', '安静待会儿']
   const particleColors = ['#7164d8', '#b7aef0', '#efb5c8', '#fffdf9']
+  const interactionCopy = {
+    greet: ['你好呀～', '今天也一起加油', '见到你真好'],
+    head: ['好舒服～', '再摸一下嘛', '嘿嘿，谢谢你'],
+    praise: ['被夸奖了 ✦', '谢谢你！', '今天也很开心'],
+    snack: ['好吃！', '能量补充完毕', '还想再来一点～'],
+    calm: ['让我靠一会儿', '安静陪着你', '呼…放松一下'],
+    curious: ['在忙什么呀？', '需要我陪你吗？', '我在听～'],
+    excited: ['最喜欢你啦！', '好开心！', '今天超有精神 ✦'],
+    drag: ['带我去哪里呀？', '新位置不错', '这里也很好～'],
+  }
   const state = {
     snapshot: null,
     preferences: null,
@@ -34,22 +45,29 @@
     lastFrame: 0,
     followPoint: { clientX: 200, clientY: 300, near: false },
     pointer: { clientX: 0, clientY: 0 },
-    capture: false,
     pointerDown: null,
     dragging: false,
     dragCamera: null,
+    reactionPose: null,
     motionGroups: { idle: [], tap: [] },
+    clickTimer: null,
+    clickCount: 0,
+    lastClickAt: 0,
+    lastClickPoint: null,
+    lastClickHitAreas: [],
+    longPressTimer: null,
+    longPressTriggered: false,
+    lastDragReaction: 0,
     hitMask: null,
     hitMaskPending: false,
     lastMaskRebuild: 0,
     lastHitBounds: null,
     particles: [],
-    bubble: null,
     lastFxFrame: 0,
   }
 
   let toastTimer = null
-
+  let bubbleTimer = null
   function showStatus(message, type = 'info', duration = 0) {
     statusToast.textContent = message
     statusToast.classList.toggle('is-error', type === 'error')
@@ -141,6 +159,12 @@
     if (canvas && canvas.isConnected) canvas.remove()
   }
 
+  function optimizeMotionGroups(motionGroups) {
+    // 部分第三方模型把大量参数片段放在空名称组中；Cubism 会把它们
+    // 当作完整动作解析并持续报错。保留规范动作，其他互动用轻量姿态回应。
+    return motionGroups.filter(group => typeof group.group === 'string' && group.group.trim().length > 0)
+  }
+
   function createModelInstance(canvas) {
     const qualityMode = state.preferences ? state.preferences.qualityMode : 'auto'
     const maxTextureSize = qualityMode === 'high' ? 4096 : qualityMode === 'eco' ? 1024 : 2048
@@ -167,8 +191,10 @@
     const originalLoadBuffers = model.loadBuffers.bind(model)
     model.loadBuffers = async link => {
       const buffers = await originalLoadBuffers(link)
-      buffers.motionGroups = buffers.motionGroups.filter(group => typeof group.group === 'string' && group.group.trim().length > 0)
-      model.motionIds = model.motionIds.filter(id => !id.startsWith('_'))
+      buffers.motionGroups = optimizeMotionGroups(buffers.motionGroups)
+      model.motionIds = buffers.motionGroups.flatMap(group =>
+        group.motionData.motionBuffers.map((_, index) => `${group.group}_${index}`)
+      )
       return buffers
     }
 
@@ -194,7 +220,14 @@
 
     return {
       idle: groups.filter(name => /idle|wait|stand|tick/i.test(name)),
-      tap: groups.filter(name => /tap|touch|body|head|happy|smile/i.test(name)),
+      tap: groups.filter(name => /tap|touch|body|shake/i.test(name)),
+      head: groups.filter(name => /taphead|pethead/i.test(name)),
+      greet: groups.filter(name => /greet|petgreet/i.test(name)),
+      happy: groups.filter(name => /happy|smile|pethappy/i.test(name)),
+      snack: groups.filter(name => /snack|petsnack/i.test(name)),
+      shy: groups.filter(name => /shy|petshy/i.test(name)),
+      curious: groups.filter(name => /curious|petcurious/i.test(name)),
+      sleepy: groups.filter(name => /sleep|petsleepy/i.test(name)),
     }
   }
 
@@ -204,7 +237,24 @@
 
   function playMotion(kind, priority = motionPriority.normal) {
     if (!state.model || !state.model.loaded) return
-    const groups = state.motionGroups[kind] || []
+    const fallbacks = {
+      head: ['head', 'happy', 'tap'],
+      greet: ['greet', 'happy', 'tap', 'idle'],
+      happy: ['happy', 'head', 'tap'],
+      snack: ['snack', 'happy', 'tap'],
+      shy: ['shy', 'head', 'tap'],
+      curious: ['curious', 'head', 'tap'],
+      sleepy: ['sleepy', 'idle'],
+      tap: ['tap', 'head', 'happy'],
+      idle: ['idle'],
+    }
+    let groups = []
+    for (const candidate of (fallbacks[kind] || [kind, 'tap'])) {
+      if (state.motionGroups[candidate] && state.motionGroups[candidate].length) {
+        groups = state.motionGroups[candidate]
+        break
+      }
+    }
     if (!groups.length) return
     try {
       state.model.startRandomMotion(randomItem(groups), priority)
@@ -379,22 +429,6 @@
 
   function updateMouseCapture(clientX, clientY) {
     state.pointer = { clientX, clientY }
-    if (!state.preferences || state.preferences.interactionMode === 'locked') {
-      if (state.capture) {
-        state.capture = false
-        window.petAPI.setMouseCapture(false)
-      }
-      return
-    }
-    if (state.pointerDown) return
-    // 迟滞：命中过一次角色后，整个窗口保持可交互直到光标离开窗口，
-    // 避免在角色边缘（裙摆/尾巴）反复抖动导致按下穿透
-    const insideWindow = clientX >= 0 && clientX < window.innerWidth && clientY >= 0 && clientY < window.innerHeight
-    const capture = state.capture ? insideWindow : isOnPet(clientX, clientY)
-    if (capture !== state.capture) {
-      state.capture = capture
-      window.petAPI.setMouseCapture(capture)
-    }
   }
 
   function markInteraction(duration = 2200) {
@@ -405,10 +439,22 @@
     ensureScheduler()
   }
 
-  function addClickEffect(x, y) {
+  function addReactionEffect(x, y, kind = 'tap', requestedCount = 6) {
     if (!state.preferences || state.preferences.effects !== 'subtle' || reducedMotionEnabled()) return
-    const available = Math.max(0, 10 - state.particles.length)
-    const count = Math.min(6, available)
+    const styles = {
+      tap: { glyph: '', colors: particleColors },
+      head: { glyph: '♥', colors: ['#ef9fba', '#f3bfd0', '#8f7ce0'] },
+      praise: { glyph: '✦', colors: ['#806de2', '#efb5c8', '#f4c76d'] },
+      snack: { glyph: '◆', colors: ['#f0a85e', '#f4c76d', '#efb5c8'] },
+      calm: { glyph: '·', colors: ['#a99ee7', '#c7c0ee'] },
+      curious: { glyph: '?', colors: ['#806de2', '#b7aef0'] },
+      excited: { glyph: '♥', colors: ['#e888aa', '#806de2', '#f4c76d'] },
+      greet: { glyph: '✦', colors: ['#806de2', '#b7aef0'] },
+      drag: { glyph: '·', colors: ['#a99ee7', '#efb5c8'] },
+    }
+    const style = styles[kind] || styles.tap
+    const available = Math.max(0, 14 - state.particles.length)
+    const count = Math.min(requestedCount, available)
     for (let index = 0; index < count; index++) {
       const angle = (Math.PI * 2 * index) / count + Math.random() * 0.28
       const speed = 24 + Math.random() * 24
@@ -418,7 +464,8 @@
         vx: Math.cos(angle) * speed,
         vy: Math.sin(angle) * speed - 8,
         radius: 2.5 + Math.random() * 2.5,
-        color: randomItem(particleColors),
+        color: randomItem(style.colors),
+        glyph: style.glyph,
         life: 0,
         duration: 0.55 + Math.random() * 0.2,
       })
@@ -426,15 +473,48 @@
   }
 
   function showBubble(text, duration = 2400) {
-    if (!state.preferences || state.preferences.effects !== 'subtle' || reducedMotionEnabled()) return
-    state.bubble = { text, startedAt: performance.now(), duration }
+    if (!text) return
+    const bounds = state.lastHitBounds
+    const width = window.innerWidth
+    const height = window.innerHeight
+    const x = bounds
+      ? bounds.x + bounds.width * 0.62
+      : width * 0.54
+    const y = bounds
+      ? bounds.y + Math.min(30, Math.max(8, bounds.height * 0.06))
+      : height * 0.2
+
+    interactionBubble.textContent = text
+    interactionBubble.style.left = `${Math.max(70, Math.min(width - 70, x))}px`
+    interactionBubble.style.top = `${Math.max(24, Math.min(height - 64, y))}px`
+    interactionBubble.classList.add('is-visible')
+    if (bubbleTimer) clearTimeout(bubbleTimer)
+    bubbleTimer = setTimeout(() => interactionBubble.classList.remove('is-visible'), duration)
   }
 
-  function roundedRect(context, x, y, width, height, radius) {
-    context.beginPath()
-    context.roundRect(x, y, width, height, radius)
-    context.fill()
-    context.stroke()
+  function runInteraction(requestedKind = 'random', point = null) {
+    if (!state.model || !state.model.loaded) return
+    const randomKinds = ['greet', 'head', 'praise', 'snack', 'curious']
+    const kind = requestedKind === 'random' ? randomItem(randomKinds) : requestedKind
+    const config = {
+      greet: { motion: 'greet', count: 7, pose: { x: 0.32, y: 0.08 } },
+      head: { motion: 'head', count: 8, pose: { x: 0, y: 0.48 } },
+      praise: { motion: 'happy', count: 9, pose: { x: -0.22, y: 0.18 } },
+      snack: { motion: 'snack', count: 8, pose: { x: 0.2, y: 0.3 } },
+      calm: { motion: 'sleepy', count: 5, pose: { x: 0, y: -0.34 } },
+      curious: { motion: 'curious', count: 6, pose: { x: 0.38, y: 0.24 } },
+      excited: { motion: 'happy', count: 12, pose: { x: -0.4, y: 0.38 } },
+      drag: { motion: 'greet', count: 5, pose: { x: 0.22, y: 0.12 } },
+    }[kind] || { motion: 'tap', count: 6, pose: { x: 0, y: 0.2 } }
+    const x = Math.max(20, Math.min(window.innerWidth - 20, Number(point && point.clientX) || window.innerWidth * 0.5))
+    const y = Math.max(20, Math.min(window.innerHeight - 20, Number(point && point.clientY) || window.innerHeight * 0.32))
+
+    playMotion(config.motion, kind === 'excited' ? motionPriority.force : motionPriority.normal)
+    state.reactionPose = { ...config.pose, until: performance.now() + (kind === 'calm' ? 1800 : 1150) }
+    addReactionEffect(x, y, kind, config.count)
+    const copy = interactionCopy[kind] || interactionCopy.greet
+    showBubble(randomItem(copy), kind === 'excited' ? 3000 : 2300)
+    markInteraction(kind === 'calm' ? 3000 : 2400)
   }
 
   function drawEffects(timestamp) {
@@ -444,54 +524,39 @@
     state.lastFxFrame = timestamp
     effectsContext.clearRect(0, 0, width, height)
 
-    if (!state.preferences || state.preferences.effects === 'off' || reducedMotionEnabled()) {
+    if (!state.preferences || state.preferences.effects === 'off') {
       state.particles.length = 0
-      state.bubble = null
       return
     }
 
-    state.particles = state.particles.filter(particle => {
-      particle.life += delta
-      if (particle.life >= particle.duration) return false
-      particle.x += particle.vx * delta
-      particle.y += particle.vy * delta
-      particle.vy += 36 * delta
-      const progress = particle.life / particle.duration
-      effectsContext.globalAlpha = 1 - progress
-      effectsContext.fillStyle = particle.color
-      effectsContext.beginPath()
-      effectsContext.arc(particle.x, particle.y, particle.radius * (1 - progress * 0.35), 0, Math.PI * 2)
-      effectsContext.fill()
-      return true
-    })
-    effectsContext.globalAlpha = 1
-
-    if (state.bubble) {
-      const elapsed = timestamp - state.bubble.startedAt
-      if (elapsed >= state.bubble.duration) {
-        state.bubble = null
-      } else {
-        const progress = elapsed / state.bubble.duration
-        const opacity = Math.min(1, elapsed / 180, (state.bubble.duration - elapsed) / 280)
-        effectsContext.save()
-        effectsContext.globalAlpha = opacity * 0.94
-        effectsContext.font = '12px "Segoe UI Variable", "Microsoft YaHei UI", sans-serif'
-        const textWidth = effectsContext.measureText(state.bubble.text).width
-        const boxWidth = textWidth + 24
-        const x = Math.min(width - boxWidth - 14, Math.max(14, width * 0.54 - boxWidth / 2))
-        const y = Math.max(40, height * 0.27 - progress * 10)
-        effectsContext.fillStyle = '#fffdf9'
-        effectsContext.strokeStyle = 'rgba(113, 100, 216, 0.2)'
-        effectsContext.lineWidth = 1
-        roundedRect(effectsContext, x, y, boxWidth, 34, 12)
-        effectsContext.globalAlpha = opacity
-        effectsContext.fillStyle = '#4d4854'
-        effectsContext.textAlign = 'center'
-        effectsContext.textBaseline = 'middle'
-        effectsContext.fillText(state.bubble.text, x + boxWidth / 2, y + 17)
-        effectsContext.restore()
-      }
+    if (reducedMotionEnabled()) {
+      state.particles.length = 0
+    } else {
+      state.particles = state.particles.filter(particle => {
+        particle.life += delta
+        if (particle.life >= particle.duration) return false
+        particle.x += particle.vx * delta
+        particle.y += particle.vy * delta
+        particle.vy += 36 * delta
+        const progress = particle.life / particle.duration
+        effectsContext.globalAlpha = 1 - progress
+        effectsContext.fillStyle = particle.color
+        if (particle.glyph) {
+          effectsContext.save()
+          effectsContext.font = `${Math.round(11 + particle.radius)}px "Segoe UI Symbol", "Microsoft YaHei UI", sans-serif`
+          effectsContext.textAlign = 'center'
+          effectsContext.textBaseline = 'middle'
+          effectsContext.fillText(particle.glyph, particle.x, particle.y)
+          effectsContext.restore()
+        } else {
+          effectsContext.beginPath()
+          effectsContext.arc(particle.x, particle.y, particle.radius * (1 - progress * 0.35), 0, Math.PI * 2)
+          effectsContext.fill()
+        }
+        return true
+      })
     }
+    effectsContext.globalAlpha = 1
   }
 
   function updateFollow() {
@@ -499,6 +564,13 @@
     if (state.dragging) {
       state.model.setDragging(0, 0)
       return
+    }
+    if (state.reactionPose) {
+      if (performance.now() < state.reactionPose.until) {
+        state.model.setDragging(state.reactionPose.x, state.reactionPose.y)
+        return
+      }
+      state.reactionPose = null
     }
     if (!state.preferences || state.preferences.cursorFollow !== 'near' || !state.followPoint.near) {
       state.model.setDragging(0, 0)
@@ -591,6 +663,47 @@
     state.frameRequest = null
   }
 
+  function clearLongPress() {
+    if (state.longPressTimer) clearTimeout(state.longPressTimer)
+    state.longPressTimer = null
+  }
+
+  function pointIsHead(point, hitAreas = []) {
+    return hitAreas.some(name => name.includes('head')) || point.clientY <= window.innerHeight * 0.34
+  }
+
+  function beginLongPress(point, hitAreas) {
+    clearLongPress()
+    state.longPressTriggered = false
+    state.longPressTimer = setTimeout(() => {
+      state.longPressTimer = null
+      if (!state.pointerDown || state.dragging) return
+      state.longPressTriggered = true
+      runInteraction(pointIsHead(point, hitAreas) ? 'head' : 'calm', point)
+    }, 650)
+  }
+
+  function queueClickInteraction(point, hitAreas) {
+    const now = performance.now()
+    if (now - state.lastClickAt > 420) state.clickCount = 0
+    state.lastClickAt = now
+    state.clickCount++
+    state.lastClickPoint = point
+    state.lastClickHitAreas = hitAreas
+    if (state.clickTimer) clearTimeout(state.clickTimer)
+
+    state.clickTimer = setTimeout(() => {
+      const count = state.clickCount
+      const clickPoint = state.lastClickPoint
+      const clickHitAreas = state.lastClickHitAreas
+      state.clickTimer = null
+      state.clickCount = 0
+      if (count >= 3) runInteraction('excited', clickPoint)
+      else if (count === 2) runInteraction('praise', clickPoint)
+      else runInteraction(pointIsHead(clickPoint, clickHitAreas) ? 'head' : 'curious', clickPoint)
+    }, 300)
+  }
+
   function applySnapshot(snapshot) {
     const previousModelId = state.snapshot && state.snapshot.currentModelId
     state.snapshot = snapshot
@@ -606,13 +719,6 @@
       }
     }
 
-    if (snapshot.preferences.interactionMode === 'locked') {
-      state.capture = false
-      window.petAPI.setMouseCapture(false)
-    }
-    // 解锁等模式变化时不按陈旧指针位置重判：窗口内命中由主进程
-    // cursor:move 通道在每个轮询周期驱动，避免把窗口误开成穿透/遮挡
-
     if (!previousModelId || previousModelId !== snapshot.currentModelId || !state.model) {
       requestModel(snapshot.currentModelId)
     }
@@ -625,6 +731,7 @@
     const dx = event.screenX - state.pointerDown.screenX
     const dy = event.screenY - state.pointerDown.screenY
     if (!state.dragging && Math.hypot(dx, dy) >= 6) {
+      clearLongPress()
       state.dragging = true
       if (state.model) {
         state.dragCamera = {
@@ -635,9 +742,10 @@
         state.model.setDragging(0, 0)
       }
       if (state.liveCanvas) state.liveCanvas.classList.add('is-dragging')
-      window.petAPI.dragStart()
+      window.petAPI.dragStart(event.screenX, event.screenY)
     }
     if (state.dragging) {
+      window.petAPI.dragMove(event.screenX, event.screenY)
       markInteraction(700)
     }
   })
@@ -650,12 +758,12 @@
       clientX: event.clientX,
       clientY: event.clientY,
       time: performance.now(),
+      hitAreas: hitAreasAt(event.clientX, event.clientY),
     }
     state.dragging = false
     state.dragCamera = null
-    state.capture = true
-    window.petAPI.setMouseCapture(true)
-    window.petAPI.dragPrime()
+    beginLongPress(state.pointerDown, state.pointerDown.hitAreas)
+    window.petAPI.dragPrime(event.screenX, event.screenY)
     markInteraction()
   })
 
@@ -664,15 +772,17 @@
     const pointerDown = state.pointerDown
     const moved = Math.hypot(event.screenX - pointerDown.screenX, event.screenY - pointerDown.screenY)
     const elapsed = performance.now() - pointerDown.time
+    clearLongPress()
 
     if (state.dragging) {
       window.petAPI.dragEnd()
       if (state.liveCanvas) state.liveCanvas.classList.remove('is-dragging')
-    } else if (moved < 6 && elapsed < 420 && isOnPet(pointerDown.clientX, pointerDown.clientY)) {
-      const hitAreas = hitAreasAt(pointerDown.clientX, pointerDown.clientY)
-      playMotion('tap', motionPriority.normal)
-      addClickEffect(pointerDown.clientX, pointerDown.clientY)
-      if (hitAreas.some(name => name.includes('head')) && Math.random() < 0.35) showBubble('嗯？')
+      if (moved >= 24 && performance.now() - state.lastDragReaction > 1800) {
+        state.lastDragReaction = performance.now()
+        runInteraction('drag', { clientX: event.clientX, clientY: event.clientY })
+      }
+    } else if (!state.longPressTriggered && moved < 6 && elapsed < 520 && isOnPet(pointerDown.clientX, pointerDown.clientY)) {
+      queueClickInteraction(pointerDown, pointerDown.hitAreas)
     }
 
     restoreDragCamera()
@@ -691,15 +801,24 @@
     }
   })
 
-  window.addEventListener('blur', () => {
-    if (state.pointerDown) window.petAPI.dragEnd()
+  function abortDrag() {
+    clearLongPress()
     restoreDragCamera()
     state.pointerDown = null
     state.dragging = false
     state.dragCamera = null
     if (state.liveCanvas) state.liveCanvas.classList.remove('is-dragging')
-    state.capture = false
-    window.petAPI.setMouseCapture(false)
+  }
+
+  window.addEventListener('blur', () => {
+    if (state.pointerDown) window.petAPI.dragEnd()
+    abortDrag()
+  })
+
+  // 主进程在鼠标弹起事件丢失（越窗松手等）时主动结束拖拽并通知复位，
+  // 避免模型停留在"拖动中"冻结态
+  window.petAPI.onDragAborted(() => {
+    abortDrag()
   })
 
   document.addEventListener('keydown', event => {
@@ -714,6 +833,10 @@
       const locked = state.preferences.interactionMode === 'locked'
       window.petAPI.updatePreferences({ interactionMode: locked ? 'smart' : 'locked' })
     }
+    if (event.key.toLowerCase() === 'i') {
+      event.preventDefault()
+      runInteraction('random')
+    }
   })
 
   window.petAPI.onCursorMove(point => {
@@ -722,18 +845,16 @@
       state.activeUntil = Math.max(state.activeUntil, performance.now() + 500)
       ensureScheduler()
     }
-    // 主进程轮询的光标位置驱动命中穿透，不依赖 OS 鼠标事件送达；
-    // 光标离开窗口时重置迟滞状态
     if (point.inside) updateMouseCapture(point.clientX, point.clientY)
-    else if (state.capture) {
-      state.capture = false
-      window.petAPI.setMouseCapture(false)
-    }
   })
 
   window.petAPI.onPauseChanged(paused => {
     state.paused = Boolean(paused)
     ensureScheduler()
+  })
+
+  window.petAPI.onInteractionRequested(request => {
+    runInteraction(request && request.kind ? request.kind : 'random')
   })
 
   // ---- 角色封面生成：串行加载其他模型并截取首帧缩略图 ----

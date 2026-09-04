@@ -64,6 +64,34 @@ body {
   pointer-events: none;
 }
 
+.interaction-bubble {
+  position: fixed;
+  z-index: 4;
+  top: 72px;
+  left: 50%;
+  max-width: min(260px, calc(100% - 40px));
+  min-height: 34px;
+  padding: 8px 14px;
+  border: 1px solid rgba(113, 100, 216, 0.2);
+  border-radius: 13px;
+  background: rgba(255, 253, 249, 0.96);
+  box-shadow: 0 8px 24px rgba(45, 38, 62, 0.14);
+  color: #4d4854;
+  font-size: 12px;
+  line-height: 1.45;
+  text-align: center;
+  text-wrap: pretty;
+  opacity: 0;
+  transform: translate(-50%, 6px) scale(0.98);
+  transition: opacity 160ms ease, transform 180ms ease;
+  pointer-events: none;
+}
+
+.interaction-bubble.is-visible {
+  opacity: 1;
+  transform: translate(-50%, 0) scale(1);
+}
+
 .status-toast {
   position: fixed;
   z-index: 3;
@@ -98,6 +126,7 @@ body {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .interaction-bubble,
   .status-toast {
     transition: none;
   }
