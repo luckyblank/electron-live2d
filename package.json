@@ -7,7 +7,7 @@
   "scripts": {
     "start": "nodemon --exec electron .",
     "dev": "nodemon --exec \"electron . --dev\"",
-    "check": "node --check main.js && node --check preload.js && node --check settings-preload.js && node --check renderer/app.js && node --check renderer/settings.js",
+    "check": "node --check main.js && node --check model-inspector.js && node --check preload.js && node --check settings-preload.js && node --check ai/plugin-manager.js && node --check plugins/deepseek/index.js && node --check plugins/zhipu-chat/index.js && node --check plugins/zhipu-tts/index.js && node --check renderer/app.js && node --check renderer/settings.js",
     "lint": "eslint .",
     "package:win": "npm run check && electron-builder --win",
     "release": "npm run check && electron-builder --win"
@@ -19,6 +19,7 @@
       "**/*",
       "!plan/**",
       "!release/**",
+      "!models/_repo/**",
       "!**/*.{bak,md}",
       "!test-electron.js",
       "!download-models.cjs",

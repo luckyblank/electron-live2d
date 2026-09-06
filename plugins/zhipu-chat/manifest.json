@@ -1,0 +1,14 @@
+{
+  "id": "zhipu-chat",
+  "name": "智谱 GLM",
+  "shortName": "GLM",
+  "version": "1.0.0",
+  "description": "使用 GLM-4.7-Flash 与桌面伙伴进行文字对话。",
+  "main": "index.js",
+  "homepage": "https://docs.bigmodel.cn/api-reference/模型-api/对话补全",
+  "apiKeyEnv": "ZHIPU_API_KEY",
+  "credentialId": "zhipu",
+  "capabilities": ["chat"],
+  "models": ["glm-4.7-flash"],
+  "defaultModel": "glm-4.7-flash"
+}

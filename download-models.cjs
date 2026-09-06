@@ -1,5 +1,5 @@
 /**
- * 下载精选 Live2D Q版模型到 static/models/
+ * 下载精选 Live2D Q版模型到项目 models/（随安装包发货）
  *
  * 使用部分克隆的 git 仓库来按需提取模型文件
  */
@@ -7,8 +7,8 @@ const fs = require('fs')
 const path = require('path')
 const { execSync } = require('child_process')
 
-const REPO = path.join(__dirname, 'static', 'models', '_repo')
-const DEST = path.join(__dirname, 'static', 'models')
+const REPO = path.join(__dirname, 'models', '_repo')
+const DEST = path.join(__dirname, 'models')
 
 // ── 精选模型列表 ──────────────────────────────────
 // 每个条目: { name: 目标目录名, source: 源仓库路径 }

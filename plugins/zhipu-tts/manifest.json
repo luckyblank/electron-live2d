@@ -1,0 +1,24 @@
+{
+  "id": "zhipu-tts",
+  "name": "智谱 GLM-TTS",
+  "shortName": "TTS",
+  "version": "1.0.0",
+  "description": "把伙伴的回复合成为语音，并实时驱动 Live2D 口型。",
+  "main": "index.js",
+  "homepage": "https://docs.bigmodel.cn/api-reference/模型-api/文本转语音",
+  "apiKeyEnv": "ZHIPU_API_KEY",
+  "credentialId": "zhipu",
+  "capabilities": ["tts"],
+  "models": ["glm-tts"],
+  "defaultModel": "glm-tts",
+  "voices": [
+    { "id": "tongtong", "name": "彤彤", "previewUrl": "https://docs.bigmodel.cn/resource/audio/tongtong.wav" },
+    { "id": "chuichui", "name": "锤锤", "previewUrl": "https://docs.bigmodel.cn/resource/audio/chuichui.wav" },
+    { "id": "xiaochen", "name": "小陈", "previewUrl": "https://docs.bigmodel.cn/resource/audio/xiaochen.wav" },
+    { "id": "jam", "name": "动动动物圈 · Jam", "previewUrl": "https://docs.bigmodel.cn/resource/audio/jam.wav" },
+    { "id": "kazi", "name": "动动动物圈 · Kazi", "previewUrl": "https://docs.bigmodel.cn/resource/audio/kazi.wav" },
+    { "id": "douji", "name": "动动动物圈 · Douji", "previewUrl": "https://docs.bigmodel.cn/resource/audio/douji.wav" },
+    { "id": "luodo", "name": "动动动物圈 · Luodo", "previewUrl": "https://docs.bigmodel.cn/resource/audio/luodo.wav" }
+  ],
+  "defaultVoice": "tongtong"
+}

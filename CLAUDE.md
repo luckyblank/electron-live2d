@@ -53,7 +53,12 @@ Place `live2dcubismcore.min.js` in `static/` before the app can render models. I
 
 ### Models
 
-Models live in subdirectories under `static/models/` as `.model3.json` descriptors or `.zip` bundles. Each subdirectory becomes one tray-selectable model. The `hiyori` model is prioritized as default.
+Models live in subdirectories as `.model3.json` descriptors or `.zip` bundles in two locations:
+
+- `models/` (project root) - bundled models, shipped with the installer. In dev this is the project directory; when packaged it is read from `app.asar`. `download-models.cjs` extracts curated models here from the `_repo` git clone (`models/_repo` is excluded from git and from the installer).
+- `%APPDATA%/Live2DCompanion/models/` - user-added models, survives uninstall/update. Same-name models here override bundled ones.
+
+Each subdirectory becomes one tray-selectable model. The `hiyori` model is prioritized as default.
 
 ## Build Pipeline
 

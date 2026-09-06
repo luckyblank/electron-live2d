@@ -18,6 +18,9 @@
 - 模型切换时主动释放 WebGL、纹理与音频资源
 - 角色卡片视图与自动封面缩略图
 - 用户模型目录（应用数据目录 `models`，卸载/更新不删除）
+- 可选 AI 插件：DeepSeek、智谱 GLM-4.7-Flash 文本对话，以及智谱 GLM-TTS 语音回复
+- 文本模型与语音模型独立选择；语音播放时驱动 Live2D 口型
+- TTS 音频自动归档到应用数据目录 `tts`，升级应用不会覆盖
 - 版本检查更新（打开设置自动检查，有新版本提示下载）
 
 ## 内置模型
@@ -74,6 +77,14 @@ Windows 安装包输出到 `dist/`。
 
 锁定后宠物会完全穿透鼠标，可从系统托盘菜单解除锁定。
 
+## AI 对话与语音
+
+在设置的「AI 对话」中安装并配置所需模型。文本模型组支持 DeepSeek 与智谱 `glm-4.7-flash`，语音模型组支持智谱 `glm-tts`；每组同时只启用一个插件。
+
+智谱插件优先读取环境变量 `ZHIPU_API_KEY`，DeepSeek 插件优先读取 `DEEPSEEK_API_KEY`。没有环境变量时，也可以在设置页填写 Key；Key 由 Electron 系统安全存储加密保存，界面只显示脱敏预览。
+
+智谱 TTS 生成的 WAV 文件保存在 `%APPDATA%\Live2DCompanion\tts\`，并按月份归档。该目录与用户 `models` 目录同级，不随应用更新被覆盖。
+
 ## 项目结构
 
 ```text
@@ -81,6 +92,9 @@ electron-live2d/
 ├── main.js                 # 窗口、托盘、IPC、偏好设置和模型发现
 ├── preload.js              # 宠物窗口桥接 API
 ├── settings-preload.js     # 设置窗口桥接 API
+├── ai/
+│   └── plugin-manager.js   # AI 插件发现、凭据、启用状态、记忆和语音归档
+├── plugins/                # 内置 AI 服务适配器
 ├── renderer/
 │   ├── index.html          # 透明宠物舞台
 │   ├── app.js              # Live2D 渲染、拖动、点击与调度器
@@ -88,9 +102,9 @@ electron-live2d/
 │   ├── settings.html       # 设置窗口结构
 │   ├── settings.js         # 设置窗口交互
 │   └── settings.css        # 设置窗口视觉样式
+├── models/                 # 内置 Live2D 模型（随安装包发货）
 ├── static/
-│   ├── live2dcubismcore.min.js
-│   └── models/             # 五个 Live2D 模型目录
+│   └── live2dcubismcore.min.js
 ├── resources/
 │   └── icon.png
 └── package.json
@@ -98,7 +112,9 @@ electron-live2d/
 
 ## 添加模型
 
-在 `static/models/` 下新建目录，并放入 `.model3.json` 描述文件及其依赖资源；也支持将结构完整的模型放为 `.zip`。重启应用后，合法模型会自动出现在设置窗口和托盘菜单中。
+推荐在设置的「角色」页面点击「导入 ZIP」，应用会在复制前检查模型格式和压缩包结构；不支持的 Cubism 2 模型或无效模型会直接提示，不会写入用户模型目录。也可以在 `%APPDATA%\Live2DCompanion\models\` 下手动新建目录，放入 `.model3.json` 及其依赖资源或结构完整的 `.zip`，然后通过托盘刷新模型列表。只有可加载的模型会出现在右键和托盘的切换菜单中。
+
+内置模型位于项目 `models/` 目录，随安装包发货，供首次安装的用户直接使用。
 
 ## 许可证
 

@@ -10,7 +10,40 @@
 <body>
   <main id="pet-stage" aria-label="Live2D 桌面伙伴"></main>
   <canvas id="fx-canvas" aria-hidden="true"></canvas>
-  <div id="interaction-bubble" class="interaction-bubble" role="status" aria-live="polite"></div>
+  <div id="interaction-bubble" class="interaction-bubble" role="status" aria-live="polite"><span id="interaction-bubble-text"></span></div>
+  <section id="ai-chat-panel" class="ai-chat-panel is-collapsed" aria-label="与桌面伙伴对话" hidden>
+    <header class="ai-chat-head">
+      <div class="ai-chat-identity">
+        <span class="ai-chat-meta">
+          <strong id="ai-chat-name">伙伴</strong>
+          <span class="ai-chat-presence"><i aria-hidden="true"></i><em id="ai-chat-presence-text">在线</em></span>
+        </span>
+      </div>
+      <div class="ai-chat-head-actions">
+        <button id="ai-chat-clear" type="button">清空</button>
+        <button id="ai-chat-close" type="button" aria-label="关闭对话">×</button>
+      </div>
+    </header>
+    <div id="ai-chat-messages" class="ai-chat-messages" role="log" aria-live="polite" aria-relevant="additions">
+      <div class="ai-message is-assistant">我在这里，想聊点什么？</div>
+    </div>
+    <form id="ai-chat-form" class="ai-chat-form">
+      <button id="ai-chat-toggle" class="ai-chat-toggle" type="button" aria-label="展开对话" aria-expanded="false" aria-controls="ai-chat-messages" title="展开对话">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m6 12 4-4 4 4"/></svg>
+      </button>
+      <textarea id="ai-chat-input" rows="1" maxlength="2000" placeholder="说点什么…" aria-label="对话内容"></textarea>
+      <button id="ai-chat-mute" class="ai-chat-mute is-muted" type="button" aria-label="已静音，点击开启语音" aria-pressed="true" title="已静音，点击开启语音">
+        <svg viewBox="0 0 20 20" aria-hidden="true">
+          <path d="M3.5 8h3L10 5.2v9.6L6.5 12h-3z"/>
+          <path class="ai-chat-volume-waves" d="M13 7.2a4 4 0 0 1 0 5.6M15 5.2a6.8 6.8 0 0 1 0 9.6"/>
+          <path class="ai-chat-volume-slash" d="m13 8 4 4m0-4-4 4"/>
+        </svg>
+      </button>
+      <button id="ai-chat-send" type="submit" aria-label="发送消息" disabled>
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m4 10 11-6-3.8 12-2.1-4.1L4 10Zm5.1 1.9L15 4"/></svg>
+      </button>
+    </form>
+  </section>
   <div id="status-toast" class="status-toast" role="status" aria-live="polite"></div>
   <script src="app.js"></script>
 </body>

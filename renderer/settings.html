@@ -1,8 +1,8 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-settings-theme="glass">
 <head>
   <meta charset="UTF-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' file: data:">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' file: data:; media-src 'self' data: https://docs.bigmodel.cn">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Live2D 桌面伙伴</title>
   <link rel="stylesheet" href="settings.css">
@@ -39,15 +39,20 @@
     <nav class="section-tabs" aria-label="设置分类">
       <button class="section-tab is-active" type="button" data-section="characters" aria-current="page">角色</button>
       <button class="section-tab" type="button" data-section="behavior">行为</button>
+      <button class="section-tab" type="button" data-section="ai">AI</button>
       <button class="section-tab" type="button" data-section="system">系统</button>
     </nav>
 
     <main class="settings-content">
+      <div id="settings-pet-background" class="settings-pet-background" aria-hidden="true">
+        <canvas id="settings-pet-background-canvas" width="240" height="360"></canvas>
+      </div>
       <section class="settings-section is-active" data-view="characters">
         <div class="section-heading">
           <div>
             <span class="eyebrow">当前角色</span>
             <h1 id="current-model-name">正在准备</h1>
+            <small id="current-model-source" class="current-model-source"></small>
           </div>
           <span id="runtime-status" class="runtime-status is-loading">启动中</span>
         </div>
@@ -61,17 +66,39 @@
           <input id="scale-range" type="range" min="0.5" max="2" step="0.05" value="1">
         </div>
 
+        <form id="model-nickname-form" class="nickname-control">
+          <div class="setting-copy">
+            <label for="model-nickname">角色昵称</label>
+            <p>昵称按模型单独保存</p>
+          </div>
+          <div class="nickname-editor">
+            <input id="model-nickname" type="text" maxlength="24" autocomplete="off" placeholder="角色昵称">
+            <button class="text-button" type="submit">保存昵称</button>
+          </div>
+        </form>
+
         <div class="subheading-row">
           <h2>选择角色</h2>
-          <span id="model-count">0 个可用</span>
+          <div class="subheading-tools">
+            <button id="reveal-selected-model" class="model-reveal-button" type="button" aria-label="定位到当前选中的角色" aria-controls="model-list" title="定位到当前选中的角色">
+              <svg viewBox="0 0 20 20" aria-hidden="true">
+                <path d="M7 3H5a2 2 0 0 0-2 2v2M13 3h2a2 2 0 0 1 2 2v2M7 17H5a2 2 0 0 1-2-2v-2M13 17h2a2 2 0 0 0 2-2v-2"/>
+                <circle cx="10" cy="10" r="2.5"/>
+              </svg>
+            </button>
+            <span id="model-count">0 个可用</span>
+          </div>
         </div>
         <div id="model-list" class="model-list" role="radiogroup" aria-label="角色列表"></div>
 
         <div class="models-hint">
-          <p>更多角色：把模型文件夹或 <code>.zip</code> 放进下面的 <code>models</code> 文件夹（卸载或更新程序都不会删除），然后点击托盘「刷新模型列表」。</p>
+          <p>更多角色：直接导入 <code>.zip</code> 模型包；不兼容的模型会在复制前提示，不会加入角色列表。也可以手动管理下面的 <code>models</code> 文件夹。</p>
           <div class="models-hint-row">
             <span id="models-folder-path" class="models-folder-path"></span>
-            <button id="open-models-folder" class="text-button" type="button">打开模型文件夹</button>
+            <div class="models-hint-actions">
+              <button id="import-model-zip" class="text-button is-accent" type="button">导入 ZIP</button>
+              <button id="open-models-folder" class="text-button" type="button">打开文件夹</button>
+            </div>
           </div>
         </div>
 
@@ -119,6 +146,11 @@
             <input class="switch-input" type="checkbox" data-setting="interactionMode">
             <span class="switch-track" aria-hidden="true"></span>
           </label>
+          <label class="setting-row">
+            <span class="setting-copy"><strong>背景检测</strong><small>显示完整窗口范围，透明背景也可抓取；关闭后仅角色附近可拖动。</small></span>
+            <input class="switch-input" type="checkbox" data-setting="backgroundDetection">
+            <span class="switch-track" aria-hidden="true"></span>
+          </label>
         </div>
 
         <div class="shortcut-panel interaction-guide" aria-label="互动方式">
@@ -137,6 +169,163 @@
           </div>
           <p id="quality-description">互动时保持流畅，闲置后自动降低资源占用。</p>
         </fieldset>
+      </section>
+
+      <section class="settings-section" data-view="ai" hidden>
+        <div class="section-heading compact">
+          <div>
+            <span class="eyebrow">可选能力</span>
+            <h1>让伙伴真正听懂你</h1>
+          </div>
+        </div>
+
+        <p class="section-intro">设置伙伴与你交流的方式，并选择负责理解、回复和语音播放的模型。</p>
+
+        <section class="ai-settings-block" aria-labelledby="ai-chat-settings-title">
+          <div class="ai-settings-block-heading">
+            <span class="eyebrow">CHAT</span>
+            <h2 id="ai-chat-settings-title">聊天设置</h2>
+          </div>
+
+          <form id="chat-greeting-form" class="chat-greeting-panel">
+            <label for="chat-greeting">聊天开场白</label>
+            <p id="chat-greeting-hint">每个角色首次打开聊天且没有对话记录时显示一次；留空可关闭。</p>
+            <textarea id="chat-greeting" rows="3" maxlength="200" aria-describedby="chat-greeting-hint chat-greeting-count" placeholder="例如：你好呀～今天想聊点什么？"></textarea>
+            <div class="chat-greeting-actions">
+              <span id="chat-greeting-count" aria-live="polite">0 / 200</span>
+              <button class="text-button" type="submit">保存开场白</button>
+            </div>
+          </form>
+        </section>
+
+        <section class="ai-settings-block" aria-labelledby="ai-model-settings-title">
+          <div class="ai-settings-block-heading">
+            <span class="eyebrow">MODEL</span>
+            <h2 id="ai-model-settings-title">模型设置</h2>
+          </div>
+
+          <div class="ai-capability-group">
+            <div class="ai-capability-heading">
+              <div>
+                <span class="eyebrow">TEXT</span>
+                <h2>文本模型</h2>
+              </div>
+              <span id="ai-chat-active" class="ai-capability-state">未启用</span>
+            </div>
+            <p>负责理解消息和生成回复；DeepSeek 与 GLM 同时安装时也只会启用其中一个。</p>
+            <div id="ai-chat-plugin-list" class="ai-plugin-list" aria-label="文本模型插件"></div>
+          </div>
+
+          <div class="ai-capability-group">
+            <div class="ai-capability-heading">
+              <div>
+                <span class="eyebrow">VOICE</span>
+                <h2>语音模型</h2>
+              </div>
+              <span id="ai-tts-active" class="ai-capability-state">未启用</span>
+            </div>
+            <p>把回复合成为语音并驱动 Live2D 口型；生成的音频会自动保存到外部数据目录。</p>
+            <div id="ai-tts-plugin-list" class="ai-plugin-list" aria-label="语音模型插件"></div>
+          </div>
+
+          <hr class="ai-section-divider">
+
+          <div class="models-hint">
+            <p>更多插件：把插件文件夹放进下面的 <code>plugins</code> 文件夹（卸载或更新程序都不会删除），然后点击托盘「刷新模型列表」。</p>
+            <div class="models-hint-row">
+              <span id="plugins-folder-path" class="models-folder-path"></span>
+              <button id="open-plugins-folder" class="text-button" type="button">打开插件文件夹</button>
+            </div>
+          </div>
+        </section>
+
+        <template id="ai-config-panel-template">
+        <form id="ai-config-panel" class="ai-config-panel" hidden>
+          <span id="ai-config-badge" class="ai-config-status is-pending"><i class="ai-status-dot" aria-hidden="true"></i><em>待配置</em></span>
+          <div id="ai-config-heading" class="ai-config-heading" role="button" tabindex="0" aria-expanded="true" aria-controls="ai-config-body">
+            <div>
+              <span class="eyebrow">插件设置</span>
+              <strong id="ai-config-name">DeepSeek</strong>
+            </div>
+            <svg class="ai-config-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg>
+          </div>
+
+          <div id="ai-config-body" class="ai-config-body">
+            <label class="field-label" for="ai-api-key">
+              <span>API Key</span>
+              <input id="ai-api-key" class="ai-api-key" type="text" autocomplete="off" spellcheck="false" placeholder="粘贴你的 DeepSeek API Key" aria-describedby="ai-key-hint">
+              <small id="ai-key-hint">Key 将使用系统安全存储加密保存在本机。</small>
+            </label>
+
+            <label class="field-label" for="ai-model">
+              <span id="ai-model-label">模型</span>
+              <select id="ai-model"></select>
+            </label>
+
+            <label id="ai-persona-field" class="field-label" for="ai-persona" data-ai-capability="chat">
+              <span>伙伴性格</span>
+              <textarea id="ai-persona" rows="4" maxlength="1000" placeholder="描述它应该如何与你交流"></textarea>
+            </label>
+
+            <label id="ai-history-field" class="field-label" for="ai-history-limit" data-ai-capability="chat">
+              <span>上下文记忆</span>
+              <input id="ai-history-limit" type="number" min="0" max="40" step="1" inputmode="numeric">
+              <small>保留最近的消息数量，默认 12 条；设为 0 可关闭对话记忆。</small>
+            </label>
+
+            <label id="ai-max-response-field" class="field-label" for="ai-max-response-chars" data-ai-capability="chat">
+              <span>最大回复字数</span>
+              <input id="ai-max-response-chars" type="number" min="50" max="2000" step="50" inputmode="numeric">
+              <small>限制单次文字回复长度，范围 50–2000 字，默认 300 字。</small>
+            </label>
+
+            <div id="ai-tts-fields" class="ai-tts-fields" data-ai-capability="tts" hidden>
+              <div class="field-label">
+                <label for="ai-voice">音色</label>
+                <div class="ai-voice-control">
+                  <select id="ai-voice"></select>
+                  <button id="ai-voice-preview" class="ai-voice-preview" type="button" aria-label="试听当前音色" title="试听当前音色">
+                    <svg viewBox="0 0 18 18" aria-hidden="true">
+                      <path d="M3 7h3l3.5-2.8v9.6L6 11H3z"/>
+                      <path d="M12 6.2a4 4 0 0 1 0 5.6M14 4.3a6.6 6.6 0 0 1 0 9.4"/>
+                    </svg>
+                    <span id="ai-voice-preview-label">试听</span>
+                  </button>
+                </div>
+              </div>
+              <div class="ai-field-pair">
+                <label class="field-label" for="ai-speed">
+                  <span>语速</span>
+                  <input id="ai-speed" type="number" min="0.5" max="2" step="0.1" inputmode="decimal">
+                </label>
+                <label class="field-label" for="ai-volume">
+                  <span>音量</span>
+                  <input id="ai-volume" type="number" min="0.1" max="10" step="0.1" inputmode="decimal">
+                </label>
+              </div>
+              <small id="ai-tts-folder-note" class="ai-storage-note"></small>
+            </div>
+
+            <div id="ai-test-status" class="ai-test-status" role="status" aria-live="polite">保存配置后可测试连接。</div>
+            <div class="ai-config-actions">
+              <div class="ai-primary-actions">
+                <button id="ai-save-test" class="ai-action-button is-secondary" type="submit">
+                  <span id="ai-save-test-label">保存并测试</span>
+                </button>
+                <button id="ai-open-chat" class="ai-action-button is-primary" type="button">
+                  <span>开始对话</span>
+                  <svg viewBox="0 0 18 18" aria-hidden="true"><path d="M4 5.5h10v6H8l-3.5 2v-2H4z"/></svg>
+                </button>
+              </div>
+            </div>
+
+            <div class="privacy-note">
+              <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M6.5 8V6a3.5 3.5 0 0 1 7 0v2m-8 0h9v8h-9z"/></svg>
+              <p><strong>完整 Key 不会明文回显或写入日志。</strong><span>新 Key 由主进程接收并使用系统安全存储加密；请求由主进程直连服务商。</span></p>
+            </div>
+          </div>
+        </form>
+        </template>
       </section>
 
       <section class="settings-section" data-view="system" hidden>
@@ -163,7 +352,29 @@
             <input class="switch-input" type="checkbox" data-setting="reducedMotion">
             <span class="switch-track" aria-hidden="true"></span>
           </label>
+          <label class="setting-row">
+            <span class="setting-copy"><strong>宠物动态背景</strong><small>在设置窗口背景中显示当前角色，并同步桌面动作。</small></span>
+            <input class="switch-input" type="checkbox" data-setting="settingsPetBackground">
+            <span class="switch-track" aria-hidden="true"></span>
+          </label>
         </div>
+
+        <fieldset class="theme-fieldset">
+          <legend>页面主题</legend>
+          <p>选择设置窗口的视觉风格，不影响桌面宠物。</p>
+          <div class="theme-options" role="radiogroup" aria-label="页面主题">
+            <button type="button" class="theme-option" data-settings-theme="glass" role="radio" aria-checked="false">
+              <span class="theme-preview is-glass" aria-hidden="true"><i></i><i></i><i></i></span>
+              <span><strong>玻璃质感</strong><small>通透冷紫·方案 B</small></span>
+              <i class="theme-check" aria-hidden="true"></i>
+            </button>
+            <button type="button" class="theme-option" data-settings-theme="healing" role="radio" aria-checked="false">
+              <span class="theme-preview is-healing" aria-hidden="true"><i></i><i></i><i></i></span>
+              <span><strong>二次元治愈</strong><small>暖白柔紫·方案 C</small></span>
+              <i class="theme-check" aria-hidden="true"></i>
+            </button>
+          </div>
+        </fieldset>
 
         <div class="shortcut-panel">
           <div><span>打开设置</span><kbd>右键角色</kbd></div>
