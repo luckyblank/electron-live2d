@@ -1938,8 +1938,22 @@ kbd {
   border-radius: 14px;
   background: var(--surface);
   color: var(--ink);
+  cursor: pointer;
   text-align: left;
   transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms var(--ease);
+}
+
+.theme-radio {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.theme-option:has(.theme-radio:focus-visible) {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
 }
 
 .theme-option:hover {

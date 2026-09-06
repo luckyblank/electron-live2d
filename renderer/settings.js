@@ -319,10 +319,10 @@
       ? preferences.settingsTheme
       : 'glass'
     document.documentElement.dataset.settingsTheme = settingsTheme
-    document.querySelectorAll('[data-settings-theme]').forEach(button => {
-      const selected = button.dataset.settingsTheme === settingsTheme
-      button.classList.toggle('is-active', selected)
-      button.setAttribute('aria-checked', String(selected))
+    document.querySelectorAll('[data-theme-option]').forEach(input => {
+      const selected = input.dataset.themeOption === settingsTheme
+      input.checked = selected
+      input.closest('.theme-option').classList.toggle('is-active', selected)
     })
   }
 
@@ -903,8 +903,15 @@
     button.addEventListener('click', () => savePreference({ qualityMode: button.dataset.quality }))
   })
 
-  document.querySelectorAll('[data-settings-theme]').forEach(button => {
-    button.addEventListener('click', () => savePreference({ settingsTheme: button.dataset.settingsTheme }))
+  document.querySelectorAll('[data-theme-option]').forEach(input => {
+    input.addEventListener('change', () => {
+      if (!input.checked) return
+      document.documentElement.dataset.settingsTheme = input.dataset.themeOption
+      document.querySelectorAll('.theme-option').forEach(option => {
+        option.classList.toggle('is-active', option.contains(input))
+      })
+      savePreference({ settingsTheme: input.dataset.themeOption })
+    })
   })
 
   document.getElementById('preset-grid').addEventListener('click', async event => {

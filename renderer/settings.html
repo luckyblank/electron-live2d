@@ -363,16 +363,18 @@
           <legend>页面主题</legend>
           <p>选择设置窗口的视觉风格，不影响桌面宠物。</p>
           <div class="theme-options" role="radiogroup" aria-label="页面主题">
-            <button type="button" class="theme-option" data-settings-theme="glass" role="radio" aria-checked="false">
+            <label class="theme-option">
+              <input class="theme-radio" type="radio" name="settings-theme" value="glass" data-theme-option="glass">
               <span class="theme-preview is-glass" aria-hidden="true"><i></i><i></i><i></i></span>
               <span><strong>玻璃质感</strong><small>通透冷紫·方案 B</small></span>
               <i class="theme-check" aria-hidden="true"></i>
-            </button>
-            <button type="button" class="theme-option" data-settings-theme="healing" role="radio" aria-checked="false">
+            </label>
+            <label class="theme-option">
+              <input class="theme-radio" type="radio" name="settings-theme" value="healing" data-theme-option="healing">
               <span class="theme-preview is-healing" aria-hidden="true"><i></i><i></i><i></i></span>
               <span><strong>二次元治愈</strong><small>暖白柔紫·方案 C</small></span>
               <i class="theme-check" aria-hidden="true"></i>
-            </button>
+            </label>
           </div>
         </fieldset>
 
