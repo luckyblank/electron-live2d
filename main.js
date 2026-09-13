@@ -567,7 +567,6 @@ function updateModelNickname(modelId, value) {
 }
 
 function migrateStore() {
-  const previousVersion = Number(store.get('schemaVersion')) || 1
   if (!store.has('initialSettingsShown')) {
     // 既有配置升级时不要突然弹设置页；只有启动前连配置文件都不存在的
     // 全新用户，才保留 false 并在窗口创建完成后执行一次首次展示。
@@ -590,102 +589,6 @@ function migrateStore() {
     store.set('launchAtLogin', store.get('autoLaunch'))
   }
 
-  if (previousVersion < 2) {
-    // Version 1 could capture the entire transparent window. Version 2 always
-    // starts in the safer mode where only the visible character is interactive.
-    store.set('interactionMode', 'smart')
-    if (oldModelPath) store.set('onboardingSeen', true)
-  }
-  if (previousVersion < 3) {
-    // 尺寸从 v3 起按模型保存。旧版全局 scale 不迁移，确保每个模型
-    // 第一次使用均从 100% 开始。
-    store.set('modelScales', {})
-  }
-  if (previousVersion < 4) {
-    const conversations = store.get('aiConversations')
-    if (!conversations || typeof conversations !== 'object' || Array.isArray(conversations)) {
-      store.set('aiConversations', {})
-    }
-  }
-  if (previousVersion < 5) {
-    // v5 removes the blocking first-run guide. Accounts that never completed
-    // it should enter the app with the documented initial character and the
-    // quieter default instead of inheriting the old hiyori/onboarding state.
-    if (store.get('onboardingSeen') !== true) {
-      const preferredModel = readyModels.find(model =>
-        model.id.toLowerCase() === INITIAL_USER_DEFAULTS.characters.preferredModelId.toLowerCase()
-      )
-      if (preferredModel) store.set('currentModelId', preferredModel.id)
-      store.set('idleEnabled', INITIAL_USER_DEFAULTS.behavior.idleEnabled)
-    }
-    store.set('onboardingSeen', true)
-
-    // Bundled providers are product capabilities, not optional downloads.
-    // Preserve user settings/secrets while marking every bundled default as
-    // installed and selecting it when that capability has no active provider.
-    const previousAIState = store.get('aiPlugins')
-    const aiState = previousAIState && typeof previousAIState === 'object' && !Array.isArray(previousAIState)
-      ? { ...previousAIState }
-      : {}
-    aiState.installed = [...new Set([
-      ...(Array.isArray(aiState.installed) ? aiState.installed : []),
-      ...INITIAL_USER_DEFAULTS.ai.installedPluginIds,
-    ])]
-    aiState.activeIds = aiState.activeIds && typeof aiState.activeIds === 'object'
-      ? { ...INITIAL_USER_DEFAULTS.ai.activePluginIds, ...aiState.activeIds }
-      : { ...INITIAL_USER_DEFAULTS.ai.activePluginIds }
-    for (const capability of ['chat', 'tts']) {
-      if (!aiState.activeIds[capability]) {
-        aiState.activeIds[capability] = INITIAL_USER_DEFAULTS.ai.activePluginIds[capability]
-      }
-    }
-    aiState.settings = aiState.settings && typeof aiState.settings === 'object' ? aiState.settings : {}
-    aiState.secrets = aiState.secrets && typeof aiState.secrets === 'object' ? aiState.secrets : {}
-    aiState.credentialPreferences = aiState.credentialPreferences && typeof aiState.credentialPreferences === 'object'
-      ? aiState.credentialPreferences
-      : {}
-    store.set('aiPlugins', aiState)
-  }
-  if (previousVersion < 6) {
-    store.set('bubbleStyles', normalizeBubbleStyles(store.get('bubbleStyles')))
-  }
-  if (previousVersion < 7) {
-    const profiles = store.get('modelProfiles')
-    if (!profiles || typeof profiles !== 'object' || Array.isArray(profiles)) store.set('modelProfiles', {})
-  }
-  if (previousVersion < 8) {
-    // Qwen-TTS ships as a built-in provider. Make it immediately configurable
-    // for existing users without replacing their selected TTS provider or Key.
-    const previousAIState = store.get('aiPlugins')
-    const aiState = previousAIState && typeof previousAIState === 'object' && !Array.isArray(previousAIState)
-      ? { ...previousAIState }
-      : {}
-    aiState.installed = [...new Set([
-      ...(Array.isArray(aiState.installed) ? aiState.installed : []),
-      'qwen-tts',
-    ])]
-    aiState.activeIds = aiState.activeIds && typeof aiState.activeIds === 'object'
-      ? { ...aiState.activeIds }
-      : { ...INITIAL_USER_DEFAULTS.ai.activePluginIds }
-    aiState.settings = aiState.settings && typeof aiState.settings === 'object' ? aiState.settings : {}
-    aiState.secrets = aiState.secrets && typeof aiState.secrets === 'object' ? aiState.secrets : {}
-    aiState.credentialPreferences = aiState.credentialPreferences && typeof aiState.credentialPreferences === 'object'
-      ? aiState.credentialPreferences
-      : {}
-    store.set('aiPlugins', aiState)
-  }
-  if (previousVersion < 9) {
-    const interactions = store.get('modelInteractions')
-    if (!interactions || typeof interactions !== 'object' || Array.isArray(interactions)) {
-      store.set('modelInteractions', {})
-    }
-  }
-  if (previousVersion < 10) {
-    const gestures = store.get('modelGestures')
-    if (!gestures || typeof gestures !== 'object' || Array.isArray(gestures)) {
-      store.set('modelGestures', {})
-    }
-  }
   store.set('schemaVersion', CURRENT_SCHEMA_VERSION)
 }
 

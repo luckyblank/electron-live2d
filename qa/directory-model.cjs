@@ -16,7 +16,7 @@ fs.mkdirSync(outputDirectory, { recursive: true })
 let fixtureDirectory = ''
 let modelPath = ''
 const snapshot = {
-  appVersion: '1.0.0',
+  appVersion: '1.0.1',
   currentModelId: 'hiyori-directory',
   models: [{
     id: 'hiyori-directory',

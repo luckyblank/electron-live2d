@@ -132,7 +132,7 @@ function plugin({ id, name, shortName, capabilities, activeCapabilities, models,
 }
 
 let snapshot = {
-  appVersion: '1.0.0',
+  appVersion: '1.0.1',
   currentModelId: 'mori-suit',
   models: modelDefs.map(([id, displayName]) => ({
     id,
@@ -288,7 +288,7 @@ function registerIPC() {
   }
   ipcMain.handle('window:open-external', (_event, url) => { openedUrls.push(url); return true })
   ipcMain.handle('clipboard:write-text', (_event, value) => { copiedTexts.push(value); return true })
-  ipcMain.handle('update:check', () => ({ ok: true, hasUpdate: false, current: '1.0.0', latest: '1.0.0' }))
+  ipcMain.handle('update:check', () => ({ ok: true, hasUpdate: false, current: '1.0.1', latest: '1.0.1' }))
   ipcMain.handle('update:download', () => ({ ok: false }))
   ipcMain.handle('ai:plugin-install', () => ({ ok: true, ai: cloneSnapshot().ai }))
   ipcMain.handle('ai:plugin-activate', (_e, pluginId, capability) => {

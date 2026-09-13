@@ -1,7 +1,7 @@
 {
   "name": "electron-live2d-pet",
   "productName": "Live2DCompanion",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Live2D 桌面 Q 版宠物",
   "main": "main.js",
   "scripts": {

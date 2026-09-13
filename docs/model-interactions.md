@@ -114,7 +114,7 @@ DeepSeek 角色当前可用于这些触发方式的相近具体动作包括 `点
 | 文件 | 改动 |
 |---|---|
 | `main.js` | 默认菜单与固定手势、角色级规范化与持久化、动态菜单、保存/预览 IPC、动作资源失效检查 |
-| `config/defaults.json`、`config/defaults.js` | 配置版本升级至 v10，并初始化 `modelInteractions`、`modelGestures` |
+| `config/defaults.json`、`config/defaults.js` | 初始配置版本为 v1，并初始化 `modelInteractions`、`modelGestures` |
 | `settings-preload.js` | 暴露互动保存和预览接口 |
 | `renderer/settings.html` | 增加“互动方式”页签与编辑区结构 |
 | `renderer/settings.js` | 渲染手势与菜单默认值、动作下拉框、气泡文字、手势启停、右键排序、新增/删除/停用、预览、保存和恢复默认 |

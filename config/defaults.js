@@ -30,8 +30,8 @@ function createInitialAIPluginState() {
 
 function createInitialStoreDefaults() {
   return {
-    // 缺少版本号的旧配置按 v1 迁移；全新配置会在启动迁移后写成当前版本。
-    schemaVersion: 1,
+    // v1.0.1 是初始发行版，所有新配置直接使用第 1 版结构。
+    schemaVersion: CURRENT_SCHEMA_VERSION,
     windowX: undefined,
     windowY: undefined,
     currentModelId: '',

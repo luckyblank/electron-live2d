@@ -16,7 +16,7 @@ const hiyoriPath = pathToFileURL(path.join(projectRoot, 'models', 'hiyori', 'Hiy
 const brokenPath = pathToFileURL(path.join(projectRoot, 'models', '__missing__', 'missing.model3.json')).href
 
 let snapshot = {
-  appVersion: '1.0.0',
+  appVersion: '1.0.1',
   currentModelId: 'hiyori',
   models: [
     { id: 'hiyori', name: 'hiyori', displayName: 'hiyori', path: hiyoriPath, format: 'zip', cubismVersion: 4, status: 'ready', statusMessage: '' },
@@ -93,7 +93,7 @@ function registerIPC() {
   for (const channel of ['window:reset-pet-position', 'window:move-pet', 'window:open-models-folder', 'window:open-plugins-folder', 'window:open-external']) {
     ipcMain.handle(channel, () => true)
   }
-  ipcMain.handle('update:check', () => ({ ok: true, hasUpdate: false, current: '1.0.0', latest: '1.0.0' }))
+  ipcMain.handle('update:check', () => ({ ok: true, hasUpdate: false, current: '1.0.1', latest: '1.0.1' }))
   ipcMain.handle('update:download', () => ({ ok: false }))
   ipcMain.handle('ai:plugin-install', () => ({ ok: false, ai: cloneSnapshot().ai }))
   ipcMain.handle('ai:plugin-activate', () => ({ ok: false, ai: cloneSnapshot().ai }))

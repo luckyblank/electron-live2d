@@ -100,7 +100,7 @@ async function runModelCase(modelCase) {
     statusMessage: '',
   }
   activeSnapshot = {
-    appVersion: '1.0.0',
+    appVersion: '1.0.1',
     currentModelId: modelCase.id,
     models: [modelMeta],
     covers: {},

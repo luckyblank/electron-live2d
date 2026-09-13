@@ -71,7 +71,7 @@ function createSilentWav(durationMs = 900) {
 const silentWavBase64 = createSilentWav()
 
 const snapshot = {
-  appVersion: '1.0.0',
+  appVersion: '1.0.1',
   currentModelId: 'hiyori',
   models: [{
     id: 'hiyori',
