@@ -6,11 +6,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title></title>
   <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="scrollbars.css">
 </head>
 <body>
   <main id="pet-stage" aria-label="Live2D 桌面伙伴"></main>
   <canvas id="fx-canvas" aria-hidden="true"></canvas>
-  <div id="interaction-bubble" class="interaction-bubble" role="status" aria-live="polite"><span id="interaction-bubble-text"></span></div>
+  <pet-speech-bubble id="interaction-bubble" class="interaction-bubble-widget" theme="glass" style-name="glass" role="status" aria-live="polite"></pet-speech-bubble>
   <section id="ai-chat-panel" class="ai-chat-panel is-collapsed" aria-label="与桌面伙伴对话" hidden>
     <header class="ai-chat-head">
       <div class="ai-chat-identity">
@@ -24,9 +25,7 @@
         <button id="ai-chat-close" type="button" aria-label="关闭对话">×</button>
       </div>
     </header>
-    <div id="ai-chat-messages" class="ai-chat-messages" role="log" aria-live="polite" aria-relevant="additions">
-      <div class="ai-message is-assistant">我在这里，想聊点什么？</div>
-    </div>
+    <div id="ai-chat-messages" class="ai-chat-messages" role="log" aria-live="polite" aria-relevant="additions"></div>
     <form id="ai-chat-form" class="ai-chat-form">
       <button id="ai-chat-toggle" class="ai-chat-toggle" type="button" aria-label="展开对话" aria-expanded="false" aria-controls="ai-chat-messages" title="展开对话">
         <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m6 12 4-4 4 4"/></svg>
@@ -45,6 +44,7 @@
     </form>
   </section>
   <div id="status-toast" class="status-toast" role="status" aria-live="polite"></div>
+  <script src="bubble-component.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

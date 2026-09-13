@@ -1,0 +1,52 @@
+{
+  "format": "video-pet-v1",
+  "name": "DeepSeek 小蓝鲸",
+  "description": "Q 版蓝发小女仆透明动画桌宠",
+  "render": {
+    "width": 1.4,
+    "anchor": "center"
+  },
+  "animations": {
+    "idle": [
+      "待机呼吸休闲.webm"
+    ],
+    "tap": [
+      "点击回应-开心跃动.webm",
+      "点击回应-害羞惊讶.webm",
+      "点击回应-傲娇生气.webm",
+      "点击回应-挠痒咯咯笑.webm",
+      "点击回应-元气挥手.webm"
+    ],
+    "greet": [
+      "点击回应-元气挥手.webm"
+    ],
+    "head": [
+      "点击回应-挠痒咯咯笑.webm",
+      "点击回应-害羞惊讶.webm"
+    ],
+    "happy": [
+      "点击回应-开心跃动.webm"
+    ],
+    "snack": [
+      "大口吃零食.webm"
+    ],
+    "curious": [
+      "东张西望.webm",
+      "鲸鱼吐泡泡特效.webm",
+      "原地专心玩魔方.webm",
+      "写代码.webm"
+    ],
+    "sleepy": [
+      "原地小憩沉眠.webm"
+    ],
+    "sad": [
+      "工作状态-垂头叹气冒汗.webm"
+    ],
+    "angry": [
+      "点击回应-傲娇生气.webm"
+    ],
+    "drag": [
+      "被鼠标拖拽悬空反馈.webm"
+    ]
+  }
+}

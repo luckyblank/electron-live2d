@@ -3,15 +3,34 @@
   const originalJoin = pathModule.join
   const originalDirname = pathModule.dirname
   const normalizePath = value => typeof value === 'string' ? value.replace(/\\/g, '/') : value
-  pathModule.join = (...parts) => normalizePath(originalJoin(...parts))
-  pathModule.dirname = value => normalizePath(originalDirname(value))
+  const isResourceUrl = value => typeof value === 'string' && /^[a-z][a-z\d+.-]*:\/\//i.test(value)
+  // live2d-renderer uses Node's path.dirname/path.join for both filesystem paths
+  // and browser URLs. On Windows, joining a file:// URL turns it into
+  // `.\file:\D:\...`, so fetch() resolves a bogus relative URL. Keep ordinary
+  // path behaviour, but resolve URL-backed model resources with the URL API.
+  pathModule.join = (...parts) => {
+    if (isResourceUrl(parts[0])) {
+      const base = normalizePath(parts[0])
+      const relative = parts.slice(1).map(normalizePath).join('/')
+      return new URL(relative, base.endsWith('/') ? base : `${base}/`).href
+    }
+    return normalizePath(originalJoin(...parts))
+  }
+  pathModule.dirname = value => isResourceUrl(value)
+    ? new URL('.', normalizePath(value)).href
+    : normalizePath(originalDirname(value))
 
   const { Live2DCubismModel } = require('live2d-renderer')
+  const { VideoPetModel } = require('./video-pet-model')
+  const {
+    MODEL_REACTION_PROFILES: modelReactionProfiles,
+    PREVIEW_ACTION_LABELS: previewActionLabels,
+    PREVIEW_EXPRESSION_LABELS: previewExpressionLabels,
+  } = require('../config/model-reactions')
   const stage = document.getElementById('pet-stage')
   const effectsCanvas = document.getElementById('fx-canvas')
   const effectsContext = effectsCanvas.getContext('2d')
   const interactionBubble = document.getElementById('interaction-bubble')
-  const interactionBubbleText = document.getElementById('interaction-bubble-text')
   const statusToast = document.getElementById('status-toast')
   const chatPanel = document.getElementById('ai-chat-panel')
   const chatMessages = document.getElementById('ai-chat-messages')
@@ -85,6 +104,9 @@
     dragCamera: null,
     reactionPose: null,
     motionGroups: { idle: [], tap: [] },
+    reactionSequence: 0,
+    reactionMotionTimer: null,
+    expressionResetTimer: null,
     clickTimer: null,
     clickCount: 0,
     lastClickAt: 0,
@@ -105,6 +127,7 @@
     settingsBackgroundCapturePending: false,
     settingsBackgroundLastFrameAt: 0,
     settingsBackgroundCanvas: null,
+    settingsBackgroundProbeCanvas: null,
     settingsBackgroundErrorReported: false,
     particles: [],
     lastFxFrame: 0,
@@ -112,27 +135,58 @@
 
   let toastTimer = null
   let bubbleTimer = null
+  let bubbleLeaseSequence = 0
+  let activeBubbleLease = null
+  let pendingGreetingBubble = null
   let chatBusy = false
   let chatCollapsed = true
+  let chatPositionAnimationFrame = null
   let chatMuted = true
   let speechSequence = 0
   let activeSpeechButton = null
+  let activeSpeechBubbleLease = null
   let wheelScaleTimer = null
   let wheelScaleDirection = 0
   let wheelScaleModelId = null
-  function showStatus(message, type = 'info', duration = 0) {
+
+  function reportStatusToastBounds() {
+    if (!statusToast.classList.contains('is-visible')) {
+      window.petAPI.reportStatusBounds(null)
+      return
+    }
+    const rect = statusToast.getBoundingClientRect()
+    window.petAPI.reportStatusBounds({
+      x: rect.left,
+      y: rect.top,
+      width: rect.width,
+      height: rect.height,
+    })
+  }
+
+  function showStatus(message, type = 'info', duration = 0, placement = 'default') {
     statusToast.textContent = message
     statusToast.classList.toggle('is-error', type === 'error')
+    statusToast.classList.toggle('is-scale-status', placement === 'scale')
+    updateStatusToastPosition()
     statusToast.classList.add('is-visible')
+    reportStatusToastBounds()
     if (toastTimer) clearTimeout(toastTimer)
     if (duration > 0) {
-      toastTimer = setTimeout(() => statusToast.classList.remove('is-visible'), duration)
+      toastTimer = setTimeout(() => {
+        statusToast.classList.remove('is-visible')
+        window.petAPI.reportStatusBounds(null)
+        toastTimer = null
+      }, duration)
     }
   }
 
   function hideStatus(delay = 0) {
     if (toastTimer) clearTimeout(toastTimer)
-    toastTimer = setTimeout(() => statusToast.classList.remove('is-visible'), delay)
+    toastTimer = setTimeout(() => {
+      statusToast.classList.remove('is-visible')
+      window.petAPI.reportStatusBounds(null)
+      toastTimer = null
+    }, delay)
   }
 
   function reducedMotionEnabled() {
@@ -201,9 +255,9 @@
       } catch (error) {
         console.warn('Interaction cleanup failed:', error.message)
       }
-      if (instance.loaded) {
+      if (instance.loaded || instance.kind === 'video-pet') {
         try { instance.destroy() } catch (error) { console.warn('Model cleanup failed:', error.message) }
-      } else {
+      } else if (instance.webGLRenderer) {
         try { instance.webGLRenderer.deleteShader() } catch (error) { console.warn('Shader cleanup failed:', error.message) }
       }
       try {
@@ -224,13 +278,229 @@
     if (canvas && canvas.isConnected) canvas.remove()
   }
 
+  function motionFileStem(fileName) {
+    return String(fileName || '')
+      .replace(/\\/g, '/')
+      .split('/')
+      .pop()
+      .replace(/\.motion3\.json$/i, '')
+  }
+
+  function expressionFileStem(fileName) {
+    return String(fileName || '')
+      .replace(/\\/g, '/')
+      .split('/')
+      .pop()
+      .replace(/\.exp3\.json$/i, '')
+  }
+
+  function decodeMotionBuffer(buffer) {
+    const bytes = buffer instanceof ArrayBuffer
+      ? new Uint8Array(buffer)
+      : ArrayBuffer.isView(buffer)
+        ? new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength)
+        : null
+    if (!bytes || !bytes.byteLength) throw new Error('动作数据为空')
+    return JSON.parse(new TextDecoder('utf-8').decode(bytes))
+  }
+
+  function encodeJsonBuffer(value) {
+    return new TextEncoder().encode(JSON.stringify(value)).buffer
+  }
+
+  function normalizedMotionBuffer(buffer) {
+    const motion = decodeMotionBuffer(buffer)
+    const curves = Array.isArray(motion.Curves) ? motion.Curves : []
+    let totalSegmentCount = 0
+    let totalPointCount = 0
+    for (const curve of curves) {
+      const segments = Array.isArray(curve && curve.Segments) ? curve.Segments : []
+      if (segments.length < 2) continue
+      totalPointCount++
+      for (let position = 2; position < segments.length;) {
+        const segmentType = Number(segments[position])
+        const segmentWidth = segmentType === 1 ? 7 : 3
+        if (![0, 1, 2, 3].includes(segmentType) || position + segmentWidth > segments.length) {
+          throw new Error(`动作曲线 ${curve.Id || ''} 的分段数据无效`)
+        }
+        totalSegmentCount++
+        totalPointCount += segmentType === 1 ? 3 : 1
+        position += segmentWidth
+      }
+    }
+    motion.Meta = {
+      ...(motion.Meta || {}),
+      CurveCount: curves.length,
+      TotalSegmentCount: totalSegmentCount,
+      TotalPointCount: totalPointCount,
+    }
+    return encodeJsonBuffer(motion)
+  }
+
+  function expressionBufferFromMotion(buffer) {
+    const motion = decodeMotionBuffer(buffer)
+    const parameters = (Array.isArray(motion.Curves) ? motion.Curves : [])
+      .filter(curve => curve && curve.Target === 'Parameter' && typeof curve.Id === 'string')
+      .map(curve => {
+        const segments = Array.isArray(curve.Segments) ? curve.Segments : []
+        return {
+          Id: curve.Id,
+          Value: Number(segments[segments.length - 1]),
+          Blend: 'Overwrite',
+        }
+      })
+      .filter(parameter => Number.isFinite(parameter.Value))
+    if (!parameters.length) throw new Error('动作中没有可转换的表情参数')
+    const expression = {
+      Type: 'Live2D Expression',
+      FadeInTime: 0.18,
+      FadeOutTime: 0.35,
+      Parameters: parameters,
+    }
+    return encodeJsonBuffer(expression)
+  }
+
+  function expressionBufferFromParameters(definition) {
+    const parameters = definition && Array.isArray(definition.parameters)
+      ? definition.parameters
+          .filter(parameter => parameter && typeof parameter.id === 'string' && Number.isFinite(parameter.value))
+          .map(parameter => ({
+            Id: parameter.id,
+            Value: parameter.value,
+            Blend: parameter.blend || 'Overwrite',
+          }))
+      : []
+    if (!parameters.length) throw new Error('表情映射中没有有效参数')
+    return encodeJsonBuffer({
+      Type: 'Live2D Expression',
+      FadeInTime: Number(definition.fadeInTime) || 0.22,
+      FadeOutTime: Number(definition.fadeOutTime) || 0.35,
+      Parameters: parameters,
+    })
+  }
+
+  function prepareModelReactionBuffers(model, buffers, modelId) {
+    const profile = modelReactionProfiles[modelId]
+    if (!profile) return false
+
+    const motionClips = new Map()
+    const retainedGroups = []
+    for (const group of (buffers.motionGroups || [])) {
+      // 规范命名组继续交给 ZIP 原生动作分组兜底；同时把其中每条 motion
+      // 建立文件 stem 索引，供更高优先级的模型映射精确选择。空名称组不能
+      // 交给 live2d-renderer 0.6.x 预加载，但仍能通过这个索引按需播放。
+      if (typeof group.group === 'string' && group.group.trim()) {
+        retainedGroups.push(group)
+      }
+      const motionBuffers = group.motionData && Array.isArray(group.motionData.motionBuffers)
+        ? group.motionData.motionBuffers
+        : []
+      for (let index = 0; index < motionBuffers.length; index++) {
+        const fileName = model.settings.getMotionFileName(group.group, index)
+        const stem = motionFileStem(fileName)
+        if (!stem) continue
+        let duration = 0
+        try {
+          const motion = decodeMotionBuffer(motionBuffers[index])
+          duration = Number(motion.Meta && motion.Meta.Duration) || 0
+        } catch (error) {
+          console.warn(`Motion metadata ${stem} failed:`, error.message)
+        }
+        motionClips.set(stem, {
+          buffer: motionBuffers[index],
+          duration,
+          group: group.group,
+          index,
+        })
+      }
+    }
+
+    model.petMotionClips = motionClips
+    model.petExpressionIds = new Map()
+    const actionSources = new Set()
+    for (const candidates of Object.values(profile.actions || {})) {
+      for (const candidate of candidates) {
+        if (candidate && candidate.clip) actionSources.add(candidate.clip)
+        if (candidate && candidate.followUp && candidate.followUp.clip) {
+          actionSources.add(candidate.followUp.clip)
+        }
+      }
+    }
+    for (const source of actionSources) {
+      if (!motionClips.has(source)) console.warn(`Reaction profile ${modelId} action source missing: ${source}`)
+    }
+    const expressionSources = new Set([
+      profile.neutralExpression,
+      ...Object.values(profile.expressions || {}),
+    ].filter(Boolean))
+    const nativeExpressions = new Map(
+      (model.expressionIds || []).map(expressionId => [expressionFileStem(expressionId), expressionId])
+    )
+    let nativeExpressionCount = 0
+    let generatedExpressionCount = 0
+    for (const source of expressionSources) {
+      const generatedDefinition = profile.generatedExpressions && profile.generatedExpressions[source]
+      if (generatedDefinition) {
+        try {
+          const expressionId = `pet:${modelId}:expression:${source}`
+          buffers.expressionBuffers.push(expressionBufferFromParameters(generatedDefinition))
+          model.expressionIds.push(expressionId)
+          model.petExpressionIds.set(source, expressionId)
+          generatedExpressionCount++
+        } catch (error) {
+          console.warn(`Reaction profile ${modelId} generated expression ${source} failed:`, error.message)
+        }
+        continue
+      }
+      const nativeExpressionId = nativeExpressions.get(source)
+      if (nativeExpressionId) {
+        model.petExpressionIds.set(source, nativeExpressionId)
+        nativeExpressionCount++
+        continue
+      }
+      const clip = motionClips.get(source)
+      if (!clip) {
+        console.warn(`Reaction profile ${modelId} expression source missing: ${source}`)
+        continue
+      }
+      try {
+        const expressionId = `pet:${modelId}:${source}`
+        buffers.expressionBuffers.push(expressionBufferFromMotion(clip.buffer))
+        model.expressionIds.push(expressionId)
+        model.petExpressionIds.set(source, expressionId)
+        generatedExpressionCount++
+      } catch (error) {
+        console.warn(`Reaction profile ${modelId} expression ${source} failed:`, error.message)
+      }
+    }
+
+    // 空组资源只保留在 petMotionClips 中按需解析。不要交给
+    // MotionController.load()，否则同一空组内的动作会因缓存键冲突互相覆盖；
+    // 规范命名组则保留下来，作为映射资源缺失或加载失败时的第二级兜底。
+    buffers.motionGroups = retainedGroups
+    model.motionIds = [
+      ...retainedGroups.flatMap(group =>
+        group.motionData.motionBuffers.map((_, index) => `${group.group}_${index}`)
+      ),
+      ...[...motionClips.keys()].map(stem => `pet:${modelId}:${stem}`),
+    ]
+    console.info(
+      `Reaction profile ${modelId}: ${motionClips.size} motions, ` +
+      `${model.petExpressionIds.size} expressions ` +
+      `(${nativeExpressionCount} native, ${generatedExpressionCount} generated)`
+    )
+    return true
+  }
+
   function optimizeMotionGroups(motionGroups) {
     // 部分第三方模型把大量参数片段放在空名称组中；Cubism 会把它们
     // 当作完整动作解析并持续报错。保留规范动作，其他互动用轻量姿态回应。
     return motionGroups.filter(group => typeof group.group === 'string' && group.group.trim().length > 0)
   }
 
-  function createModelInstance(canvas) {
+  function createModelInstance(canvas, modelMeta = null) {
+    if (modelMeta && modelMeta.format === 'video-pet') return new VideoPetModel(canvas)
+
     const qualityMode = state.preferences ? state.preferences.qualityMode : 'auto'
     const maxTextureSize = qualityMode === 'high' ? 4096 : qualityMode === 'eco' ? 1024 : 2048
     const model = new Live2DCubismModel(canvas, {
@@ -258,10 +528,13 @@
     const originalLoadBuffers = model.loadBuffers.bind(model)
     model.loadBuffers = async link => {
       const buffers = await originalLoadBuffers(link)
-      buffers.motionGroups = optimizeMotionGroups(buffers.motionGroups)
-      model.motionIds = buffers.motionGroups.flatMap(group =>
-        group.motionData.motionBuffers.map((_, index) => `${group.group}_${index}`)
-      )
+      const modelId = modelMeta && modelMeta.id
+      if (!prepareModelReactionBuffers(model, buffers, modelId)) {
+        buffers.motionGroups = optimizeMotionGroups(buffers.motionGroups)
+        model.motionIds = buffers.motionGroups.flatMap(group =>
+          group.motionData.motionBuffers.map((_, index) => `${group.group}_${index}`)
+        )
+      }
       return buffers
     }
 
@@ -280,6 +553,87 @@
     return model
   }
 
+  function installMappedCursorFollow(model, modelId) {
+    const followProfile = modelReactionProfiles[modelId] && modelReactionProfiles[modelId].cursorFollow
+    const configured = followProfile && Array.isArray(followProfile.parameters)
+      ? followProfile.parameters
+      : []
+    const parameterIds = model && model.parameters && Array.isArray(model.parameters.ids)
+      ? model.parameters.ids
+      : []
+    if (!configured.length || !parameterIds.length || !model.motionController || typeof model.setDragging !== 'function') return false
+
+    const parameters = configured.map(parameter => ({
+      ...parameter,
+      index: parameterIds.indexOf(parameter.id),
+    })).filter(parameter => parameter.index >= 0 && Number.isFinite(parameter.scale))
+    if (!parameters.length) {
+      console.warn(`Cursor follow profile ${modelId} has no matching model parameters`)
+      return false
+    }
+
+    const missing = configured.filter(parameter => !parameterIds.includes(parameter.id))
+    if (missing.length) {
+      console.warn(`Cursor follow profile ${modelId} parameters missing: ${missing.map(parameter => parameter.id).join(', ')}`)
+    }
+
+    const clampFollowAxis = value => Math.max(-1, Math.min(1, Number(value) || 0))
+    const deadZone = Math.max(0, Math.min(0.25, Number(followProfile.deadZone) || 0))
+    const softenFollowAxis = value => {
+      const clamped = clampFollowAxis(value)
+      const magnitude = Math.abs(clamped)
+      if (magnitude <= deadZone) return 0
+      const normalized = (magnitude - deadZone) / (1 - deadZone)
+      // smoothstep 让中心附近的细小鼠标抖动更安静，到边缘时又能完整转向。
+      const softened = normalized * normalized * (3 - 2 * normalized)
+      return Math.sign(clamped) * softened
+    }
+    const target = { x: 0, y: 0 }
+    const originalSetDragging = model.setDragging.bind(model)
+    model.setDragging = (x, y) => {
+      target.x = clampFollowAxis(x)
+      target.y = clampFollowAxis(y)
+      return originalSetDragging(target.x, target.y)
+    }
+
+    const originalMotionUpdate = model.motionController.update.bind(model.motionController)
+    model.motionController.update = deltaTime => {
+      const motionUpdated = originalMotionUpdate(deltaTime)
+      const elapsed = Math.max(1 / 240, Math.min(0.05, Number(deltaTime) || 1 / 60))
+      const drag = {
+        x: softenFollowAxis(model.dragX),
+        y: softenFollowAxis(model.dragY),
+      }
+      const desired = {
+        x: softenFollowAxis(target.x),
+        y: softenFollowAxis(target.y),
+      }
+
+      // 动作管理器会先恢复并写入当前 motion 参数。此时再叠加专用视线值，
+      // 既不会被待机/互动动作覆盖，又能继续作为后续头发和衣物物理的输入。
+      for (const parameter of parameters) {
+        const input = parameter.input === 'target' ? desired : drag
+        const sourceValue = parameter.source === 'xy'
+          ? input.x * input.y
+          : parameter.source === 'y' ? input.y : input.x
+        const targetValue = sourceValue * parameter.scale
+        const response = Math.max(0.1, Number(parameter.response) || 7)
+        const blend = 1 - Math.exp(-response * elapsed)
+        parameter.value = (Number(parameter.value) || 0) + (targetValue - (Number(parameter.value) || 0)) * blend
+        model.model.addParameterValueByIndex(parameter.index, parameter.value)
+      }
+      return motionUpdated
+    }
+
+    // 通用移动只认识 ParamAngleX 一类新版参数；该模型完全使用旧式参数名，
+    // 关闭无效的通用写入。眼睛使用快速目标缓动，头部和身体继续复用
+    // dragManager 的惯性，并按各自 response 形成不同层次的跟随速度。
+    model.enableMovement = false
+    model.petCursorFollowParameters = parameters.map(parameter => parameter.id)
+    console.info(`Cursor follow profile ${modelId}: ${parameters.length} parameters`)
+    return true
+  }
+
   function classifyMotionGroups(model) {
     const groups = ((model.buffers && model.buffers.motionGroups) || [])
       .filter(item => item.motionData && item.motionData.motionBuffers && item.motionData.motionBuffers.length)
@@ -295,6 +649,321 @@
       shy: groups.filter(name => /shy|petshy/i.test(name)),
       curious: groups.filter(name => /curious|petcurious/i.test(name)),
       sleepy: groups.filter(name => /sleep|petsleepy/i.test(name)),
+    }
+  }
+
+  // 未配置模型或映射项失效时，按常见中英文表情文件名识别 ZIP 原生表情。
+  // 这是低于 config/model-reactions.js 显式映射的第二级兜底；规则宁可保守，
+  // 避免把含义不明的表情随机叠加到角色上。
+  const nativeExpressionPatterns = {
+    idle: [/默认|neutral|normal|\bnor\b/i],
+    greet: [/微笑|smile/i],
+    head: [/害羞|羞涩|shy|touched/i],
+    praise: [/大笑|开心|笑眼|happy|delight/i],
+    snack: [/微笑|笑眼|满足|smile|snack/i],
+    calm: [/困倦|平静|calm|sleep/i],
+    curious: [/好奇|惊讶|curious|surpris/i],
+    excited: [/惊喜|兴奋|大笑|excited|happy/i],
+    sad: [/难过|焦虑|害怕|sad|sorrow|worry/i],
+    angry: [/生气|angry/i],
+    drag: [/惊讶|好奇|surpris|curious/i],
+  }
+
+  function findNativeExpressionId(model, kind) {
+    const patterns = nativeExpressionPatterns[kind] || []
+    return (model && Array.isArray(model.expressionIds) ? model.expressionIds : [])
+      .find(expressionId => {
+        const stem = expressionFileStem(expressionId)
+        return patterns.some(pattern => pattern.test(stem))
+      }) || ''
+  }
+
+  function readablePreviewLabel(value, fallback) {
+    const stem = String(value || '')
+      .replace(/\\/g, '/')
+      .split('/')
+      .pop()
+      .replace(/\.(motion3|exp3)\.json$/i, '')
+    if (previewActionLabels[stem]) return previewActionLabels[stem]
+    if (previewExpressionLabels[stem]) return previewExpressionLabels[stem]
+    const numbered = stem.match(/(?:mtn|motion|exp)[_-]?(\d+)/i)
+    if (numbered) return `${fallback} ${Number(numbered[1])}`
+    return stem
+      .replace(/^(mtn|motion|face|exp)[_-]?/i, '')
+      .replace(/[_-]+/g, ' ')
+      .trim() || fallback
+  }
+
+  function modelPreviewCatalog(model, modelId) {
+    if (model && model.kind === 'video-pet' && typeof model.previewCatalog === 'function') {
+      return { modelId, ...model.previewCatalog() }
+    }
+    const actions = []
+    const expressions = []
+    const profile = modelReactionProfiles[modelId]
+    const preferredClips = profile && Array.isArray(profile.previewClips)
+      ? profile.previewClips
+      : ['mtn_idle', 'mtn_shake_huishou', 'mtn_fushen', 'mtn_shakeh', 'head_diantou', 'head_yaotou', 'mtn_shake', 'mtn_qishen']
+    if (model.petMotionClips && model.petMotionClips.size) {
+      const clipNames = [...model.petMotionClips.keys()]
+      const ordered = [
+        ...preferredClips.filter(name => clipNames.includes(name)),
+        ...clipNames.filter(name => !preferredClips.includes(name) && /^(mtn_|head_)/i.test(name)),
+      ]
+      for (const clip of ordered.slice(0, 24)) {
+        actions.push({
+          id: `clip:${clip}`,
+          label: readablePreviewLabel(clip, '动作'),
+          type: 'clip',
+          clip,
+        })
+      }
+    }
+    if (!actions.length) {
+      for (const group of (model.buffers && model.buffers.motionGroups) || []) {
+        const count = group.motionData && Array.isArray(group.motionData.motionBuffers)
+          ? group.motionData.motionBuffers.length
+          : 0
+        for (let index = 0; index < count && actions.length < 24; index++) {
+          let source = ''
+          try { source = model.settings.getMotionFileName(group.group, index) } catch { source = '' }
+          actions.push({
+            id: `group:${group.group}:${index}`,
+            label: readablePreviewLabel(source || `${group.group}_${index + 1}`, '动作'),
+            type: 'group',
+            group: group.group,
+            index,
+          })
+        }
+      }
+    }
+    const includedExpressionIds = new Set()
+    if (model.petExpressionIds && model.petExpressionIds.size) {
+      const preferred = ['face_nor', 'face_weixiao', 'face_daxiao', 'face_xiaoqi', 'face_gandong', 'face_xingfen', 'face_jusang', 'face_haoqi', 'face_xiao']
+      const sources = [...model.petExpressionIds.keys()]
+      const ordered = [...preferred.filter(source => sources.includes(source)), ...sources.filter(source => !preferred.includes(source))]
+      for (const source of ordered.slice(0, 24)) {
+        const expressionId = model.petExpressionIds.get(source)
+        expressions.push({
+          id: `profile:${source}`,
+          label: readablePreviewLabel(source, '表情'),
+          type: 'profile',
+          source,
+          expressionId,
+        })
+        includedExpressionIds.add(expressionId)
+      }
+    }
+    // 映射表情排在前面，但不能因此隐藏 ZIP 里未参与互动映射的原生表情；
+    // 去重后补齐原生资源，让设置页仍可预览模型包提供的完整表情集合。
+    for (const expressionId of (model.expressionIds || [])) {
+      if (expressions.length >= 24) break
+      if (includedExpressionIds.has(expressionId)) continue
+      expressions.push({
+        id: `native:${expressionId}`,
+        label: readablePreviewLabel(expressionId, '表情'),
+        type: 'native',
+        expressionId,
+      })
+    }
+    if (!actions.length && profile) {
+      actions.push(
+        { id: 'interaction:idle', label: '待机', type: 'interaction', interaction: 'idle' },
+        { id: 'interaction:greet', label: '挥手', type: 'interaction', interaction: 'greet' },
+        { id: 'interaction:sleepy', label: '坐下', type: 'interaction', interaction: 'sleepy' },
+        { id: 'interaction:happy', label: '开心跳跃', type: 'interaction', interaction: 'happy' }
+      )
+    }
+    return { modelId, actions, expressions }
+  }
+
+  function finishModelAssetPreview(request, ok, error = '', preview = null) {
+    if (request && request.requestId && window.petAPI.reportModelPreviewResult) {
+      window.petAPI.reportModelPreviewResult({ requestId: request.requestId, ok, error, preview })
+    }
+    return ok
+  }
+
+  function modelParameterSnapshot(model) {
+    const coreModel = model && model.model
+    if (!coreModel || typeof coreModel.getParameterCount !== 'function' || typeof coreModel.getParameterValueByIndex !== 'function') return []
+    const values = []
+    for (let index = 0; index < coreModel.getParameterCount(); index++) {
+      values.push(Number(coreModel.getParameterValueByIndex(index)) || 0)
+    }
+    return values
+  }
+
+  function changedModelParameters(before, after) {
+    const count = Math.min(before.length, after.length)
+    let changed = 0
+    let totalDelta = 0
+    let largestDelta = 0
+    for (let index = 0; index < count; index++) {
+      const delta = Math.abs(after[index] - before[index])
+      if (delta > .0001) changed++
+      totalDelta += delta
+      largestDelta = Math.max(largestDelta, delta)
+    }
+    return {
+      changed,
+      totalDelta: Number(totalDelta.toFixed(5)),
+      largestDelta: Number(largestDelta.toFixed(5)),
+    }
+  }
+
+  function waitForPreviewFrames(frameCount = 8) {
+    return new Promise(resolve => {
+      let remaining = frameCount
+      let finished = false
+      const fallback = setTimeout(() => {
+        if (finished) return
+        finished = true
+        resolve()
+      }, 520)
+      const next = () => {
+        if (finished) return
+        remaining--
+        if (remaining <= 0) {
+          finished = true
+          clearTimeout(fallback)
+          resolve()
+          return
+        }
+        requestAnimationFrame(next)
+      }
+      requestAnimationFrame(next)
+    })
+  }
+
+  function restoreModelPreview(kind, model, baseline, sequence, request) {
+    if (sequence !== state.reactionSequence || model !== state.model || !model.loaded) return
+    try {
+      if (model.kind === 'video-pet') {
+        model.playReaction('idle').catch(error => console.warn('Restore video preview failed:', error.message))
+        state.activeUntil = performance.now() + 650
+        ensureScheduler()
+        if (window.petAPI.reportModelPreviewRestored) {
+          window.petAPI.reportModelPreviewRestored({
+            modelId: request.modelId,
+            kind,
+            assetId: request.asset && request.asset.id,
+          })
+        }
+        return
+      }
+      if (kind === 'expression' && model.expressionManager) model.expressionManager.stopAllMotions()
+      if (kind === 'action' && model.motionManager) model.motionManager.stopAllMotions()
+      const profile = currentReactionProfile()
+      const neutralExpression = profile && model.petExpressionIds
+        ? model.petExpressionIds.get(profile.neutralExpression)
+        : Array.isArray(model.expressionIds) ? model.expressionIds[0] : ''
+      if (kind === 'expression' && neutralExpression && typeof model.setExpression === 'function') {
+        model.setExpression(neutralExpression)
+      } else if (baseline.length && model.model) {
+        const count = Math.min(baseline.length, model.model.getParameterCount())
+        for (let index = 0; index < count; index++) {
+          model.model.setParameterValueByIndex(index, baseline[index])
+        }
+        model.model.saveParameters()
+      }
+      state.activeUntil = performance.now() + 650
+      ensureScheduler()
+      if (window.petAPI.reportModelPreviewRestored) {
+        window.petAPI.reportModelPreviewRestored({
+          modelId: request.modelId,
+          kind,
+          assetId: request.asset && request.asset.id,
+        })
+      }
+    } catch (error) {
+      console.warn(`Restore ${kind} preview failed:`, error.message)
+    }
+  }
+
+  async function previewModelAsset(request) {
+    const asset = request && request.asset
+    if (!asset || !state.model || !state.model.loaded || !state.modelMeta || request.modelId !== state.modelMeta.id) {
+      return finishModelAssetPreview(request, false, '角色还没有准备好')
+    }
+    const previewModel = state.model
+    const before = modelParameterSnapshot(previewModel)
+    clearReactionTimers()
+    const previewSequence = state.reactionSequence
+    const restoreAfterMs = request.kind === 'expression' ? 3600 : 4200
+    let playback = null
+    if (request.kind === 'expression') {
+      const expressionId = asset.type === 'profile' && state.model.petExpressionIds
+        ? state.model.petExpressionIds.get(asset.source)
+        : asset.expressionId
+      if (!expressionId) return finishModelAssetPreview(request, false, '表情资源不存在')
+      playback = startNativeExpressionPreview(expressionId)
+      if (!playback) {
+        return finishModelAssetPreview(request, false, '表情资源无法解析')
+      }
+      state.activeUntil = performance.now() + 4200
+    } else {
+      if (asset.type === 'clip') {
+        playback = startProfileMotionClip(asset.clip, motionPriority.force)
+      } else if (asset.type === 'video' && previewModel.kind === 'video-pet') {
+        playback = await previewModel.playAnimation(asset.video, false)
+      } else if (asset.type === 'interaction') {
+        playback = playMotion(asset.interaction, motionPriority.force)
+      } else if (asset.group) {
+        playback = startNativeMotion(asset.group, Number(asset.index) || 0, motionPriority.force)
+      }
+      if (!playback) return finishModelAssetPreview(request, false, '动作资源无法解析')
+      markInteraction(3200)
+    }
+    const timerKey = request.kind === 'expression' ? 'expressionResetTimer' : 'reactionMotionTimer'
+    state[timerKey] = setTimeout(() => {
+      state[timerKey] = null
+      restoreModelPreview(request.kind, previewModel, before, previewSequence, request)
+    }, restoreAfterMs)
+    ensureScheduler()
+    try {
+      await waitForPreviewFrames()
+      if (previewModel !== state.model || !previewModel.loaded) {
+        return finishModelAssetPreview(request, false, '预览期间角色已切换')
+      }
+      if (previewModel.kind === 'video-pet') {
+        const frame = await centeredCoverDataURL(previewModel.canvas, true)
+        return finishModelAssetPreview(request, true, '', {
+          modelId: request.modelId,
+          kind: request.kind,
+          assetId: asset.id,
+          active: true,
+          restoreAfterMs,
+          changedParameters: 0,
+          parameterDelta: 0,
+          largestParameterDelta: 0,
+          frame: typeof frame === 'string' && frame.length <= 700000 ? frame : '',
+        })
+      }
+      const parameterChange = changedModelParameters(before, modelParameterSnapshot(previewModel))
+      const manager = request.kind === 'expression' ? previewModel.expressionManager : previewModel.motionManager
+      const handle = playback && typeof playback === 'object' ? playback.handle : null
+      const active = handle !== null && handle !== undefined && handle !== -1 && manager && typeof manager.isFinishedByHandle === 'function'
+        ? !manager.isFinishedByHandle(handle)
+        : parameterChange.changed > 0
+      if (!active && parameterChange.changed === 0) {
+        return finishModelAssetPreview(request, false, `${request.kind === 'expression' ? '表情' : '动作'}已加载，但没有产生播放变化`)
+      }
+      const frame = await centeredCoverDataURL(previewModel.canvas)
+      return finishModelAssetPreview(request, true, '', {
+        modelId: request.modelId,
+        kind: request.kind,
+        assetId: asset.id,
+        active,
+        restoreAfterMs,
+        changedParameters: parameterChange.changed,
+        parameterDelta: parameterChange.totalDelta,
+        largestParameterDelta: parameterChange.largestDelta,
+        frame: typeof frame === 'string' && frame.length <= 700000 ? frame : '',
+      })
+    } catch (error) {
+      console.warn(`Preview verification ${asset.id} failed:`, error.message)
+      return finishModelAssetPreview(request, false, '预览画面验证失败')
     }
   }
 
@@ -348,6 +1017,11 @@
   function renderModelAtScale(model, scale, bounds = state.lastHitBounds) {
     const currentScale = Number(model.scale)
     const nextScale = clampModelScale(Number(scale) || 1)
+    if (model.kind === 'video-pet') {
+      model.scale = nextScale
+      model.update()
+      return
+    }
     if (!Number.isFinite(currentScale) || currentScale <= 0) {
       model.scale = nextScale
       model.update()
@@ -369,25 +1043,75 @@
     model.update()
   }
 
+  function centerVisibleModel(model) {
+    if (model && model.kind === 'video-pet') return true
+    const canvas = model && model.canvas
+    if (!canvas) return false
+    const canvasRect = canvas.getBoundingClientRect()
+    if (!canvasRect.width || !canvasRect.height) return false
+
+    // live2d-renderer 的 centerModel() 主要对齐模型坐标系，含尾巴、长发或
+    // 非对称画布留白的角色仍可能偏离窗口中央。用实际 alpha 包围盒做两次
+    // 小幅校正，让用户首次看到的是角色可见轮廓的中心，而不是资源原点。
+    for (let pass = 0; pass < 2; pass++) {
+      model.update()
+      const bounds = visibleCanvasBounds(canvas)
+      if (!bounds) return false
+      const offsetX = canvasRect.width / 2 - (bounds.x + bounds.width / 2)
+      const offsetY = canvasRect.height / 2 - (bounds.y + bounds.height / 2)
+      if (Math.abs(offsetX) < 0.75 && Math.abs(offsetY) < 0.75) return true
+      model.x -= offsetX * (canvas.width / canvasRect.width)
+      model.y += offsetY * (canvas.height / canvasRect.height)
+    }
+    model.update()
+    return true
+  }
+
   function initializeModelAtScale(model, scale) {
-    // 初次加载只在 100% 时使用一次库的自动居中，然后以实际可见中心
-    // 应用用户保存的尺寸。这样重启或切回模型后与交互缩放的结果一致。
+    if (model.kind === 'video-pet') {
+      model.scale = clampModelScale(Number(scale) || 1)
+      model.centerModel()
+      model.update()
+      return
+    }
+    // 初次加载先使用一次库的坐标系居中，再以可见轮廓精确居中；用户保存的
+    // 尺寸仍围绕角色中心应用，因此重启或切回模型时不会产生位置跳变。
     model.scale = 1
     model.centerModel()
     model.update()
     const targetScale = clampModelScale(Number(scale) || 1)
-    if (Math.abs(targetScale - 1) < 0.001) return
-    renderModelAtScale(model, targetScale, visibleCanvasBounds(model.canvas))
+    if (Math.abs(targetScale - 1) >= 0.001) {
+      renderModelAtScale(model, targetScale, visibleCanvasBounds(model.canvas))
+    }
+    centerVisibleModel(model)
   }
 
   function randomItem(items) {
     return items[Math.floor(Math.random() * items.length)]
   }
 
+  function settingsBackgroundFrameHasVisiblePixels(canvas) {
+    if (!state.settingsBackgroundProbeCanvas) {
+      state.settingsBackgroundProbeCanvas = document.createElement('canvas')
+      state.settingsBackgroundProbeCanvas.width = 24
+      state.settingsBackgroundProbeCanvas.height = 36
+    }
+    const probe = state.settingsBackgroundProbeCanvas
+    const context = probe.getContext('2d', { alpha: true, willReadFrequently: true })
+    context.clearRect(0, 0, probe.width, probe.height)
+    context.drawImage(canvas, 0, 0, probe.width, probe.height)
+    const pixels = context.getImageData(0, 0, probe.width, probe.height).data
+    let visiblePixels = 0
+    for (let index = 3; index < pixels.length; index += 4) {
+      if (pixels[index] > 8 && ++visiblePixels >= 3) return true
+    }
+    return false
+  }
+
   async function captureSettingsPetBackground(timestamp) {
     if (
       !state.settingsBackgroundCaptureActive || state.settingsBackgroundCapturePending ||
-      !state.liveCanvas || !state.model || !state.model.loaded || state.loading ||
+      !state.liveCanvas || !state.model || !state.model.loaded || state.loading || state.dragging ||
       timestamp - state.settingsBackgroundLastFrameAt < SETTINGS_BACKGROUND_FRAME_INTERVAL
     ) return
 
@@ -420,6 +1144,12 @@
       context.translate(-anchorX, -anchorY)
       context.drawImage(sourceCanvas, 0, 0, SETTINGS_BACKGROUND_WIDTH, SETTINGS_BACKGROUND_HEIGHT)
       context.restore()
+      // Windows 在移动透明 BrowserWindow 时可能短暂清空 WebGL 合成层。
+      // 全透明帧不是错误数据，但绝不能覆盖设置页上一张有效角色画面。
+      if (!settingsBackgroundFrameHasVisiblePixels(captureCanvas)) {
+        if (!state.wakeCheckTimer) scheduleWakeHealthCheck(80)
+        return
+      }
       const blob = await new Promise(resolve => captureCanvas.toBlob(resolve, 'image/webp', 0.76))
       if (!blob) throw new Error('浏览器未生成背景帧')
       const frame = await blob.arrayBuffer()
@@ -440,8 +1170,207 @@
     }
   }
 
+  function currentReactionProfile() {
+    const modelId = state.modelMeta && state.modelMeta.id
+    return modelId ? modelReactionProfiles[modelId] || null : null
+  }
+
+  function clearReactionTimers() {
+    state.reactionSequence++
+    if (state.reactionMotionTimer) clearTimeout(state.reactionMotionTimer)
+    if (state.expressionResetTimer) clearTimeout(state.expressionResetTimer)
+    state.reactionMotionTimer = null
+    state.expressionResetTimer = null
+  }
+
+  function startNativeMotion(groupName, index, priority = motionPriority.normal) {
+    const model = state.model
+    const group = model && model.buffers && Array.isArray(model.buffers.motionGroups)
+      ? model.buffers.motionGroups.find(item => item.group === groupName)
+      : null
+    const motionBuffers = group && group.motionData && group.motionData.motionBuffers
+    const motionIndex = Number.isInteger(Number(index)) ? Number(index) : 0
+    const sourceBuffer = Array.isArray(motionBuffers) ? motionBuffers[motionIndex] : null
+    if (!model || !sourceBuffer || !model.motionManager) return false
+    try {
+      // live2d-renderer 0.6.x 预加载多动作分组时会复用错误的缓存键。
+      // 预览时直接从已加载的分组 buffer 创建动作，确保点击的就是该索引。
+      const motionBuffer = normalizedMotionBuffer(sourceBuffer)
+      const motionMeta = decodeMotionBuffer(motionBuffer).Meta || {}
+      const motion = model.loadMotion(
+        motionBuffer,
+        motionBuffer.byteLength,
+        null,
+        null,
+        null,
+        model.settings,
+        groupName,
+        motionIndex
+      )
+      if (!motion) return false
+      if (typeof motion.setLoop === 'function') motion.setLoop(false)
+      if (typeof motion.setLoopFadeIn === 'function') motion.setLoopFadeIn(false)
+      motion.setEffectIds(model.eyeBlinkIds, model.lipSyncIds)
+      model.motionManager.stopAllMotions()
+      model.motionManager.setReservePriority(priority)
+      const handle = model.motionManager.startMotionPriority(motion, true, priority)
+      if (handle === -1 || handle === null || handle === undefined) return false
+      const duration = Number(motionMeta.Duration)
+      state.activeUntil = performance.now() + (Number.isFinite(duration)
+        ? Math.max(2600, duration * 1000 + 500)
+        : 3200)
+      return { handle, kind: 'motion', source: `${groupName}:${motionIndex}` }
+    } catch (error) {
+      console.warn(`Motion ${groupName}:${motionIndex} failed:`, error.message)
+      return false
+    }
+  }
+
+  function startNativeExpressionPreview(expressionId) {
+    const model = state.model
+    if (!model || !model.expressionManager) return false
+    try {
+      const index = Array.isArray(model.expressionIds) ? model.expressionIds.indexOf(expressionId) : -1
+      const sourceBuffer = index >= 0 && model.buffers && Array.isArray(model.buffers.expressionBuffers)
+        ? model.buffers.expressionBuffers[index]
+        : null
+      if (sourceBuffer) {
+        const expression = model.loadExpression(sourceBuffer, sourceBuffer.byteLength, expressionId)
+        if (!expression) return false
+        model.expressionManager.stopAllMotions()
+        const handle = model.expressionManager.startMotion(expression, true)
+        return handle !== -1 && handle !== null && handle !== undefined
+          ? { handle, kind: 'expression', source: expressionId }
+          : false
+      }
+      const cached = model.expressions && model.expressions.getValue(expressionId)
+      if (!cached) return false
+      model.expressionManager.stopAllMotions()
+      const handle = model.expressionManager.startMotion(cached, false)
+      return handle !== -1 && handle !== null && handle !== undefined
+        ? { handle, kind: 'expression', source: expressionId }
+        : false
+    } catch (error) {
+      console.warn(`Expression ${expressionId} failed:`, error.message)
+      return false
+    }
+  }
+
+  function startProfileMotionClip(clipName, priority = motionPriority.normal) {
+    const model = state.model
+    const clips = model && model.petMotionClips
+    const clip = clips && clips.get(clipName)
+    if (!model || !clip || !model.motionManager) return false
+    try {
+      const motionBuffer = clip.normalizedBuffer || (clip.normalizedBuffer = normalizedMotionBuffer(clip.buffer))
+      const motion = model.loadMotion(
+        motionBuffer,
+        motionBuffer.byteLength,
+        null,
+        null,
+        null,
+        null,
+        clip.group,
+        clip.index
+      )
+      if (!motion) return false
+      if (typeof motion.setLoop === 'function') motion.setLoop(false)
+      if (typeof motion.setLoopFadeIn === 'function') motion.setLoopFadeIn(false)
+      motion.setFadeInTime(0.12)
+      motion.setFadeOutTime(0.22)
+      motion.setEffectIds(model.eyeBlinkIds, model.lipSyncIds)
+      // 显式预览必须替换上一条动作。只提高 reserve priority 会让 SDK
+      // 接受请求却继续混合旧动作，设置页因此会显示“预览中”但角色不动。
+      model.motionManager.stopAllMotions()
+      model.motionManager.setReservePriority(priority)
+      const handle = model.motionManager.startMotionPriority(motion, true, priority)
+      if (handle === -1 || handle === null || handle === undefined) return false
+      state.activeUntil = performance.now() + Math.max(2600, clip.duration * 1000 + 500)
+      return { handle, kind: 'motion', source: clipName }
+    } catch (error) {
+      console.warn(`Profile motion ${clipName} failed:`, error.message)
+      return false
+    }
+  }
+
+  function playProfileMotion(kind, priority) {
+    const profile = currentReactionProfile()
+    const candidates = profile && profile.actions && profile.actions[kind]
+    if (!Array.isArray(candidates) || !candidates.length) return false
+    const model = state.model
+    const available = candidates.filter(candidate => (
+      candidate && candidate.clip && model && model.petMotionClips && model.petMotionClips.has(candidate.clip)
+    ))
+    let selected = null
+    // 映射的优先级高于 ZIP 动作组。单个映射文件若解析失败，继续尝试同一
+    // 语义下的其他映射候选；全部失败后 playMotion() 才会走原生分组兜底。
+    while (available.length) {
+      const index = Math.floor(Math.random() * available.length)
+      const candidate = available.splice(index, 1)[0]
+      if (startProfileMotionClip(candidate.clip, priority)) {
+        selected = candidate
+        break
+      }
+    }
+    if (!selected) return false
+    if (selected.followUp) {
+      const sequence = state.reactionSequence
+      state.reactionMotionTimer = setTimeout(() => {
+        state.reactionMotionTimer = null
+        if (sequence !== state.reactionSequence || model !== state.model) return
+        startProfileMotionClip(selected.followUp.clip, motionPriority.normal)
+      }, selected.followUp.delay)
+    }
+    return true
+  }
+
+  function applyInteractionExpression(kind, expressionId, neutralId, sourceLabel) {
+    const model = state.model
+    if (!expressionId || !model || typeof model.setExpression !== 'function') return false
+    try {
+      model.setExpression(expressionId)
+      const sequence = state.reactionSequence
+      const duration = kind === 'calm' || kind === 'sad' ? 3600 : kind === 'excited' ? 3200 : 2600
+      state.expressionResetTimer = setTimeout(() => {
+        state.expressionResetTimer = null
+        if (sequence !== state.reactionSequence || model !== state.model) return
+        if (neutralId) model.setExpression(neutralId)
+      }, duration)
+      return true
+    } catch (error) {
+      console.warn(`${sourceLabel} expression ${expressionId} failed:`, error.message)
+      return false
+    }
+  }
+
+  function playProfileExpression(kind) {
+    const profile = currentReactionProfile()
+    const model = state.model
+    const source = profile && profile.expressions && profile.expressions[kind]
+    const expressionId = source && model && model.petExpressionIds && model.petExpressionIds.get(source)
+    const neutralId = profile && profile.neutralExpression && model && model.petExpressionIds
+      ? model.petExpressionIds.get(profile.neutralExpression)
+      : ''
+    return applyInteractionExpression(kind, expressionId, neutralId, `Profile ${source || kind}`)
+  }
+
+  function playNativeExpression(kind) {
+    const model = state.model
+    const expressionId = findNativeExpressionId(model, kind)
+    const neutralId = findNativeExpressionId(model, 'idle')
+    return applyInteractionExpression(kind, expressionId, neutralId, `Native ${kind}`)
+  }
+
   function playMotion(kind, priority = motionPriority.normal) {
-    if (!state.model || !state.model.loaded) return
+    if (!state.model || !state.model.loaded) return false
+    if (state.model.kind === 'video-pet' && typeof state.model.playReaction === 'function') {
+      state.model.playReaction(kind).catch(error => console.warn(`Video reaction ${kind} failed:`, error.message))
+      state.activeUntil = performance.now() + 4200
+      return true
+    }
+    // 产品级映射是经过模型逐项校对的高优先级来源；映射缺失或播放失败时，
+    // 再使用 ZIP 自带的规范动作组，最后由 runInteraction 的轻量姿态响应兜底。
+    if (playProfileMotion(kind, priority)) return true
     const fallbacks = {
       head: ['head', 'happy', 'tap'],
       greet: ['greet', 'happy', 'tap', 'idle'],
@@ -452,6 +1381,7 @@
       sleepy: ['sleepy', 'idle'],
       sad: ['sleepy', 'idle'],
       angry: ['tap'],
+      drag: ['greet', 'happy', 'tap', 'idle'],
       tap: ['tap', 'head', 'happy'],
       idle: ['idle'],
     }
@@ -462,13 +1392,30 @@
         break
       }
     }
-    if (!groups.length) return
-    try {
-      state.model.startRandomMotion(randomItem(groups), priority)
-      state.activeUntil = performance.now() + 2600
-    } catch (error) {
-      console.warn('Motion start failed:', error.message)
+    if (!groups.length) return false
+    const groupName = randomItem(groups)
+    const group = (state.model.buffers.motionGroups || []).find(item => item.group === groupName)
+    const count = group && group.motionData && Array.isArray(group.motionData.motionBuffers)
+      ? group.motionData.motionBuffers.length
+      : 0
+    if (!count) return false
+    return startNativeMotion(groupName, Math.floor(Math.random() * count), priority)
+  }
+
+  function playMappedAction(actionId, priority = motionPriority.normal) {
+    if (!actionId || !state.modelMeta || !state.modelMeta.assets) return false
+    const actions = Array.isArray(state.modelMeta.assets.actions) ? state.modelMeta.assets.actions : []
+    const asset = actions.find(item => item.id === actionId)
+    if (!asset) return false
+    if (asset.type === 'clip') return startProfileMotionClip(asset.clip, priority)
+    if (asset.type === 'group') return startNativeMotion(asset.group, Number(asset.index) || 0, priority)
+    if (asset.type === 'interaction') return playMotion(asset.interaction, priority)
+    if (asset.type === 'video' && state.model.kind === 'video-pet') {
+      state.model.playAnimation(asset.video, false).catch(error => console.warn(`Video action ${asset.video} failed:`, error.message))
+      state.activeUntil = performance.now() + 4200
+      return true
     }
+    return false
   }
 
   function reportStatus(phase, modelId, message) {
@@ -480,8 +1427,9 @@
     const previousModel = state.model
     const previousMeta = state.modelMeta
     const previousCanvas = state.liveCanvas
+    clearReactionTimers()
     stopCurrentSpeech()
-    if (state.settingsBackgroundCaptureActive) window.petAPI.sendSettingsPetBackgroundFrame(null)
+    // 切模期间保留设置页最后一张有效角色帧；新模型首帧就绪后会原子替换。
     invalidateChatAnchor(true)
     state.model = null
     state.liveCanvas = null
@@ -491,7 +1439,7 @@
     releaseModel(previousModel, previousCanvas)
 
     const canvas = createLiveCanvas()
-    const nextModel = createModelInstance(canvas)
+    const nextModel = createModelInstance(canvas, modelMeta)
     try {
       await nextModel.load(modelMeta.path)
       // live2d-renderer 0.6.6 兼容修正：模型在 .model3.json 里声明了
@@ -514,11 +1462,12 @@
           else seen.add(key)
         }
       }
+      installMappedCursorFollow(nextModel, modelMeta.id)
       nextModel.touchController.cancelInteractions()
       nextModel.cameraController.removeListeners()
       initializeModelAtScale(nextModel, state.preferences.scale)
       nextModel.enableMotion = false
-      nextModel.paused = false
+      nextModel.paused = state.paused || !state.visible
       // 定位和最终首帧准备完成后才显示新画布，避免加载过程中的临时
       // 相机位置被用户看到。
       canvas.classList.remove('is-preparing')
@@ -526,6 +1475,7 @@
       state.model = nextModel
       state.modelMeta = modelMeta
       state.liveCanvas = canvas
+      if (!chatPanel.hidden) updateChatIdentity()
       state.webglContextLost = false
       state.motionGroups = classifyMotionGroups(nextModel)
       state.hitMaskPending = true
@@ -534,6 +1484,7 @@
       state.activeUntil = performance.now() + 2200
       state.idleStage = 0
       reportStatus('ready', modelMeta.id, `${modelMeta.name} 已就绪`)
+      window.petAPI.reportModelAssets(modelPreviewCatalog(nextModel, modelMeta.id))
       hideStatus(650)
 
       document.querySelectorAll('.model-snapshot').forEach(snapshot => {
@@ -631,6 +1582,7 @@
         state.lastHitBounds = bounds
         window.petAPI.reportHitBounds(bounds)
       }
+      if (bounds) flushPendingGreetingBubble()
       if (!chatPanel.hidden && !chatAnchorMatchesCurrentModel()) {
         captureChatAnchor(bounds)
         updateChatPosition()
@@ -670,13 +1622,18 @@
       state.wakeCheckTimer = null
       if (!state.visible || state.loading || state.recoveringVisibility || !state.model || !state.model.loaded) return
 
-      let contextLost = state.webglContextLost
-      try {
-        const context = state.liveCanvas && state.liveCanvas.getContext('webgl2')
-        contextLost = contextLost || !context || context.isContextLost()
-        if (!contextLost) state.model.update()
-      } catch (error) {
-        contextLost = true
+      let contextLost = false
+      if (state.model.kind === 'video-pet') {
+        try { state.model.update() } catch (error) { contextLost = true }
+      } else {
+        contextLost = state.webglContextLost
+        try {
+          const context = state.liveCanvas && state.liveCanvas.getContext('webgl2')
+          contextLost = contextLost || !context || context.isContextLost()
+          if (!contextLost) state.model.update()
+        } catch (error) {
+          contextLost = true
+        }
       }
 
       const hasVisiblePixels = !contextLost && rebuildHitMask()
@@ -751,7 +1708,14 @@
 
     const currentScale = Number(state.preferences && state.preferences.scale)
     const nextScale = steppedModelScale(currentScale, direction)
-    if (!Number.isFinite(currentScale) || Math.abs(nextScale - currentScale) < 0.001) return
+    if (!Number.isFinite(currentScale)) return
+    if (Math.abs(nextScale - currentScale) < 0.001) {
+      showStatus(`角色尺寸已达 ${Math.round(currentScale * 100)}%`, 'info', 1300, 'scale')
+      return
+    }
+
+    // 先给出即时视觉反馈，避免等待跨进程持久化时让滚轮操作显得没有生效。
+    showStatus(`角色尺寸 ${Math.round(nextScale * 100)}%`, 'info', 1300, 'scale')
 
     try {
       const result = await window.petAPI.updateModelScale(modelId, nextScale)
@@ -760,7 +1724,6 @@
         return
       }
       markInteraction(1200)
-      showStatus(`角色尺寸 ${Math.round(nextScale * 100)}%`, 'info', 900)
     } catch (error) {
       console.error('Wheel scale update failed:', error)
       showStatus('角色尺寸保存失败', 'error', 1800)
@@ -901,47 +1864,123 @@
     return 10000
   }
 
-  function showBubble(text, duration = null, source = 'interaction') {
-    if (!text) return
-    // AI 请求期间只允许最终回复占用宠物气泡；拖动、点击和闲置反馈
-    // 仍可执行动作与粒子效果，但不覆盖对话状态，也不在结束后补发。
-    if (chatBusy && source !== 'ai') return
+  function currentBubbleTheme() {
+    return document.documentElement.dataset.settingsTheme === 'healing' ? 'healing' : 'glass'
+  }
+
+  function currentBubbleStyle() {
+    const theme = currentBubbleTheme()
+    const selected = state.preferences && state.preferences.bubbleStyles
+      ? state.preferences.bubbleStyles[theme]
+      : ''
+    return ['glass', 'sweet', 'pixel', 'sci-fi'].includes(selected) ? selected : 'glass'
+  }
+
+  function syncBubbleChrome() {
+    const meta = currentModelMeta()
+    const nickname = meta && typeof meta.nickname === 'string' ? meta.nickname.trim() : ''
+    const modelName = meta && typeof meta.name === 'string' ? meta.name.trim() : ''
+    const displayName = meta && typeof meta.displayName === 'string' ? meta.displayName.trim() : ''
+    const theme = currentBubbleTheme()
+    interactionBubble.setAttribute('theme', theme)
+    interactionBubble.styleName = currentBubbleStyle()
+    // Bubble identity is model-owned, not theme-owned: a saved nickname wins;
+    // otherwise show the model's original role name.
+    interactionBubble.label = nickname || modelName || displayName || '伙伴'
+  }
+
+  function reportBubbleVisualBounds(bounds) {
+    // 标签、花瓣和光晕会超出主体矩形。把视觉外溢一并交给主进程，
+    // 避免 Windows setShape() 裁掉参考设计中的悬浮装饰。
+    const overflow = interactionBubble.visualOverflow || 18
+    window.petAPI.reportBubbleBounds({
+      x: bounds.left - overflow,
+      y: bounds.top - overflow,
+      width: bounds.width + overflow * 2,
+      height: bounds.height + overflow * 2,
+    })
+  }
+
+  function layoutInteractionBubble() {
     const width = window.innerWidth
     const height = window.innerHeight
-    const edge = 10
+    const bodyEdge = 20
     const gap = 10
     const mouth = currentMouthAnchor()
     const bounds = state.lastHitBounds
     const characterTop = bounds ? bounds.y : mouth.head.top
-    const bubbleWidth = Math.min(220, width - edge * 2)
-    const left = Math.max(edge, Math.round((width - bubbleWidth) * 0.5))
+    const preferredWidth = interactionBubble.preferredWidth || 270
+    const bubbleWidth = Math.min(preferredWidth, width - 24)
+    const left = Math.max(12, Math.round((width - bubbleWidth) * 0.5))
 
-    interactionBubbleText.textContent = text
-    interactionBubble.classList.remove('is-left', 'is-right')
-    interactionBubble.classList.add('is-top')
     interactionBubble.style.width = `${bubbleWidth}px`
     interactionBubble.style.left = `${left}px`
-    interactionBubble.style.top = `${edge}px`
-    interactionBubble.classList.add('is-visible')
-    const bubbleRect = interactionBubble.getBoundingClientRect()
-    const top = Math.max(edge, Math.min(height - edge - bubbleRect.height, characterTop - gap - bubbleRect.height))
+    interactionBubble.style.top = `${bodyEdge}px`
+    const bubbleHeight = interactionBubble.offsetHeight
+    const top = Math.max(bodyEdge, Math.min(height - 12 - bubbleHeight, characterTop - gap - bubbleHeight))
     interactionBubble.style.top = `${top}px`
-    interactionBubble.style.setProperty('--bubble-tail-x', `${Math.max(18, Math.min(bubbleRect.width - 18, mouth.x - left))}px`)
-    window.petAPI.reportBubbleBounds({ x: left, y: top, width: bubbleRect.width, height: bubbleRect.height })
+    interactionBubble.setTailX(Math.max(28, Math.min(bubbleWidth - 28, mouth.x - left)))
+    reportBubbleVisualBounds({ left, top, width: bubbleWidth, height: bubbleHeight })
+  }
+
+  function dismissBubble(lease = activeBubbleLease) {
+    if (lease == null || lease !== activeBubbleLease) return false
     if (bubbleTimer) clearTimeout(bubbleTimer)
+    bubbleTimer = null
+    activeBubbleLease = null
+    interactionBubble.classList.remove('is-visible')
+    window.petAPI.reportBubbleBounds(null)
+    return true
+  }
+
+  function updateBubbleText(lease, text) {
+    if (lease == null || lease !== activeBubbleLease || !text) return false
+    interactionBubble.message = text
+    syncBubbleChrome()
+    layoutInteractionBubble()
+    return true
+  }
+
+  function showBubble(text, duration = null, source = 'interaction', options = {}) {
+    if (!text) return null
+    // 气泡必须依附于已完成加载且已有有效像素边界的当前角色，不能在
+    // 空画布上先于角色出现。启动问候由 ensureChatGreeting 单独暂存。
+    if (
+      !state.model || !state.model.loaded || !state.modelMeta || !state.lastHitBounds ||
+      !state.snapshot || state.modelMeta.id !== state.snapshot.currentModelId
+    ) return null
+    // AI 请求期间只允许最终回复占用宠物气泡；拖动、点击和闲置反馈
+    // 仍可执行动作与粒子效果，但不覆盖对话状态，也不在结束后补发。
+    if (chatBusy && source !== 'ai') return null
+    // 气泡是严格的单实例资源：当前内容存续期间，任何后来消息直接
+    // 丢弃，不替换、不续时，也不进入队列。
+    if (activeBubbleLease != null || interactionBubble.classList.contains('is-visible')) return null
+    const lease = ++bubbleLeaseSequence
+    activeBubbleLease = lease
+
+    interactionBubble.message = text
+    interactionBubble.classList.remove('is-left', 'is-right')
+    interactionBubble.classList.add('is-top')
+    syncBubbleChrome()
+    interactionBubble.classList.add('is-visible')
+    layoutInteractionBubble()
+    if (options.hold) return lease
     const visibleDuration = Number.isFinite(duration) && duration > 0
       ? duration
       : bubbleDurationForText(text)
     bubbleTimer = setTimeout(() => {
-      interactionBubble.classList.remove('is-visible')
-      window.petAPI.reportBubbleBounds(null)
+      bubbleTimer = null
+      dismissBubble(lease)
     }, visibleDuration)
+    return lease
   }
 
-  function runInteraction(requestedKind = 'random', point = null) {
+  function runInteraction(requestedKind = 'random', point = null, options = {}) {
     if (!state.model || !state.model.loaded) return
     const randomKinds = ['greet', 'head', 'praise', 'snack', 'curious']
-    const kind = requestedKind === 'random' ? randomItem(randomKinds) : requestedKind
+    const kind = requestedKind === 'custom'
+      ? 'curious'
+      : requestedKind === 'random' ? randomItem(randomKinds) : requestedKind
     const config = {
       greet: { motion: 'greet', count: 7, pose: { x: 0.32, y: 0.08 } },
       head: { motion: 'head', count: 8, pose: { x: 0, y: 0.48 } },
@@ -950,18 +1989,28 @@
       calm: { motion: 'sleepy', count: 5, pose: { x: 0, y: -0.34 } },
       curious: { motion: 'curious', count: 6, pose: { x: 0.38, y: 0.24 } },
       excited: { motion: 'happy', count: 12, pose: { x: -0.4, y: 0.38 } },
-      sad: { motion: 'sleepy', count: 4, pose: { x: 0, y: -0.46 } },
-      angry: { motion: 'tap', count: 7, pose: { x: -0.36, y: -0.14 } },
-      drag: { motion: 'greet', count: 5, pose: { x: 0.22, y: 0.12 } },
+      sad: { motion: 'sad', count: 4, pose: { x: 0, y: -0.46 } },
+      angry: { motion: 'angry', count: 7, pose: { x: -0.36, y: -0.14 } },
+      drag: { motion: 'drag', count: 5, pose: { x: 0.22, y: 0.12 } },
     }[kind] || { motion: 'tap', count: 6, pose: { x: 0, y: 0.2 } }
     const x = Math.max(20, Math.min(window.innerWidth - 20, Number(point && point.clientX) || window.innerWidth * 0.5))
     const y = Math.max(20, Math.min(window.innerHeight - 20, Number(point && point.clientY) || window.innerHeight * 0.32))
 
-    playMotion(config.motion, kind === 'excited' ? motionPriority.force : motionPriority.normal)
+    clearReactionTimers()
+    const priority = kind === 'excited' ? motionPriority.force : motionPriority.normal
+    const mappedActionPlayed = options.actionId ? playMappedAction(options.actionId, priority) : false
+    if (!mappedActionPlayed) playMotion(config.motion, priority)
+    // 显式模型映射优先；没有配置、资源缺失或解析失败时，再按 ZIP 中原生
+    // expression 的常见命名匹配。两者都不可用也不阻断动作与姿态反馈。
+    if (!playProfileExpression(kind)) playNativeExpression(kind)
     state.reactionPose = { ...config.pose, until: performance.now() + (kind === 'calm' ? 1800 : 1150) }
     addReactionEffect(x, y, kind, config.count)
-    const copy = interactionCopy[kind] || interactionCopy.greet
-    showBubble(randomItem(copy))
+    const copy = options.text
+      ? [options.text]
+      : requestedKind === 'custom' && options.label
+        ? [options.label]
+        : interactionCopy[kind] || interactionCopy.greet
+    if (options.bubble !== false) showBubble(randomItem(copy))
     markInteraction(kind === 'calm' ? 3000 : 2400)
   }
 
@@ -973,6 +2022,14 @@
     content.className = 'ai-message-content'
     content.textContent = text
     message.appendChild(content)
+    if (!['thinking', 'error'].includes(type)) {
+      const timestamp = document.createElement('time')
+      const now = new Date()
+      timestamp.className = 'ai-message-time'
+      timestamp.dateTime = now.toISOString()
+      timestamp.textContent = now.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })
+      message.appendChild(timestamp)
+    }
     if (type === 'assistant' && speech && speech.audioBase64) {
       const audioButton = document.createElement('button')
       audioButton.className = 'ai-message-audio'
@@ -980,7 +2037,8 @@
       audioButton.setAttribute('aria-label', '播放这条语音')
       audioButton.title = '播放这条语音'
       audioButton.innerHTML = '<svg viewBox="0 0 18 18" aria-hidden="true"><path d="M3 7h3l3.5-2.8v9.6L6 11H3z"/><path d="M12 6.2a4 4 0 0 1 0 5.6M14 4.3a6.6 6.6 0 0 1 0 9.4"/></svg>'
-      audioButton.addEventListener('click', () => playGeneratedSpeech(speech.audioBase64, audioButton))
+      const voiceBubbleText = text.length > 42 ? `${text.slice(0, 42)}…` : text
+      audioButton.addEventListener('click', () => playGeneratedSpeech(speech.audioBase64, audioButton, voiceBubbleText))
       message.classList.add('has-audio')
       message.appendChild(audioButton)
     }
@@ -995,6 +2053,7 @@
   // 恢复出来的历史消息不带语音回放按钮，避免常驻大量 base64 音频。
   const chatHistories = new Map()
   const CHAT_HISTORY_KEEP = 50
+  let chatHistoryRestoreSequence = 0
 
   function snapshotChatHistory(modelId) {
     if (!modelId) return
@@ -1009,10 +2068,39 @@
     chatHistories.set(modelId, entries.slice(-CHAT_HISTORY_KEEP))
   }
 
-  function restoreChatHistory(modelId) {
+  function renderChatHistoryEntries(entries) {
     chatMessages.replaceChildren()
-    const entries = (modelId && chatHistories.get(modelId)) || []
     for (const entry of entries) appendChatMessage(entry.text, entry.type, null, entry.kind)
+  }
+
+  async function restoreChatHistory(modelId) {
+    const sequence = ++chatHistoryRestoreSequence
+    const cached = (modelId && chatHistories.get(modelId)) || null
+    if (cached) {
+      renderChatHistoryEntries(cached)
+      return
+    }
+    chatMessages.replaceChildren()
+    try {
+      const result = await window.petAPI.getAIConversation(modelId)
+      if (
+        sequence !== chatHistoryRestoreSequence || !state.snapshot ||
+        state.snapshot.currentModelId !== modelId
+      ) return
+      const entries = result && result.ok && Array.isArray(result.messages)
+        ? result.messages.map(message => ({
+            type: message.role === 'user' ? 'user' : 'assistant',
+            kind: 'conversation',
+            text: String(message.content || ''),
+          })).filter(entry => entry.text)
+        : []
+      chatHistories.set(modelId, entries.slice(-CHAT_HISTORY_KEEP))
+      renderChatHistoryEntries(chatHistories.get(modelId))
+      if (!chatPanel.hidden) ensureChatGreeting()
+    } catch (error) {
+      console.warn('Persistent chat history restore failed:', error.message)
+      if (sequence === chatHistoryRestoreSequence && !chatPanel.hidden) ensureChatGreeting()
+    }
   }
 
   function invalidateChatAnchor(clearBounds = false) {
@@ -1031,9 +2119,31 @@
     const hasGreeting = chatMessages.querySelector('.ai-message[data-message-kind="greeting"]')
     if (!greeting || hasConversation || hasGreeting) return false
     appendChatMessage(greeting, 'assistant', null, 'greeting')
-    snapshotChatHistory(state.snapshot && state.snapshot.currentModelId)
-    showBubble(greeting, null, 'ai')
+    const modelId = state.snapshot && state.snapshot.currentModelId
+    snapshotChatHistory(modelId)
+    if (
+      state.model && state.model.loaded && state.modelMeta && state.modelMeta.id === modelId &&
+      state.lastHitBounds
+    ) {
+      showBubble(greeting, null, 'ai')
+    } else {
+      pendingGreetingBubble = { modelId, text: greeting }
+    }
     return true
+  }
+
+  function flushPendingGreetingBubble() {
+    const pending = pendingGreetingBubble
+    if (!pending) return false
+    if (
+      chatPanel.hidden || !state.snapshot || pending.modelId !== state.snapshot.currentModelId ||
+      !state.model || !state.model.loaded || !state.modelMeta ||
+      state.modelMeta.id !== pending.modelId || !state.lastHitBounds
+    ) return false
+    // 只让同一条启动问候等待角色首帧；若此时已有其他气泡占用，
+    // 仍按单实例规则直接丢弃，不形成通用消息队列。
+    pendingGreetingBubble = null
+    return showBubble(pending.text, null, 'ai') != null
   }
 
   function chatAnchorMatchesCurrentModel() {
@@ -1065,6 +2175,7 @@
     const chatTop = chatPanel.offsetTop
     const bottom = Math.max(18, window.innerHeight - chatTop + 10)
     statusToast.style.setProperty('--toast-bottom', `${bottom}px`)
+    if (statusToast.classList.contains('is-visible')) requestAnimationFrame(reportStatusToastBounds)
   }
 
   function updateChatPosition() {
@@ -1087,6 +2198,21 @@
     updateStatusToastPosition()
   }
 
+  function syncChatPositionDuringTransition() {
+    if (chatPositionAnimationFrame != null) cancelAnimationFrame(chatPositionAnimationFrame)
+    const startedAt = performance.now()
+    const followPanelHeight = now => {
+      updateChatPosition()
+      if (now - startedAt < 280) {
+        chatPositionAnimationFrame = requestAnimationFrame(followPanelHeight)
+      } else {
+        chatPositionAnimationFrame = null
+        updateChatPosition()
+      }
+    }
+    chatPositionAnimationFrame = requestAnimationFrame(followPanelHeight)
+  }
+
   function setChatCollapsed(collapsed) {
     chatCollapsed = Boolean(collapsed)
     chatPanel.classList.toggle('is-collapsed', chatCollapsed)
@@ -1094,6 +2220,7 @@
     chatToggle.setAttribute('aria-label', chatCollapsed ? '展开对话' : '收起对话')
     chatToggle.title = chatCollapsed ? '展开对话' : '收起对话'
     updateChatPosition()
+    syncChatPositionDuringTransition()
     if (!chatCollapsed) chatMessages.scrollTop = chatMessages.scrollHeight
   }
 
@@ -1116,9 +2243,10 @@
       updateChatPosition()
       setTimeout(() => {
         chatMessages.scrollTop = chatMessages.scrollHeight
-        chatInput.focus()
+        if (!chatCollapsed) chatInput.focus()
       }, 0)
     } else {
+      pendingGreetingBubble = null
       chatInput.value = ''
       resizeChatInput()
       updateChatSendState()
@@ -1128,7 +2256,9 @@
   // 面板身份跟随当前角色：名字、输入框占位符
   let lastChatIdentityName = '伙伴'
   function currentModelMeta() {
-    const modelId = (state.modelMeta && state.modelMeta.id) || (state.snapshot && state.snapshot.currentModelId)
+    // 快照代表用户当前选中的角色；模型实例在异步切换期间仍可能是上一只，
+    // 因此聊天身份必须以快照为准，不能被旧 modelMeta 抢先命中。
+    const modelId = (state.snapshot && state.snapshot.currentModelId) || (state.modelMeta && state.modelMeta.id)
     const snapshotMeta = modelId && state.snapshot && state.snapshot.models
       ? state.snapshot.models.find(item => item.id === modelId)
       : null
@@ -1144,6 +2274,7 @@
     chatName.textContent = name
     chatPanel.setAttribute('aria-label', `与${name}对话`)
     if (meta) chatInput.placeholder = `和${name}说点什么…`
+    syncBubbleChrome()
   }
 
   function resizeChatInput() {
@@ -1163,8 +2294,26 @@
       activeSpeechButton.title = '播放这条语音'
       activeSpeechButton = null
     }
+    if (activeSpeechBubbleLease != null) {
+      const lease = activeSpeechBubbleLease
+      activeSpeechBubbleLease = null
+      dismissBubble(lease)
+    }
     if (!state.model || typeof state.model.stopAudio !== 'function') return
     try { state.model.stopAudio() } catch (error) { /* 没有正在播放的语音 */ }
+  }
+
+  function chatCapabilityAvailability(capability) {
+    const ai = state.snapshot && state.snapshot.ai
+    const plugins = ai && Array.isArray(ai.plugins) ? ai.plugins : []
+    const installed = plugins.filter(plugin => plugin.installed && plugin.capabilities.includes(capability))
+    const configured = installed.filter(plugin => plugin.configured)
+    const activeIds = ai && ai.activePluginIds ? ai.activePluginIds : {}
+    const active = installed.find(plugin => plugin.id === activeIds[capability])
+    return {
+      configured: configured.length > 0,
+      ready: Boolean(active && active.configured),
+    }
   }
 
   function setChatMuted(muted) {
@@ -1205,7 +2354,7 @@
     }
   }
 
-  async function playGeneratedSpeech(audioBase64, button = null) {
+  async function playGeneratedSpeech(audioBase64, button = null, bubbleText = '') {
     if (!audioBase64 || !state.model || typeof state.model.inputAudio !== 'function') return false
     if (chatMuted) {
       showStatus('请先解除静音再播放语音', 'info', 2200)
@@ -1229,6 +2378,10 @@
       if (requestId !== speechSequence || model !== state.model) return false
       markInteraction(60000)
       const playback = model.inputAudio(base64ToArrayBuffer(audioBase64), true)
+      const speechBubbleLease = bubbleText
+        ? showBubble(bubbleText, null, 'ai', { hold: true })
+        : null
+      if (speechBubbleLease != null) activeSpeechBubbleLease = speechBubbleLease
       Promise.resolve(playback).then(() => {
         if (requestId !== speechSequence) return
         if (button && activeSpeechButton === button) {
@@ -1236,6 +2389,10 @@
           button.setAttribute('aria-label', '播放这条语音')
           button.title = '播放这条语音'
           activeSpeechButton = null
+        }
+        if (activeSpeechBubbleLease === speechBubbleLease) {
+          activeSpeechBubbleLease = null
+          dismissBubble(speechBubbleLease)
         }
         markInteraction(1600)
       }).catch(error => {
@@ -1267,7 +2424,7 @@
     chatPresenceText.textContent = '思考中'
     appendChatMessage(text, 'user')
     const thinking = appendChatMessage('正在想', 'thinking')
-    showBubble('思考中…', 45000, 'ai')
+    const progressBubbleLease = showBubble('思考中…', null, 'ai', { hold: true })
     markInteraction(60000)
     try {
       const result = await window.petAPI.sendAIMessage(text)
@@ -1278,27 +2435,29 @@
       if (ttsReady) {
         thinking.textContent = '语言组织中'
         chatPresenceText.textContent = '语言组织中'
-        showBubble('语言组织中…', 60000, 'ai')
+        updateBubbleText(progressBubbleLease, '语言组织中…')
         markInteraction(60000)
         speech = await synthesizeAssistantSpeech(result.text)
       }
       thinking.remove()
+      dismissBubble(progressBubbleLease)
       const assistantMessage = appendChatMessage(result.text, 'assistant', speech)
       // 回复开头的情绪标签已由主进程剥离并解析为稳定键，映射到对应
       // 的情绪动作；模型没给标签时退回好奇反应（原默认行为）
-      runInteraction(emotionInteractions[result.emotion] || 'curious')
+      runInteraction(emotionInteractions[result.emotion] || 'curious', null, { bubble: false })
       const bubbleText = result.text.length > 42 ? `${result.text.slice(0, 42)}…` : result.text
-      showBubble(bubbleText, null, 'ai')
       if (speech) {
         const audioButton = assistantMessage.querySelector('.ai-message-audio')
-        playGeneratedSpeech(speech.audioBase64, audioButton)
-      }
+        playGeneratedSpeech(speech.audioBase64, audioButton, bubbleText)
+      } else showBubble(bubbleText, null, 'ai')
     } catch (error) {
       thinking.remove()
+      dismissBubble(progressBubbleLease)
       const message = error.message || '连接失败，请稍后再试'
       appendChatMessage(message, 'error')
       showBubble(message, null, 'ai')
     } finally {
+      dismissBubble(progressBubbleLease)
       chatBusy = false
       chatInput.disabled = false
       updateChatSendState()
@@ -1382,6 +2541,14 @@
     state.model.x = state.dragCamera.x
     state.model.y = state.dragCamera.y
     state.model.setDragging(0, 0)
+  }
+
+  function resumeSettingsBackgroundAfterDrag() {
+    if (!state.settingsBackgroundCaptureActive) return
+    state.settingsBackgroundLastFrameAt = 0
+    state.wakeRecoveryAttempts = 0
+    if (!state.wakeCheckTimer) scheduleWakeHealthCheck(80)
+    ensureScheduler()
   }
 
   function updateIdle(timestamp) {
@@ -1483,6 +2650,7 @@
     state.hostVisible = nextHostVisible
     state.visible = nextVisible
     if (!nextVisible) {
+      if (state.model && state.model.kind === 'video-pet') state.model.paused = true
       if (state.wakeCheckTimer) clearTimeout(state.wakeCheckTimer)
       state.wakeCheckTimer = null
       cancelScheduler()
@@ -1502,6 +2670,7 @@
     state.hitMaskPending = true
     state.wakeRecoveryAttempts = 0
     if (!state.loading && state.model && state.model.loaded) {
+      if (state.model.kind === 'video-pet') state.model.paused = state.paused
       try {
         updateFollow()
         state.model.update()
@@ -1520,7 +2689,20 @@
   }
 
   function pointIsHead(point, hitAreas = []) {
+    if (state.model && state.model.kind === 'video-pet' && state.lastHitBounds) {
+      return point.clientY <= state.lastHitBounds.y + state.lastHitBounds.height * 0.42
+    }
     return hitAreas.some(name => name.includes('head')) || point.clientY <= window.innerHeight * 0.34
+  }
+
+  function runGestureInteraction(gestureId, fallbackKind, point) {
+    const gestures = state.modelMeta && Array.isArray(state.modelMeta.gestures) ? state.modelMeta.gestures : []
+    const gesture = gestures.find(item => item.id === gestureId)
+    if (gesture && gesture.enabled === false) return
+    runInteraction(gesture ? gesture.kind : fallbackKind, point, {
+      actionId: gesture && gesture.actionId,
+      text: gesture && gesture.text,
+    })
   }
 
   function beginLongPress(point, hitAreas) {
@@ -1530,7 +2712,8 @@
       state.longPressTimer = null
       if (!state.pointerDown || state.dragging) return
       state.longPressTriggered = true
-      runInteraction(pointIsHead(point, hitAreas) ? 'head' : 'calm', point)
+      const onHead = pointIsHead(point, hitAreas)
+      runGestureInteraction(onHead ? 'long-press-head' : 'long-press-body', onHead ? 'head' : 'calm', point)
     }, 650)
   }
 
@@ -1549,27 +2732,52 @@
       const clickHitAreas = state.lastClickHitAreas
       state.clickTimer = null
       state.clickCount = 0
-      if (count >= 3) runInteraction('excited', clickPoint)
-      else if (count === 2) runInteraction('praise', clickPoint)
-      else runInteraction(pointIsHead(clickPoint, clickHitAreas) ? 'head' : 'curious', clickPoint)
+      if (count >= 3) runGestureInteraction('triple-click', 'excited', clickPoint)
+      else if (count === 2) runGestureInteraction('double-click', 'praise', clickPoint)
+      else {
+        const onHead = pointIsHead(clickPoint, clickHitAreas)
+        runGestureInteraction(onHead ? 'tap-head' : 'tap-body', onHead ? 'head' : 'curious', clickPoint)
+      }
     }, 300)
   }
 
   function applySnapshot(snapshot) {
     const previousModelId = state.snapshot && state.snapshot.currentModelId
     const modelChanged = previousModelId !== snapshot.currentModelId
-    if (modelChanged) invalidateChatAnchor(true)
+    const nextSettingsTheme = snapshot.preferences.settingsTheme === 'healing' ? 'healing' : 'glass'
+    const settingsThemeChanged = document.documentElement.dataset.settingsTheme !== nextSettingsTheme
+    if (modelChanged) {
+      invalidateChatAnchor(true)
+      pendingGreetingBubble = null
+      dismissBubble()
+    }
     state.snapshot = snapshot
     if (state.modelMeta && state.modelMeta.id === snapshot.currentModelId) {
       const refreshedMeta = snapshot.models.find(item => item.id === state.modelMeta.id)
       if (refreshedMeta) state.modelMeta = refreshedMeta
     }
     state.preferences = snapshot.preferences
+    document.documentElement.dataset.settingsTheme = nextSettingsTheme
+    syncBubbleChrome()
+    if (interactionBubble.classList.contains('is-visible')) {
+      requestAnimationFrame(layoutInteractionBubble)
+    }
+    // 展开态在两套主题中的高度不同（glass 246px / healing 268px）。
+    // 主题变化后必须在新样式生效期间持续重算顶部锚点，否则旧 top 与
+    // 新高度组合会把输入区推出 400×600 窗口底部。
+    if (settingsThemeChanged && !chatPanel.hidden) {
+      // offsetHeight forces the new theme styles to resolve immediately, so
+      // there is no one-frame interval where the old top meets the new height.
+      updateChatPosition()
+      requestAnimationFrame(syncChatPositionDuringTransition)
+    }
     stage.classList.toggle('has-background-detection', Boolean(snapshot.preferences.backgroundDetection))
     if (!snapshot.preferences.backgroundDetection) setDragAffordance(false)
     state.paused = Boolean(snapshot.runtime && snapshot.runtime.paused)
+    if (state.model && state.model.kind === 'video-pet') state.model.paused = state.paused || !state.visible
     syncVisibility(Boolean(snapshot.runtime && snapshot.runtime.petVisible))
     if (!snapshot.ai || !snapshot.ai.ready) setChatOpen(false)
+    if (!chatCapabilityAvailability('tts').ready && !chatMuted) setChatMuted(true)
     if (!chatPanel.hidden) updateChatIdentity()
 
     if (state.model && state.modelMeta && state.modelMeta.id === snapshot.currentModelId) {
@@ -1589,7 +2797,7 @@
     if (modelChanged) {
       restoreChatHistory(snapshot.currentModelId)
     }
-    if (!chatPanel.hidden) ensureChatGreeting()
+    if (!chatPanel.hidden && !modelChanged) ensureChatGreeting()
 
     if (!previousModelId || modelChanged || !state.model) {
       requestModel(snapshot.currentModelId)
@@ -1657,7 +2865,7 @@
       stage.classList.remove('is-dragging')
       if (moved >= 24 && performance.now() - state.lastDragReaction > 1800) {
         state.lastDragReaction = performance.now()
-        runInteraction('drag', { clientX: event.clientX, clientY: event.clientY })
+        runGestureInteraction('drag-end', 'drag', { clientX: event.clientX, clientY: event.clientY })
       }
     } else if (!state.longPressTriggered && moved < 6 && elapsed < 520 && isOnPet(pointerDown.clientX, pointerDown.clientY)) {
       queueClickInteraction(pointerDown, pointerDown.hitAreas)
@@ -1668,6 +2876,7 @@
     state.pointerDown = null
     state.dragging = false
     state.dragCamera = null
+    resumeSettingsBackgroundAfterDrag()
     updateMouseCapture(event.clientX, event.clientY, event.target)
   })
 
@@ -1693,6 +2902,7 @@
     if (state.liveCanvas) state.liveCanvas.classList.remove('is-dragging')
     stage.classList.remove('is-dragging')
     setDragAffordance(false)
+    resumeSettingsBackgroundAfterDrag()
   }
 
   window.addEventListener('blur', () => {
@@ -1742,12 +2952,19 @@
 
   window.petAPI.onPauseChanged(paused => {
     state.paused = Boolean(paused)
+    if (state.model && state.model.kind === 'video-pet') state.model.paused = state.paused || !state.visible
     ensureScheduler()
   })
 
   window.petAPI.onInteractionRequested(request => {
-    runInteraction(request && request.kind ? request.kind : 'random')
+    runInteraction(request && request.kind ? request.kind : 'random', null, {
+      actionId: request && request.actionId,
+      label: request && request.label,
+      text: request && request.text,
+    })
   })
+
+  window.petAPI.onModelPreview(previewModelAsset)
 
   window.petAPI.onChatVisibility(open => setChatOpen(open, false))
 
@@ -1766,9 +2983,25 @@
     setChatCollapsed(!chatCollapsed)
     chatInput.focus()
   })
-  chatMute.addEventListener('click', () => setChatMuted(!chatMuted))
+  chatMute.addEventListener('click', () => {
+    if (chatMuted) {
+      const availability = chatCapabilityAvailability('tts')
+      if (!availability.ready) {
+        showStatus(
+          availability.configured
+            ? '语音模型尚未启用，请先启用语音模型'
+            : '请先配置语音模型',
+          'info',
+          3200
+        )
+        return
+      }
+    }
+    setChatMuted(!chatMuted)
+  })
   document.getElementById('ai-chat-clear').addEventListener('click', async () => {
     stopCurrentSpeech()
+    chatHistoryRestoreSequence++
     await window.petAPI.clearAIConversation()
     // 只清当前角色的会话：LLM 上下文（主进程按 插件×角色 隔离）和本地记录
     if (state.snapshot) chatHistories.delete(state.snapshot.currentModelId)
@@ -1796,7 +3029,7 @@
   let coverQueue = []
   let coverBusy = false
 
-  async function centeredCoverDataURL(sourceCanvas) {
+  async function centeredCoverDataURL(sourceCanvas, fitVisibleContent = false) {
     const rawDataURL = sourceCanvas.toDataURL('image/png')
     try {
       const image = new Image()
@@ -1813,51 +3046,87 @@
       let minY = scanCanvas.height
       let maxX = -1
       let maxY = -1
+      let opaquePixels = 0
 
       for (let y = 0; y < scanCanvas.height; y++) {
         for (let x = 0; x < scanCanvas.width; x++) {
           if (pixels[(y * scanCanvas.width + x) * 4 + 3] <= 8) continue
+          opaquePixels++
           minX = Math.min(minX, x)
           minY = Math.min(minY, y)
           maxX = Math.max(maxX, x)
           maxY = Math.max(maxY, y)
         }
       }
-      if (maxX < minX || maxY < minY) return rawDataURL
+      if (opaquePixels < 24 || maxX < minX || maxY < minY) return null
 
       const contentWidth = maxX - minX + 1
       const contentHeight = maxY - minY + 1
-      const targetX = Math.round((scanCanvas.width - contentWidth) / 2)
-      const targetY = Math.round((scanCanvas.height - contentHeight) / 2)
+      const paddingRatio = fitVisibleContent ? 0.1 : 0
+      const availableWidth = scanCanvas.width * (1 - paddingRatio * 2)
+      const availableHeight = scanCanvas.height * (1 - paddingRatio * 2)
+      const contentScale = fitVisibleContent
+        ? Math.min(availableWidth / contentWidth, availableHeight / contentHeight)
+        : 1
+      const targetWidth = Math.round(contentWidth * contentScale)
+      const targetHeight = Math.round(contentHeight * contentScale)
+      const targetX = Math.round((scanCanvas.width - targetWidth) / 2)
+      const targetY = Math.round((scanCanvas.height - targetHeight) / 2)
       const outputCanvas = document.createElement('canvas')
       outputCanvas.width = scanCanvas.width
       outputCanvas.height = scanCanvas.height
       outputCanvas.getContext('2d').drawImage(
         scanCanvas,
         minX, minY, contentWidth, contentHeight,
-        targetX, targetY, contentWidth, contentHeight
+        targetX, targetY, targetWidth, targetHeight
       )
       return outputCanvas.toDataURL('image/png')
     } catch (error) {
       console.warn('Cover centering failed:', error.message)
-      return rawDataURL
+      return null
     }
+  }
+
+  async function waitForVisibleCoverFrame(model, canvas) {
+    // WebGL textures may need several compositor turns after load(),
+    // especially on a new profile while all ZIP models are cold. Never cache
+    // the first transparent frame: it would make the model card look empty on
+    // every later launch.
+    for (let attempt = 0; attempt < 18; attempt++) {
+      model.update()
+      if (visibleCanvasBounds(canvas)) return true
+      await new Promise(resolve => requestAnimationFrame(resolve))
+    }
+    return false
   }
 
   async function renderModelCover(item) {
     const canvas = document.createElement('canvas')
+    canvas.className = 'cover-render-canvas'
     canvas.width = 220
     canvas.height = 280
-    const model = createModelInstance(canvas)
+    canvas.style.width = '220px'
+    canvas.style.height = '280px'
+    canvas.style.opacity = '0'
+    canvas.style.pointerEvents = 'none'
+    canvas.style.zIndex = '-1'
+    stage.appendChild(canvas)
+    const model = createModelInstance(canvas, item)
     try {
       await model.load(item.path)
       model.touchController.cancelInteractions()
       model.cameraController.removeListeners()
-      renderModelAtScale(model, 0.5)
       model.paused = false
-      await new Promise(resolve => setTimeout(resolve, 80))
-      model.update()
-      const dataURL = await centeredCoverDataURL(canvas)
+      model.scale = 1
+      model.centerModel()
+      if (!await waitForVisibleCoverFrame(model, canvas)) {
+        throw new Error('模型首帧保持透明，未写入封面缓存')
+      }
+      // A video frame is landscape and contains generous transparent margins;
+      // fit its visible alpha bounds into the portrait cover instead of
+      // shrinking the whole 16:9 frame into the role card.
+      const dataURL = await centeredCoverDataURL(canvas, model.kind === 'video-pet')
+      if (!dataURL) throw new Error('模型封面没有可见像素')
       window.petAPI.saveCover(item.id, dataURL)
     } catch (error) {
       console.warn(`Cover ${item.id} failed:`, error.message)
@@ -1878,7 +3147,8 @@
 
   window.petAPI.onCoversRequest(missing => {
     if (!Array.isArray(missing)) return
-    coverQueue.push(...missing)
+    const queuedIds = new Set(coverQueue.map(item => item.id))
+    coverQueue.push(...missing.filter(item => item && item.id && !queuedIds.has(item.id)))
     processCoverQueue()
   })
 
@@ -1898,13 +3168,22 @@
     }
   })
 
+  // 观察聊天框的真实尺寸，覆盖主题切换、展开动画和系统字体变化。
+  // updateChatPosition 只改变 top，不改变尺寸，因此不会形成观察循环。
+  if (typeof ResizeObserver === 'function') {
+    const chatPanelResizeObserver = new ResizeObserver(() => {
+      if (!chatPanel.hidden) updateChatPosition()
+    })
+    chatPanelResizeObserver.observe(chatPanel)
+  }
+
   resizeEffectsCanvas()
   try {
     const snapshot = await window.petAPI.getSnapshot()
     applySnapshot(snapshot)
     if (!snapshot.models.some(model => model.status === 'ready')) {
-      showStatus('没有找到可用的 Cubism 3/4 模型', 'error')
-      reportStatus('empty', '', '没有找到可用的 Cubism 3/4 模型')
+      showStatus('没有找到可用的角色模型', 'error')
+      reportStatus('empty', '', '没有找到可用的角色模型')
     }
   } catch (error) {
     console.error('App initialization failed:', error)

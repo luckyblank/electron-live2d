@@ -27,7 +27,15 @@ body {
   margin: 0;
   overflow: hidden;
   background: transparent;
+  -webkit-user-select: none;
   user-select: none;
+}
+
+input,
+textarea,
+[contenteditable="true"] {
+  -webkit-user-select: text;
+  user-select: text;
 }
 
 body {
@@ -50,12 +58,13 @@ body {
 #pet-stage::after {
   position: fixed;
   z-index: 3;
-  inset: 0;
-  border: 1px solid rgba(113, 100, 216, 0.48);
-  background: rgba(113, 100, 216, 0.07);
+  inset: 8px;
+  border: 1px solid rgba(185, 207, 244, 0.86);
+  border-radius: 26px;
+  background: linear-gradient(145deg, rgba(126, 156, 222, 0.055), rgba(113, 100, 216, 0.025));
   box-shadow:
-    inset 0 0 26px rgba(113, 100, 216, 0.08),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.42);
+    0 0 18px rgba(101, 143, 218, 0.2),
+    inset 0 0 26px rgba(113, 137, 205, 0.08);
   content: "";
   opacity: 0;
   pointer-events: none;
@@ -67,12 +76,28 @@ body {
 }
 
 #pet-stage.has-background-detection.is-dragging::after {
-  border-color: rgba(113, 100, 216, 0.82);
-  background: rgba(113, 100, 216, 0.14);
+  border-color: rgba(129, 153, 225, 0.94);
+  background: linear-gradient(145deg, rgba(126, 163, 232, 0.12), rgba(113, 100, 216, 0.07));
   box-shadow:
-    inset 0 0 34px rgba(113, 100, 216, 0.14),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.62);
+    0 0 24px rgba(92, 137, 226, 0.34),
+    inset 0 0 34px rgba(113, 136, 211, 0.14);
   opacity: 1;
+}
+
+:root[data-settings-theme="healing"] #pet-stage::after {
+  border-color: rgba(244, 191, 220, .86);
+  background: linear-gradient(145deg, rgba(255, 246, 249, .09), rgba(237, 167, 205, .035));
+  box-shadow:
+    0 0 19px rgba(239, 148, 198, .22),
+    inset 0 0 30px rgba(235, 167, 198, .1);
+}
+
+:root[data-settings-theme="healing"] #pet-stage.has-background-detection.is-dragging::after {
+  border-color: rgba(230, 151, 199, .94);
+  background: linear-gradient(145deg, rgba(255, 239, 246, .16), rgba(235, 154, 198, .08));
+  box-shadow:
+    0 0 25px rgba(231, 132, 190, .34),
+    inset 0 0 38px rgba(232, 154, 192, .15);
 }
 
 #pet-stage canvas {
@@ -106,23 +131,39 @@ body {
 }
 
 .interaction-bubble {
+  --bubble-surface: linear-gradient(150deg, rgba(250, 252, 255, .96), rgba(229, 235, 255, .9) 58%, rgba(238, 233, 255, .9));
+  --bubble-tail-surface: rgba(235, 238, 255, .96);
+  --bubble-outline: rgba(246, 249, 255, .96);
+  --bubble-ink: #33468d;
+  --bubble-accent: #8d78f4;
+  --bubble-hot: #f28bcf;
+  --bubble-paw: #a691ff;
   position: fixed;
   z-index: 4;
-  top: 48px;
-  left: 12px;
-  width: 156px;
+  top: 20px;
+  left: 64px;
+  width: 270px;
   max-width: calc(100% - 24px);
-  min-height: 34px;
-  padding: 9px 12px;
-  border: 1px solid var(--hairline);
-  border-radius: 16px;
-  background: rgba(255, 253, 249, 0.96);
-  box-shadow: 0 8px 24px rgba(45, 38, 62, 0.14);
-  color: #4d4854;
-  font-size: 12px;
-  line-height: 1.45;
+  min-height: 70px;
+  padding: 20px 22px 11px;
+  border: 1px solid var(--bubble-outline);
+  border-radius: 18px;
+  background: var(--bubble-surface);
+  -webkit-backdrop-filter: blur(18px) saturate(1.16);
+  backdrop-filter: blur(18px) saturate(1.16);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, .9),
+    inset 0 0 18px rgba(151, 169, 255, .12),
+    0 7px 24px rgba(68, 91, 177, .2),
+    0 0 20px rgba(140, 120, 255, .32);
+  color: var(--bubble-ink);
+  font-family: "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+  font-size: 12.5px;
+  font-weight: 520;
+  line-height: 1.62;
   text-align: left;
   text-wrap: pretty;
+  isolation: isolate;
   opacity: 0;
   transform: translateY(6px) scale(0.98);
   transform-origin: var(--bubble-origin, right center);
@@ -130,22 +171,194 @@ body {
   pointer-events: none;
 }
 
-.interaction-bubble > span {
+.interaction-bubble::before {
+  position: absolute;
+  z-index: 0;
+  inset: 2px;
+  border-top: 1px solid rgba(255, 255, 255, .62);
+  border-left: 1px solid rgba(255, 255, 255, .45);
+  border-radius: 15px;
+  content: "";
+  pointer-events: none;
+}
+
+.interaction-bubble-text {
+  position: relative;
+  z-index: 2;
   display: -webkit-box;
-  max-height: 70px;
+  max-height: 81px;
   overflow: hidden;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 4;
 }
 
+.interaction-bubble-label {
+  position: absolute;
+  z-index: 5;
+  top: -11px;
+  left: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-width: 72px;
+  height: 26px;
+  padding: 0 15px 0 12px;
+  border: 1px solid rgba(255, 255, 255, .85);
+  border-radius: 14px 7px 14px 13px;
+  background: linear-gradient(145deg, #b89afc, #7d75ed 72%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, .42),
+    0 4px 12px rgba(105, 88, 218, .32),
+    0 0 13px rgba(161, 131, 255, .35);
+  color: white;
+  font-size: 13px;
+  font-style: normal;
+  font-weight: 750;
+  line-height: 1;
+  white-space: nowrap;
+  transform: skewX(-9deg);
+}
+
+.interaction-bubble-label strong,
+.bubble-label-heart {
+  font: inherit;
+  transform: skewX(9deg);
+}
+
+.bubble-label-heart {
+  display: none;
+  margin-left: -1px;
+  font-size: 13px;
+}
+
+.bubble-paw {
+  --paw-color: var(--bubble-paw);
+  position: relative;
+  display: block;
+  width: 21px;
+  height: 18px;
+  color: var(--paw-color);
+}
+
+.bubble-paw::before,
+.bubble-paw::after {
+  position: absolute;
+  inset: 0;
+  content: "";
+}
+
+.bubble-paw::before {
+  background: radial-gradient(ellipse at 50% 78%, var(--paw-color) 0 27%, transparent 30%);
+}
+
+.bubble-paw::after {
+  background:
+    radial-gradient(ellipse at 13% 35%, var(--paw-color) 0 11%, transparent 13%),
+    radial-gradient(ellipse at 38% 15%, var(--paw-color) 0 12%, transparent 14%),
+    radial-gradient(ellipse at 67% 16%, var(--paw-color) 0 12%, transparent 14%),
+    radial-gradient(ellipse at 91% 39%, var(--paw-color) 0 11%, transparent 13%);
+}
+
+.bubble-label-paw {
+  --paw-color: #fff;
+  width: 20px;
+  height: 17px;
+  margin-left: -2px;
+  transform: skewX(9deg) rotate(-5deg);
+}
+
+.bubble-decor {
+  position: absolute;
+  z-index: 3;
+  display: block;
+  pointer-events: none;
+}
+
+.bubble-sparkle {
+  color: rgba(255, 255, 255, .98);
+  font-family: Georgia, serif;
+  font-style: normal;
+  line-height: 1;
+  text-shadow: 0 0 8px rgba(255, 255, 255, .95), 0 0 13px rgba(147, 126, 255, .72);
+}
+
+.bubble-sparkle-top {
+  top: 7px;
+  right: 10px;
+  font-size: 21px;
+}
+
+.bubble-sparkle-bottom {
+  bottom: 6px;
+  left: 12px;
+  font-size: 14px;
+}
+
+.bubble-paw-primary {
+  --paw-color: var(--bubble-paw);
+  top: 34px;
+  right: 6px;
+  width: 24px;
+  height: 21px;
+  opacity: .42;
+  transform: rotate(10deg);
+}
+
+.bubble-paw-secondary {
+  display: none;
+}
+
+.bubble-heart {
+  right: 25px;
+  bottom: 5px;
+  color: var(--bubble-accent);
+  font-size: 15px;
+  font-style: normal;
+  line-height: 1;
+  text-shadow: 0 0 8px rgba(141, 120, 244, .36);
+}
+
+.bubble-caret {
+  display: none;
+  width: 0;
+  height: 0;
+  border-top: 9px solid var(--bubble-hot);
+  border-right: 7px solid transparent;
+  border-left: 7px solid transparent;
+}
+
+.bubble-petal {
+  width: 13px;
+  height: 22px;
+  border-radius: 80% 15% 75% 20%;
+  background: linear-gradient(145deg, rgba(255, 184, 238, .95), rgba(245, 110, 200, .7));
+  box-shadow: 0 0 9px rgba(255, 124, 210, .62);
+  filter: blur(.15px);
+}
+
+.bubble-petal-left {
+  top: 43px;
+  left: -8px;
+  transform: rotate(-43deg) scale(.8);
+}
+
+.bubble-petal-right {
+  right: -7px;
+  bottom: 7px;
+  transform: rotate(38deg) scale(.72);
+}
+
 .interaction-bubble::after {
   position: absolute;
+  z-index: 1;
   top: var(--bubble-tail-y, 26px);
-  width: 11px;
-  height: 11px;
+  width: 15px;
+  height: 15px;
   border-style: solid;
-  border-color: var(--hairline);
-  background: rgba(255, 253, 249, 0.98);
+  border-color: var(--bubble-outline);
+  background: var(--bubble-tail-surface);
+  box-shadow: 5px 5px 10px rgba(76, 91, 174, .09);
   content: "";
   transform: translateY(-50%) rotate(45deg);
 }
@@ -155,7 +368,7 @@ body {
 }
 
 .interaction-bubble.is-left::after {
-  right: -6px;
+  right: -8px;
   border-width: 1px 1px 0 0;
 }
 
@@ -164,7 +377,7 @@ body {
 }
 
 .interaction-bubble.is-right::after {
-  left: -6px;
+  left: -8px;
   border-width: 0 0 1px 1px;
 }
 
@@ -174,10 +387,136 @@ body {
 
 .interaction-bubble.is-top::after {
   top: auto;
-  bottom: -6px;
+  bottom: -8px;
   left: var(--bubble-tail-x, 50%);
   border-width: 0 1px 1px 0;
   transform: translateX(-50%) rotate(45deg);
+}
+
+html[data-settings-theme="healing"] .interaction-bubble {
+  --bubble-surface: linear-gradient(150deg, rgba(255, 253, 251, .98), rgba(255, 243, 247, .96) 62%, rgba(255, 237, 246, .94));
+  --bubble-tail-surface: rgba(255, 242, 247, .98);
+  --bubble-outline: rgba(255, 183, 220, .94);
+  --bubble-ink: #56335d;
+  --bubble-accent: #ef69ad;
+  --bubble-hot: #f36eb4;
+  --bubble-paw: #ed70b3;
+  padding: 18px 18px 10px;
+  border-radius: 17px;
+  -webkit-backdrop-filter: blur(14px) saturate(1.08);
+  backdrop-filter: blur(14px) saturate(1.08);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, .86),
+    0 7px 22px rgba(196, 82, 147, .19),
+    0 0 18px rgba(247, 113, 188, .34);
+  font-size: 12px;
+  font-weight: 540;
+  line-height: 1.56;
+}
+
+html[data-settings-theme="healing"] .interaction-bubble::before {
+  border-color: rgba(255, 255, 255, .56);
+  border-radius: 14px;
+}
+
+html[data-settings-theme="healing"] .interaction-bubble-label {
+  top: -12px;
+  left: 15px;
+  gap: 7px;
+  min-width: 78px;
+  height: 27px;
+  padding: 0 12px 0 10px;
+  border-color: rgba(246, 136, 196, .86);
+  border-radius: 15px;
+  background: linear-gradient(145deg, rgba(255, 250, 251, .99), rgba(255, 233, 244, .97));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, .72),
+    0 4px 12px rgba(222, 90, 161, .2),
+    0 0 12px rgba(249, 121, 192, .24);
+  color: #ec4da3;
+  font-size: 13px;
+  transform: none;
+}
+
+html[data-settings-theme="healing"] .interaction-bubble-label strong,
+html[data-settings-theme="healing"] .bubble-label-heart {
+  transform: none;
+}
+
+html[data-settings-theme="healing"] .bubble-label-paw {
+  --paw-color: #eb62ab;
+  transform: rotate(-6deg);
+}
+
+html[data-settings-theme="healing"] .bubble-label-heart {
+  display: block;
+}
+
+html[data-settings-theme="healing"] .bubble-sparkle-top {
+  top: 4px;
+  right: auto;
+  left: -7px;
+  color: white;
+  font-size: 18px;
+  text-shadow: 0 0 8px #fff, 0 0 12px rgba(246, 111, 183, .68);
+}
+
+html[data-settings-theme="healing"] .bubble-sparkle-bottom {
+  bottom: 5px;
+  left: 5px;
+  font-size: 11px;
+  text-shadow: 0 0 7px #fff, 0 0 11px rgba(246, 111, 183, .62);
+}
+
+html[data-settings-theme="healing"] .bubble-paw-primary {
+  top: auto;
+  right: 5px;
+  bottom: 7px;
+  width: 26px;
+  height: 23px;
+  opacity: .88;
+  transform: rotate(8deg);
+}
+
+html[data-settings-theme="healing"] .bubble-paw-secondary {
+  --paw-color: #ef80ba;
+  top: 7px;
+  right: -5px;
+  display: block;
+  width: 20px;
+  height: 17px;
+  opacity: .86;
+  transform: rotate(20deg);
+}
+
+html[data-settings-theme="healing"] .bubble-heart {
+  top: -10px;
+  right: 18px;
+  bottom: auto;
+  color: #ef77b6;
+  font-size: 17px;
+}
+
+html[data-settings-theme="healing"] .bubble-caret {
+  right: 31px;
+  bottom: 10px;
+  display: block;
+}
+
+html[data-settings-theme="healing"] .bubble-petal-left {
+  top: 48px;
+  left: -8px;
+  transform: rotate(-38deg) scale(.74);
+}
+
+html[data-settings-theme="healing"] .bubble-petal-right {
+  right: -6px;
+  bottom: 17px;
+  transform: rotate(36deg) scale(.64);
+}
+
+html[data-settings-theme="healing"] .interaction-bubble::after {
+  box-shadow: 5px 5px 10px rgba(196, 82, 147, .08);
 }
 
 .interaction-bubble.is-visible {
@@ -216,6 +555,31 @@ body {
 .status-toast.is-error {
   color: var(--toast-danger);
   border-color: rgba(164, 66, 66, 0.2);
+}
+
+/* 尺寸反馈沿用统一的底部/聊天框上方定位，只强化其状态辨识度。 */
+.status-toast.is-scale-status {
+  min-height: 32px;
+  padding: 7px 12px 7px 11px;
+  border-color: rgba(118, 89, 238, 0.18);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.88);
+  box-shadow: 0 8px 22px rgba(69, 52, 132, 0.12);
+  color: #554580;
+  font-weight: 650;
+  backdrop-filter: blur(14px) saturate(1.08);
+}
+
+.status-toast.is-scale-status::before {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 7px;
+  border-radius: 50%;
+  background: #7a5cf2;
+  box-shadow: 0 0 0 4px rgba(122, 92, 242, 0.1);
+  content: '';
+  vertical-align: 1px;
 }
 
 .ai-chat-panel {
@@ -393,13 +757,17 @@ body {
   gap: 8px;
   min-height: 0;
   padding: 12px 13px;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overflow-anchor: none;
+  scrollbar-gutter: stable;
   scrollbar-color: #d8d2de transparent;
   scrollbar-width: thin;
 }
 
 .ai-message {
   position: relative;
+  flex: 0 0 auto;
   align-self: flex-start;
   max-width: 86%;
   padding: 8px 11px;
@@ -477,14 +845,14 @@ body {
 .ai-message.is-thinking::after {
   display: inline-block;
   width: 1.2em;
-  overflow: hidden;
   vertical-align: bottom;
   content: "…";
-  animation: thinking 1s steps(2, end) infinite;
+  animation: thinking-opacity 1s steps(2, end) infinite;
 }
 
-@keyframes thinking {
-  from { width: 0; }
+@keyframes thinking-opacity {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 1; }
 }
 
 @keyframes message-enter {
@@ -742,4 +1110,397 @@ body {
     transition: none;
     animation: none;
   }
+}
+
+/* --------------------------------------------------------------------------
+   Reference-faithful companion chat: cool glass / warm healing
+   -------------------------------------------------------------------------- */
+
+.ai-chat-panel {
+  right: 18px;
+  width: min(350px, calc(100% - 36px));
+  height: 246px;
+  border: 1px solid rgba(204, 220, 250, .9);
+  border-radius: 20px;
+  background: linear-gradient(155deg, rgba(247,250,255,.83), rgba(226,235,252,.72));
+  -webkit-backdrop-filter: blur(22px) saturate(1.18);
+  backdrop-filter: blur(22px) saturate(1.18);
+  box-shadow:
+    0 15px 34px rgba(38, 72, 130, .2),
+    0 0 20px rgba(124, 174, 255, .22);
+  color: #34467f;
+  transition:
+    height 220ms cubic-bezier(.22,1,.36,1),
+    border-radius 220ms ease,
+    background-color 180ms ease,
+    box-shadow 180ms ease;
+}
+
+.ai-chat-panel.is-collapsed {
+  height: 64px;
+  overflow: visible;
+  border-color: rgba(204, 220, 250, .9);
+  border-radius: 31px;
+  background: linear-gradient(145deg, rgba(239,246,255,.87), rgba(223,235,251,.77));
+  box-shadow:
+    0 12px 30px rgba(38,72,130,.23),
+    0 0 22px rgba(108,166,255,.31);
+}
+
+.ai-chat-panel.is-collapsed:focus-within {
+  border-color: rgba(150, 181, 238, .96);
+  background: linear-gradient(145deg, rgba(239,246,255,.87), rgba(223,235,251,.77));
+  box-shadow:
+    0 12px 30px rgba(38,72,130,.23),
+    0 0 22px rgba(108,166,255,.31),
+    0 0 0 3px rgba(113, 159, 239, .1);
+}
+
+.ai-chat-panel.is-overlapping-pet,
+.ai-chat-panel.is-collapsed.is-overlapping-pet {
+  background: linear-gradient(150deg, rgba(246,249,255,.89), rgba(226,235,251,.82));
+}
+
+.ai-chat-head {
+  min-height: 57px;
+  padding: 10px 12px 9px 14px;
+  border-bottom: 1px solid rgba(94, 112, 167, .13);
+}
+
+.ai-chat-meta { gap: 2px; }
+.ai-chat-meta strong { color: #35477f; font-size: 15px; font-weight: 760; }
+.ai-chat-presence { color: #6678a4; font-size: 10px; }
+.ai-chat-presence i { width: 7px; height: 7px; background: #36ad77; }
+
+.ai-chat-head-actions { gap: 5px; }
+.ai-chat-head-actions button {
+  height: 31px;
+  padding: 0 8px;
+  border-radius: 9px;
+  color: #475a91;
+  font-size: 11px;
+}
+
+.ai-chat-head-actions button:hover { background: rgba(111,137,202,.1); color: #263a76; }
+#ai-chat-close { font-size: 18px; }
+
+.ai-chat-messages {
+  position: relative;
+  gap: 9px;
+  padding: 12px 14px;
+  scrollbar-color: rgba(135,151,193,.35) transparent;
+}
+
+.ai-message {
+  max-width: 78%;
+  padding: 9px 12px;
+  border: 1px solid rgba(255,255,255,.66);
+  border-radius: 14px 14px 14px 5px;
+  background: rgba(255,255,255,.62);
+  box-shadow: 0 4px 12px rgba(46,66,112,.055);
+  color: #31447f;
+  font-size: 12px;
+}
+
+.ai-message.is-user {
+  border-color: transparent;
+  background: linear-gradient(145deg,#7b70dd,#5e55c9);
+  box-shadow: 0 5px 14px rgba(83,72,181,.23);
+  color: white;
+}
+
+.ai-message-time {
+  position: absolute;
+  left: calc(100% + 12px);
+  top: 50%;
+  color: #93a2ca;
+  font-size: 9px;
+  font-style: normal;
+  white-space: nowrap;
+  transform: translateY(-50%);
+}
+
+.ai-message.is-user .ai-message-time {
+  left: auto;
+  right: calc(100% + 12px);
+}
+
+.ai-chat-form {
+  grid-template-columns: 30px minmax(0,1fr) 38px 42px;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 10px 10px;
+  border-top: 1px solid rgba(94,112,167,.12);
+}
+
+.ai-chat-panel.is-collapsed .ai-chat-form {
+  grid-template-columns: 34px minmax(0,1fr) 38px 44px;
+  gap: 6px;
+  padding: 7px 8px;
+}
+
+.ai-chat-form textarea,
+.ai-chat-panel.is-collapsed .ai-chat-form textarea {
+  height: 44px !important;
+  min-height: 44px;
+  max-height: 76px;
+  padding: 10px 13px;
+  border: 1px solid rgba(176,199,240,.62);
+  border-radius: 22px;
+  background: rgba(249,252,255,.73);
+  box-shadow:
+    0 0 12px rgba(99,158,255,.14),
+    inset 0 1px 2px rgba(65,86,127,.045);
+  color: #34477e;
+  font-size: 12px;
+  line-height: 22px;
+}
+
+.ai-chat-form textarea::placeholder { color: #8392ba; }
+
+.ai-chat-form textarea:focus,
+.ai-chat-panel.is-collapsed .ai-chat-form textarea:focus {
+  border-color: rgba(112,155,238,.65);
+  background: rgba(255,255,255,.88);
+  box-shadow: 0 0 0 3px rgba(103,155,244,.11), 0 0 14px rgba(95,151,244,.15);
+}
+
+.ai-chat-toggle,
+.ai-chat-mute,
+.ai-chat-panel.is-collapsed .ai-chat-toggle,
+.ai-chat-panel.is-collapsed .ai-chat-mute,
+#ai-chat-send,
+.ai-chat-panel.is-collapsed #ai-chat-send {
+  width: 38px;
+  height: 38px;
+  border: 1px solid rgba(255,255,255,.73);
+  border-radius: 50%;
+  background: rgba(239,245,255,.6);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.78);
+  color: #3c5595;
+}
+
+.ai-chat-toggle,
+.ai-chat-panel.is-collapsed .ai-chat-toggle { width: 30px; border-color: transparent; background: transparent; box-shadow: none; }
+
+#ai-chat-send,
+.ai-chat-panel.is-collapsed #ai-chat-send {
+  width: 42px;
+  height: 42px;
+  background: rgba(239,245,255,.72);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.86), 0 4px 12px rgba(74,101,164,.1);
+  color: #415995;
+}
+
+#ai-chat-send:hover:not(:disabled),
+.ai-chat-panel.is-collapsed #ai-chat-send:hover:not(:disabled) {
+  background: rgba(247,250,255,.92);
+  box-shadow: 0 6px 15px rgba(74,101,164,.16), inset 0 1px 0 rgba(255,255,255,.9);
+  color: #2f4787;
+  filter: none;
+}
+
+#ai-chat-send:disabled,
+.ai-chat-panel.is-collapsed #ai-chat-send:disabled {
+  border-color: rgba(255,255,255,.5);
+  background: rgba(220,228,242,.45);
+  box-shadow: none;
+  color: #9ba8c5;
+}
+
+/* Warm healing chat */
+html[data-settings-theme="healing"] .ai-chat-panel {
+  height: 268px;
+  border-color: rgba(249, 202, 226, .88);
+  background: linear-gradient(155deg, rgba(255,252,250,.9), rgba(255,237,246,.82));
+  -webkit-backdrop-filter: blur(22px) saturate(1.16);
+  backdrop-filter: blur(22px) saturate(1.16);
+  box-shadow:
+    0 16px 36px rgba(178,94,139,.2),
+    0 0 23px rgba(247,147,202,.33);
+  color: #5d365c;
+}
+
+html[data-settings-theme="healing"] .ai-chat-panel.is-collapsed {
+  height: 64px;
+  border-color: rgba(249, 202, 226, .88);
+  background: linear-gradient(145deg,rgba(255,253,250,.94),rgba(255,235,246,.87));
+  box-shadow:
+    0 12px 28px rgba(181,91,140,.2),
+    0 0 18px rgba(247,138,197,.3);
+}
+
+html[data-settings-theme="healing"] .ai-chat-panel.is-collapsed:focus-within {
+  border-color: rgba(240, 164, 204, .94);
+  background: linear-gradient(145deg,rgba(255,253,250,.94),rgba(255,235,246,.87));
+  box-shadow:
+    0 12px 28px rgba(181,91,140,.2),
+    0 0 18px rgba(247,138,197,.3),
+    0 0 0 3px rgba(239, 145, 195, .11);
+}
+
+html[data-settings-theme="healing"] .ai-chat-panel.is-overlapping-pet,
+html[data-settings-theme="healing"] .ai-chat-panel.is-collapsed.is-overlapping-pet {
+  background: linear-gradient(150deg,rgba(255,253,250,.94),rgba(255,238,247,.9));
+}
+
+html[data-settings-theme="healing"] .ai-chat-panel::before,
+html[data-settings-theme="healing"] .ai-chat-panel::after {
+  position: absolute;
+  z-index: 3;
+  content: "✦";
+  color: #fff;
+  font-size: 11px;
+  pointer-events: none;
+  text-shadow: 0 0 8px #f795c9;
+}
+
+html[data-settings-theme="healing"] .ai-chat-panel::before { left: 8px; bottom: 8px; }
+html[data-settings-theme="healing"] .ai-chat-panel::after { right: 7px; bottom: 15px; }
+
+html[data-settings-theme="healing"] .ai-chat-meta strong { color: #593759; }
+html[data-settings-theme="healing"] .ai-chat-presence { color: #81627d; }
+html[data-settings-theme="healing"] .ai-chat-head { border-bottom-color: rgba(181,112,151,.15); }
+html[data-settings-theme="healing"] .ai-chat-head-actions button { color: #623b61; }
+
+html[data-settings-theme="healing"] .ai-chat-messages {
+  background:
+    radial-gradient(circle at 15% 76%, rgba(249,184,216,.27) 0 4px, transparent 5px),
+    radial-gradient(circle at 84% 34%, rgba(248,169,208,.24) 0 5px, transparent 6px);
+}
+
+html[data-settings-theme="healing"] .ai-chat-messages::after {
+  position: absolute;
+  right: 16px;
+  bottom: 12px;
+  width: 118px;
+  color: rgba(191,104,151,.7);
+  content: "“ 和你聊天\A 是最开心的事 ”  ♡";
+  font-family: "STKaiti", "KaiTi", cursive;
+  font-size: 10px;
+  line-height: 1.45;
+  text-align: right;
+  white-space: pre;
+  pointer-events: none;
+  transform: rotate(-4deg);
+}
+
+html[data-settings-theme="healing"] .ai-message {
+  border-color: rgba(250,205,226,.65);
+  background: rgba(255,250,248,.73);
+  box-shadow: 0 4px 13px rgba(177,99,141,.07);
+  color: #5b3657;
+}
+
+html[data-settings-theme="healing"] .ai-message.is-user {
+  background: linear-gradient(145deg,#ef94c0,#dc72aa);
+  color: white;
+}
+
+html[data-settings-theme="healing"] .ai-message-time { color: #c693b0; }
+
+html[data-settings-theme="healing"] .ai-chat-form {
+  border-top-color: rgba(181,112,151,.14);
+}
+
+html[data-settings-theme="healing"] .ai-chat-form textarea,
+html[data-settings-theme="healing"] .ai-chat-panel.is-collapsed .ai-chat-form textarea {
+  border-color: rgba(247,185,216,.72);
+  background: rgba(255,252,249,.82);
+  box-shadow: 0 0 13px rgba(241,143,195,.16), inset 0 1px 2px rgba(122,72,98,.035);
+  color: #674260;
+}
+
+html[data-settings-theme="healing"] .ai-chat-form textarea::placeholder { color: #b38ba3; }
+
+html[data-settings-theme="healing"] .ai-chat-toggle svg { display: none; }
+
+html[data-settings-theme="healing"] .ai-chat-toggle::before {
+  width: 23px;
+  height: 21px;
+  background:
+    radial-gradient(ellipse at 50% 72%, #ed8db9 0 28%, transparent 31%),
+    radial-gradient(circle at 15% 32%, #ed8db9 0 14%, transparent 16%),
+    radial-gradient(circle at 41% 12%, #ed8db9 0 14%, transparent 16%),
+    radial-gradient(circle at 69% 13%, #ed8db9 0 14%, transparent 16%),
+    radial-gradient(circle at 91% 38%, #ed8db9 0 13%, transparent 15%);
+  content: "";
+  transform: rotate(-8deg);
+}
+
+html[data-settings-theme="healing"] .ai-chat-mute,
+html[data-settings-theme="healing"] .ai-chat-panel.is-collapsed .ai-chat-mute {
+  border-color: rgba(250,204,226,.65);
+  background: rgba(255,245,249,.76);
+  color: #c35f94;
+}
+
+html[data-settings-theme="healing"] #ai-chat-send,
+html[data-settings-theme="healing"] .ai-chat-panel.is-collapsed #ai-chat-send {
+  border-color: rgba(255,219,237,.9);
+  background: linear-gradient(145deg,#f7afd0,#e878ad);
+  box-shadow: 0 5px 14px rgba(214,103,160,.28), 0 0 0 4px rgba(247,168,208,.12), inset 0 1px 0 rgba(255,255,255,.5);
+  color: white;
+}
+
+html[data-settings-theme="healing"] #ai-chat-send:hover:not(:disabled),
+html[data-settings-theme="healing"] .ai-chat-panel.is-collapsed #ai-chat-send:hover:not(:disabled) {
+  background: linear-gradient(145deg,#f8a8cd,#e46da7);
+  box-shadow: 0 7px 17px rgba(209,91,149,.34), 0 0 0 5px rgba(247,168,208,.14);
+  color: white;
+}
+
+html[data-settings-theme="healing"] #ai-chat-send:disabled,
+html[data-settings-theme="healing"] .ai-chat-panel.is-collapsed #ai-chat-send:disabled {
+  background: linear-gradient(145deg,rgba(247,175,208,.52),rgba(232,120,173,.46));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.42), 0 3px 9px rgba(205,103,157,.12);
+  color: rgba(255,255,255,.8);
+}
+
+html[data-settings-theme="healing"] .ai-chat-panel.is-collapsed #ai-chat-send:not(:disabled) {
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.5), 0 4px 11px rgba(205,103,157,.2);
+}
+
+html:not([data-settings-theme="healing"]) #ai-chat-send:disabled,
+html:not([data-settings-theme="healing"]) .ai-chat-panel.is-collapsed #ai-chat-send:disabled {
+  border-color: rgba(255, 255, 255, 0.72);
+  background: rgba(235, 242, 255, 0.68);
+  color: #536a9f;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.82), 0 4px 12px rgba(58, 88, 151, 0.12);
+  opacity: 1;
+}
+
+/* The two themes use different expanded heights. Keep the character-derived
+   anchor when it fits, but cap it in CSS as well so a theme change can never
+   render the form below the transparent 400×600 window, even before JS runs. */
+.ai-chat-panel:not(.is-collapsed) {
+  top: min(var(--chat-top, 344px), calc(100vh - 256px));
+}
+
+html[data-settings-theme="healing"] .ai-chat-panel:not(.is-collapsed) {
+  top: min(var(--chat-top, 322px), calc(100vh - 278px));
+}
+
+/* Compact collapsed control: preserve a comfortable hit target while removing
+   the extra circular ornament that competed with the input field. */
+html:not([data-settings-theme="healing"]) .ai-chat-panel.is-collapsed .ai-chat-form {
+  grid-template-columns: 26px minmax(0, 1fr) 38px 42px;
+}
+
+html:not([data-settings-theme="healing"]) .ai-chat-panel.is-collapsed .ai-chat-toggle {
+  width: 26px;
+  height: 38px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  box-shadow: none;
+  color: #405994;
+}
+
+html:not([data-settings-theme="healing"]) .ai-chat-panel.is-collapsed .ai-chat-toggle:hover {
+  background: rgba(228, 238, 255, .48);
+}
+
+html:not([data-settings-theme="healing"]) .ai-chat-panel.is-collapsed .ai-chat-toggle svg {
+  width: 13px;
 }

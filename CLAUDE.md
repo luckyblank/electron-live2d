@@ -55,7 +55,7 @@ Place `live2dcubismcore.min.js` in `static/` before the app can render models. I
 
 Models live in subdirectories as `.model3.json` descriptors or `.zip` bundles in two locations:
 
-- `models/` (project root) - bundled models, shipped with the installer. In dev this is the project directory; when packaged it is read from `app.asar`. `download-models.cjs` extracts curated models here from the `_repo` git clone (`models/_repo` is excluded from git and from the installer).
+- `models/` (project root) - bundled models stored directly in the repository and shipped with the installer. In dev this is the project directory; when packaged it is read from `app.asar`.
 - `%APPDATA%/Live2DCompanion/models/` - user-added models, survives uninstall/update. Same-name models here override bundled ones.
 
 Each subdirectory becomes one tray-selectable model. The `hiyori` model is prioritized as default.
@@ -64,7 +64,7 @@ Each subdirectory becomes one tray-selectable model. The `hiyori` model is prior
 
 - No build step for source code - Electron loads `main.js`, `preload.js`, and `renderer/index.html` directly.
 - `npm run package:win` runs `electron-builder` which reads the `build` config from `package.json` and produces an NSIS installer in `dist/`.
-- The `build.files` glob excludes dev-only files (*.bak, *.md, test scripts, download-models.cjs, generate-icon.js, build outputs) so they are not shipped.
+- Reusable QA scripts live in `qa/`. The `build.files` glob excludes that directory and other dev-only files (*.bak, *.md, generate-icon.js, build outputs) so they are not shipped.
 
 ## Interaction Design
 

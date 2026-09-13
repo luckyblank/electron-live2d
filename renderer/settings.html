@@ -1,22 +1,31 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-settings-theme="glass">
+<html lang="zh-CN" data-settings-theme="glass" data-settings-view="characters">
 <head>
   <meta charset="UTF-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' file: data:; media-src 'self' data: https://docs.bigmodel.cn">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' file: data:; media-src 'self' data: https://docs.bigmodel.cn https://help-static-aliyun-doc.aliyuncs.com">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Live2D 桌面伙伴</title>
   <link rel="stylesheet" href="settings.css">
+  <link rel="stylesheet" href="settings-reference.css">
+  <link rel="stylesheet" href="search-select.css">
+  <link rel="stylesheet" href="scrollbars.css">
 </head>
 <body>
+  <div class="ambient-decor" aria-hidden="true">
+    <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+  </div>
   <div class="window-shell">
     <header class="titlebar">
       <div class="brand-lockup">
-        <img src="../resources/icon-32.png" width="28" height="28" alt="">
+        <img src="../resources/icon-64.png" width="42" height="42" alt="">
         <div>
           <strong>桌面伙伴</strong>
           <span>Live2D Companion</span>
         </div>
       </div>
+      <p class="titlebar-note">让喜欢的角色，<br>一直在你身边。♡</p>
+      <span class="titlebar-sparkle sparkle-one" aria-hidden="true">✦</span>
+      <span class="titlebar-sparkle sparkle-two" aria-hidden="true">✦</span>
       <div class="window-actions" aria-label="窗口控制">
         <button id="minimize-window" type="button" aria-label="最小化">
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8.5h10"/></svg>
@@ -27,37 +36,62 @@
       </div>
     </header>
 
-    <section id="onboarding" class="onboarding" hidden>
-      <div>
-        <span class="eyebrow">初次见面</span>
-        <h1>让桌面伙伴安静地陪着你</h1>
-        <p>拖动角色调整位置，轻点触发互动，右键随时打开快捷菜单。</p>
-      </div>
-      <button id="finish-onboarding" class="primary-button" type="button">开始使用</button>
-    </section>
-
     <nav class="section-tabs" aria-label="设置分类">
-      <button class="section-tab is-active" type="button" data-section="characters" aria-current="page">角色</button>
-      <button class="section-tab" type="button" data-section="behavior">行为</button>
-      <button class="section-tab" type="button" data-section="ai">AI</button>
-      <button class="section-tab" type="button" data-section="system">系统</button>
+      <button class="section-tab is-active" type="button" data-section="characters" aria-current="page">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="7" r="4"/><path d="M4.5 20v-2.2c0-3.5 3.4-6.3 7.5-6.3s7.5 2.8 7.5 6.3V20z"/></svg><span>角色</span>
+      </button>
+      <button class="section-tab" type="button" data-section="behavior">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 5 9 7-9 7z"/></svg><span>行为</span>
+      </button>
+      <button class="section-tab" type="button" data-section="ai">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.8c.8 5.1 2.1 6.4 7.2 7.2-5.1.8-6.4 2.1-7.2 7.2-.8-5.1-2.1-6.4-7.2-7.2C9.9 9.2 11.2 7.9 12 2.8Z"/><path d="M19 16.2c.3 2.2.9 2.8 3 3.1-2.1.3-2.7.9-3 3-.4-2.1-1-2.7-3.1-3 2.1-.4 2.7-1 3.1-3.1Z"/></svg><span>AI</span>
+      </button>
+      <button class="section-tab" type="button" data-section="system">
+        <svg class="nav-settings-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M19.43 12.98c.04-.32.07-.65.07-.98s-.03-.66-.07-.98l2.11-1.65a.5.5 0 0 0 .12-.64l-2-3.46a.5.5 0 0 0-.6-.22l-2.49 1a7.3 7.3 0 0 0-1.69-.98l-.38-2.65A.5.5 0 0 0 14 2h-4a.5.5 0 0 0-.5.42l-.38 2.65c-.61.25-1.18.58-1.69.98l-2.49-1a.5.5 0 0 0-.6.22l-2 3.46a.5.5 0 0 0 .12.64l2.11 1.65c-.04.32-.07.65-.07.98s.03.66.07.98l-2.11 1.65a.5.5 0 0 0-.12.64l2 3.46a.5.5 0 0 0 .6.22l2.49-1c.51.4 1.08.73 1.69.98l.38 2.65A.5.5 0 0 0 10 22h4a.5.5 0 0 0 .5-.42l.38-2.65c.61-.25 1.18-.58 1.69-.98l2.49 1a.5.5 0 0 0 .6-.22l2-3.46a.5.5 0 0 0-.12-.64zM12 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7Z"/></svg><span>系统</span>
+      </button>
     </nav>
 
     <main class="settings-content">
       <div id="settings-pet-background" class="settings-pet-background" aria-hidden="true">
         <canvas id="settings-pet-background-canvas" width="240" height="360"></canvas>
       </div>
-      <section class="settings-section is-active" data-view="characters">
+      <section class="settings-section characters-view is-active" data-view="characters">
         <div class="section-heading">
-          <div>
-            <span class="eyebrow">当前角色</span>
-            <h1 id="current-model-name">正在准备</h1>
+          <div class="hero-copy">
+            <span class="eyebrow">今日陪伴</span>
+            <h1 id="current-model-name" class="is-cjk" lang="zh-CN">
+              <span id="current-model-name-text" class="hero-name-text">正在准备</span>
+              <span class="hero-name-mark" aria-hidden="true">♡</span>
+            </h1>
             <small id="current-model-source" class="current-model-source"></small>
+            <span id="hero-model-script" class="hero-model-script" aria-hidden="true">Companion ♡</span>
           </div>
-          <span id="runtime-status" class="runtime-status is-loading">启动中</span>
+          <span class="hero-floating-heart" aria-hidden="true">♡</span>
+          <span class="hero-side-note" aria-hidden="true">一直在你身边<br>♡</span>
+          <span class="hero-paw-mark" aria-hidden="true"></span>
+          <div class="companion-status-row">
+            <div class="companion-status-line" role="status" aria-label="当前陪伴状态" aria-live="polite">
+              <span id="runtime-status" class="runtime-status is-loading">角色准备中</span>
+              <span id="companion-chat-status" class="companion-status-item">文字未配置</span>
+              <span id="companion-voice-status" class="companion-status-item">语音未配置</span>
+            </div>
+          </div>
+          <div class="companion-control-row">
+            <span class="companion-control-label">陪伴模式</span>
+            <div id="companion-presets" class="companion-presets" role="group" aria-label="陪伴预设">
+              <button type="button" data-companion-preset="quiet" aria-pressed="false" aria-label="安静陪伴：光标跟随关闭、互动特效关闭、闲置与睡眠开启、性能模式自适应" title="关闭光标跟随和特效；保留闲置休息；性能自适应">安静陪伴</button>
+              <button type="button" data-companion-preset="natural" aria-pressed="false" aria-label="自然互动：光标靠近时跟随、轻量特效开启、闲置与睡眠关闭、性能模式自适应" title="靠近时跟随并保留轻量特效；不自动进入睡眠；性能自适应">自然互动</button>
+              <button type="button" data-companion-preset="eco" aria-pressed="false" aria-label="省电陪伴：光标跟随关闭、互动特效关闭、闲置与睡眠开启、性能模式省资源" title="关闭光标跟随和特效；保留闲置休息；性能模式省资源">省电陪伴</button>
+            </div>
+          </div>
         </div>
 
         <div class="scale-control">
+          <span class="setting-icon" aria-hidden="true">
+            <svg class="character-scale-icon" viewBox="0 0 24 24">
+              <path d="M10.5 10.5 5 5m0 0v4m0-4h4M13.5 13.5 19 19m0 0v-4m0 4h-4"/>
+            </svg>
+          </span>
           <div class="setting-copy">
             <label for="scale-range">角色尺寸</label>
             <p>只改变角色显示大小，不影响窗口位置。</p>
@@ -67,6 +101,9 @@
         </div>
 
         <form id="model-nickname-form" class="nickname-control">
+          <span class="setting-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="m4 16.5-.8 4.3 4.3-.8L19 8.5 15.5 5z"/><path d="m13.8 6.7 3.5 3.5"/></svg>
+          </span>
           <div class="setting-copy">
             <label for="model-nickname">角色昵称</label>
             <p>昵称按模型单独保存</p>
@@ -77,36 +114,230 @@
           </div>
         </form>
 
-        <div class="subheading-row">
-          <h2>选择角色</h2>
-          <div class="subheading-tools">
-            <button id="reveal-selected-model" class="model-reveal-button" type="button" aria-label="定位到当前选中的角色" aria-controls="model-list" title="定位到当前选中的角色">
-              <svg viewBox="0 0 20 20" aria-hidden="true">
-                <path d="M7 3H5a2 2 0 0 0-2 2v2M13 3h2a2 2 0 0 1 2 2v2M7 17H5a2 2 0 0 1-2-2v-2M13 17h2a2 2 0 0 0 2-2v-2"/>
-                <circle cx="10" cy="10" r="2.5"/>
-              </svg>
-            </button>
-            <span id="model-count">0 个可用</span>
+        <div class="model-picker">
+          <div class="subheading-row">
+            <h2>
+              <svg class="select-icon select-icon-grid" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+              <svg class="select-icon select-icon-cat" viewBox="0 0 32 24" aria-hidden="true"><path d="M6 8 4 2l6 4c1.8-.7 3.8-1 6-1s4.2.3 6 1l6-4-2 6c1.8 1.5 3 3.4 3 5.5C29 18.2 23.2 22 16 22S3 18.2 3 13.5C3 11.4 4.2 9.5 6 8Z"/><path d="M10 14h.1M22 14h.1M13 17c2 1.5 4 1.5 6 0"/></svg>
+              <span>选择角色</span>
+            </h2>
+            <span class="model-swipe-hint">
+              <svg viewBox="0 0 28 28" aria-hidden="true"><path d="M10 13V7.5a2 2 0 0 1 4 0V12m0-3.5a2 2 0 0 1 4 0V12m0-2a2 2 0 0 1 4 0v5.8c0 5-3.3 8.2-8.3 8.2-3 0-5.1-1.7-6.8-4L4 16.4a2.1 2.1 0 0 1 3-3l3 2.5V13Z"/></svg>
+              <span>左右滑动查看更多角色</span><b aria-hidden="true">»</b>
+            </span>
+            <div class="subheading-tools">
+              <button id="reveal-selected-model" class="model-reveal-button" type="button" aria-label="定位到当前选中的角色" aria-controls="model-list" title="定位到当前选中的角色">
+                <svg viewBox="0 0 20 20" aria-hidden="true">
+                  <path d="M7 3H5a2 2 0 0 0-2 2v2M13 3h2a2 2 0 0 1 2 2v2M7 17H5a2 2 0 0 1-2-2v-2M13 17h2a2 2 0 0 0 2-2v-2"/>
+                  <circle cx="10" cy="10" r="2.5"/>
+                </svg>
+              </button>
+              <span id="model-count">0 个可用</span>
+            </div>
           </div>
+          <div class="model-carousel">
+            <div id="model-list" class="model-list" role="radiogroup" aria-label="角色列表"></div>
+            <button id="model-next" class="model-next" type="button" aria-label="查看更多角色" title="查看更多角色">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 4 8 8-8 8"/></svg>
+            </button>
+          </div>
+          <div id="model-pagination" class="model-pagination" aria-hidden="true"></div>
         </div>
-        <div id="model-list" class="model-list" role="radiogroup" aria-label="角色列表"></div>
+
+        <section id="character-profile" class="character-profile" aria-labelledby="character-profile-title">
+          <button id="character-profile-toggle" class="character-profile-toggle" type="button" aria-expanded="true" aria-controls="character-profile-body">
+            <span class="profile-heading-icon profile-heading-icon-glass" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="M19.4 13a7.8 7.8 0 0 0 .1-1 7.8 7.8 0 0 0-.1-1l2-1.6-2-3.4-2.5 1a8 8 0 0 0-1.7-1l-.4-2.6h-4L10.4 6a8 8 0 0 0-1.7 1L6.2 6l-2 3.4 2 1.6a7.8 7.8 0 0 0-.1 1 7.8 7.8 0 0 0 .1 1l-2 1.6 2 3.4 2.5-1a8 8 0 0 0 1.7 1l.4 2.6h4l.4-2.6a8 8 0 0 0 1.7-1l2.5 1 2-3.4z"/><circle cx="12.6" cy="12" r="3"/></svg>
+            </span>
+            <span class="profile-heading-icon profile-heading-icon-healing" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="M4 5.2c3.2-.9 5.9-.4 8 1.6v12.1c-2.1-2-4.8-2.5-8-1.6zM20 5.2c-3.2-.9-5.9-.4-8 1.6v12.1c2.1-2 4.8-2.5 8-1.6z"/><path d="M7 9h2.5M7 12h2.5M14.5 9H17M14.5 12H17"/></svg>
+            </span>
+            <strong id="character-profile-title">角色设定</strong>
+            <span class="profile-heading-heart healing-only" aria-hidden="true">♡</span>
+            <span class="profile-collapse-label">收起</span>
+            <svg class="profile-collapse-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="m3 10 5-5 5 5"/></svg>
+          </button>
+
+          <div id="character-profile-body" class="character-profile-body">
+            <div class="character-profile-tabs" role="tablist" aria-label="角色设定分类">
+              <button id="profile-tab-basic" class="is-active" type="button" role="tab" aria-selected="true" aria-controls="profile-pane-basic" data-profile-tab="basic">基础设定</button>
+              <button id="profile-tab-world" type="button" role="tab" aria-selected="false" aria-controls="profile-pane-world" data-profile-tab="world">世界观设定</button>
+              <button id="profile-tab-actions" type="button" role="tab" aria-selected="false" aria-controls="profile-pane-actions" data-profile-tab="actions">动作</button>
+              <button id="profile-tab-expressions" type="button" role="tab" aria-selected="false" aria-controls="profile-pane-expressions" data-profile-tab="expressions">表情</button>
+              <button id="profile-tab-interactions" type="button" role="tab" aria-selected="false" aria-controls="profile-pane-interactions" data-profile-tab="interactions">互动方式</button>
+            </div>
+
+            <div id="profile-pane-basic" class="character-profile-pane is-active" role="tabpanel" aria-labelledby="profile-tab-basic" data-profile-pane="basic">
+              <div id="profile-basic-display" class="profile-basic-display">
+                <div class="profile-portrait-card">
+                  <span class="profile-portrait-decoration" aria-hidden="true">♡</span>
+                  <img id="profile-portrait" alt="当前角色预览">
+                  <div class="profile-portrait-caption">
+                    <strong id="profile-portrait-name">伙伴</strong>
+                    <span id="profile-portrait-nickname"></span>
+                    <button id="profile-edit-open" type="button" aria-label="编辑基础设定" title="编辑基础设定">
+                      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m3 11-.5 2.5L5 13l7-7-2-2z"/><path d="M8.8 5.2 10.8 7.2"/></svg>
+                    </button>
+                  </div>
+                </div>
+                <dl class="profile-facts">
+                  <div><dt><svg class="profile-fact-icon" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="4.6" r="2.2"/><path d="M3.8 13c.2-3 1.6-4.5 4.2-4.5s4 1.5 4.2 4.5z"/></svg>角色名称</dt><dd id="profile-character-name">—</dd></div>
+                  <div><dt><svg class="profile-fact-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="m3 5.7 1-3 2.6 2h2.8l2.6-2 1 3v4.6c0 2-2.2 3.2-5 3.2s-5-1.2-5-3.2z"/><path d="M5.5 8.6h.1M10.4 8.6h.1M6.6 11c.9.5 1.9.5 2.8 0"/></svg>种族</dt><dd id="profile-species">—</dd></div>
+                  <div><dt><svg class="profile-fact-icon" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.5"/><path d="M5.7 6.9h.1M10.2 6.9h.1M5.8 9.5c1.4 1.4 3 1.4 4.4 0"/></svg>年龄</dt><dd id="profile-age">—</dd></div>
+                  <div><dt><svg class="profile-fact-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2.5H2.5v11H4M12 2.5h1.5v11H12M6 5.5h4M6 10.5h4"/></svg>身高</dt><dd id="profile-height">—</dd></div>
+                  <div><dt><svg class="profile-fact-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.3c.8 1.7 1.8 2.6 3.5 2.2-.4 1.7.4 2.9 2 3.5-1.6.7-2.4 1.8-2 3.5-1.7-.4-2.7.5-3.5 2.2-.8-1.7-1.8-2.6-3.5-2.2.4-1.7-.4-2.8-2-3.5 1.6-.6 2.4-1.8 2-3.5 1.7.4 2.7-.5 3.5-2.2z"/><circle cx="8" cy="8" r="1.6"/></svg>性格</dt><dd id="profile-personality">—</dd></div>
+                  <div><dt><svg class="profile-fact-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 13.5 3.1 8.8C.4 6.2 4.5 2.2 7.2 5L8 5.8l.8-.8c2.7-2.8 6.8 1.2 4.1 3.8z"/></svg>喜好</dt><dd id="profile-likes">—</dd></div>
+                  <div class="profile-bio-row"><dt><svg class="profile-fact-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.3 3.2c2.2-.6 4.1-.2 5.7 1.2v9c-1.6-1.4-3.5-1.8-5.7-1.2zM13.7 3.2c-2.2-.6-4.1-.2-5.7 1.2v9c1.6-1.4 3.5-1.8 5.7-1.2z"/></svg>简介</dt><dd id="profile-bio">—</dd></div>
+                </dl>
+              </div>
+
+              <form id="profile-basic-form" class="profile-edit-form" hidden>
+                <div class="profile-edit-grid">
+                  <label><span>种族</span><input id="profile-species-input" maxlength="40"></label>
+                  <label><span>年龄</span><input id="profile-age-input" maxlength="40"></label>
+                  <label><span>身高</span><input id="profile-height-input" maxlength="40"></label>
+                  <label class="is-wide"><span>性格</span><input id="profile-personality-input" maxlength="160"></label>
+                  <label class="is-wide"><span>喜好</span><input id="profile-likes-input" maxlength="200"></label>
+                  <label class="is-wide"><span>简介</span><textarea id="profile-bio-input" rows="2" maxlength="600"></textarea></label>
+                </div>
+                <div class="profile-form-actions">
+                  <button id="profile-basic-cancel" type="button">取消</button>
+                  <button class="is-primary" type="submit">保存设定</button>
+                </div>
+              </form>
+
+              <div class="profile-preview-shelves">
+                <section class="profile-preview-shelf">
+                  <div class="profile-preview-heading">
+                    <strong><span class="preview-heading-glyph" aria-hidden="true">▶</span>动作预览</strong>
+                    <span class="profile-preview-tools">
+                      <button class="profile-preview-locate" type="button" data-profile-locate="action" aria-label="定位到选中的动作" title="定位到选中的动作">
+                        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7 3H4a1 1 0 0 0-1 1v3M13 3h3a1 1 0 0 1 1 1v3M17 13v3a1 1 0 0 1-1 1h-3M7 17H4a1 1 0 0 1-1-1v-3"/><circle cx="10" cy="10" r="2.6"/></svg>
+                      </button>
+                      <button class="profile-preview-more" type="button" data-profile-open-tab="actions">查看更多 <span aria-hidden="true">»</span></button>
+                    </span>
+                  </div>
+                  <div class="profile-preview-carousel" data-profile-carousel="action">
+                    <button class="profile-preview-arrow is-previous" type="button" data-profile-slide="action:-1" aria-label="向左浏览动作" title="向左浏览动作" hidden><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m10 3-5 5 5 5"/></svg></button>
+                    <div id="profile-action-preview" class="profile-preview-list is-actions" role="list"></div>
+                    <button class="profile-preview-arrow is-next" type="button" data-profile-slide="action:1" aria-label="向右浏览更多动作" title="向右浏览更多动作" hidden><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m6 3 5 5-5 5"/></svg></button>
+                  </div>
+                  <div class="profile-preview-pagination" data-profile-pagination="action" aria-hidden="true"></div>
+                </section>
+                <section class="profile-preview-shelf">
+                  <div class="profile-preview-heading">
+                    <strong><span class="preview-heading-glyph is-face" aria-hidden="true">●</span>表情预览</strong>
+                    <span class="profile-preview-tools">
+                      <button class="profile-preview-locate" type="button" data-profile-locate="expression" aria-label="定位到选中的表情" title="定位到选中的表情">
+                        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7 3H4a1 1 0 0 0-1 1v3M13 3h3a1 1 0 0 1 1 1v3M17 13v3a1 1 0 0 1-1 1h-3M7 17H4a1 1 0 0 1-1-1v-3"/><circle cx="10" cy="10" r="2.6"/></svg>
+                      </button>
+                      <button class="profile-preview-more" type="button" data-profile-open-tab="expressions">查看更多 <span aria-hidden="true">»</span></button>
+                    </span>
+                  </div>
+                  <div class="profile-preview-carousel" data-profile-carousel="expression">
+                    <button class="profile-preview-arrow is-previous" type="button" data-profile-slide="expression:-1" aria-label="向左浏览表情" title="向左浏览表情" hidden><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m10 3-5 5 5 5"/></svg></button>
+                    <div id="profile-expression-preview" class="profile-preview-list is-expressions" role="list"></div>
+                    <button class="profile-preview-arrow is-next" type="button" data-profile-slide="expression:1" aria-label="向右浏览更多表情" title="向右浏览更多表情" hidden><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m6 3 5 5-5 5"/></svg></button>
+                  </div>
+                  <div class="profile-preview-pagination" data-profile-pagination="expression" aria-hidden="true"></div>
+                </section>
+              </div>
+            </div>
+
+            <div id="profile-pane-world" class="character-profile-pane" role="tabpanel" aria-labelledby="profile-tab-world" data-profile-pane="world" hidden>
+              <form id="profile-world-form" class="profile-world-form">
+                <label><span>角色所在的世界</span><textarea id="profile-worldview-input" rows="3" maxlength="1200" placeholder="描述角色生活的世界、时代与环境"></textarea></label>
+                <label><span>与你的关系</span><textarea id="profile-relationship-input" rows="2" maxlength="600" placeholder="描述角色如何看待你、与你怎样相处"></textarea></label>
+                <label><span>世界规则与表达边界</span><textarea id="profile-rules-input" rows="2" maxlength="800" placeholder="描述需要遵循的规则与不能做的事情"></textarea></label>
+                <div class="profile-form-actions"><button class="is-primary" type="submit">保存世界观</button></div>
+              </form>
+            </div>
+
+            <div id="profile-pane-actions" class="character-profile-pane" role="tabpanel" aria-labelledby="profile-tab-actions" data-profile-pane="actions" hidden>
+              <div class="profile-library-heading"><strong>选择动作进行预览</strong><span id="profile-action-count" class="profile-library-count" aria-label="共 0 个动作">0</span><span>将在桌面角色上立即播放</span></div>
+              <div id="profile-action-library" class="profile-library-grid" role="list"></div>
+            </div>
+
+            <div id="profile-pane-expressions" class="character-profile-pane" role="tabpanel" aria-labelledby="profile-tab-expressions" data-profile-pane="expressions" hidden>
+              <div class="profile-library-heading"><strong>选择表情进行预览</strong><span id="profile-expression-count" class="profile-library-count" aria-label="共 0 个表情">0</span><span>可随时切换其他表情</span></div>
+              <div id="profile-expression-library" class="profile-library-grid" role="list"></div>
+            </div>
+
+            <div id="profile-pane-interactions" class="character-profile-pane" role="tabpanel" aria-labelledby="profile-tab-interactions" data-profile-pane="interactions" hidden>
+              <div class="interaction-overview" aria-label="互动方式概览">
+                <article class="interaction-stat-card">
+                  <span class="interaction-stat-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8.5 11V5.8a1.6 1.6 0 0 1 3.2 0V10m0-5.7a1.6 1.6 0 0 1 3.2 0V10m0-4.1a1.6 1.6 0 0 1 3.2 0v6.6m0-3a1.6 1.6 0 0 1 3.2 0v4.2c0 4.5-2.7 7.2-7.3 7.2h-1.2c-2.5 0-4.3-1.2-5.6-3.1l-3.4-4.8a1.7 1.7 0 0 1 2.6-2.2L8.5 13Z"/></svg></span>
+                  <span><strong>桌面手势</strong><b><span id="model-gestures-summary-count">0</span> 项</b></span>
+                </article>
+                <article class="interaction-stat-card">
+                  <span class="interaction-stat-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="6" y="2.5" width="12" height="19" rx="6"/><path d="M12 2.5v6m-6 1h12"/></svg></span>
+                  <span><strong>右键互动</strong><b id="model-interactions-summary-count">0 / 0</b></span>
+                </article>
+                <article class="interaction-stat-card interaction-stat-custom">
+                  <span class="interaction-stat-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></span>
+                  <span><strong>支持新增自定义</strong><small>自由扩展更多互动</small></span>
+                </article>
+              </div>
+
+              <form id="model-gestures-form" class="model-interactions-form model-gestures-form interaction-editor-card">
+                <div class="interaction-editor-heading">
+                  <span class="interaction-editor-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8.5 11V5.8a1.6 1.6 0 0 1 3.2 0V10m0-5.7a1.6 1.6 0 0 1 3.2 0V10m0-4.1a1.6 1.6 0 0 1 3.2 0v6.6m0-3a1.6 1.6 0 0 1 3.2 0v4.2c0 4.5-2.7 7.2-7.3 7.2h-1.2c-2.5 0-4.3-1.2-5.6-3.1l-3.4-4.8a1.7 1.7 0 0 1 2.6-2.2L8.5 13Z"/></svg></span>
+                  <span class="interaction-editor-copy"><strong>桌面手势</strong><small>固定触发方式，不支持排序，可分别修改动作和弹出文字。</small></span>
+                  <b id="model-gestures-count">0 项</b>
+                </div>
+                <div class="model-gestures-columns" aria-hidden="true"><span></span><span>触发方式</span><span>提示文字</span><span>动作映射</span><span>预览</span><span>操作</span></div>
+                <div id="model-gestures-list" class="model-interactions-list model-gestures-list"></div>
+                <button id="model-gestures-reset" type="button" hidden>恢复默认</button>
+                <button type="submit" hidden>保存手势</button>
+              </form>
+
+              <form id="model-interactions-form" class="model-interactions-form interaction-editor-card model-context-interactions-form">
+                <div class="interaction-editor-heading">
+                  <span class="interaction-editor-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 4.5h16v11H9l-5 4v-15Z"/><path d="M8 9h8m-8 3h5"/></svg></span>
+                  <span class="interaction-editor-copy"><strong>右键「和我互动」</strong><small>拖动左侧排序柄；显示项始终排在隐藏项前，并同步到右键菜单。</small></span>
+                  <b id="model-interactions-count">0 / 0</b>
+                </div>
+                <div class="model-interactions-columns" aria-hidden="true"><span>≡</span><span>显示</span><span>菜单名称</span><span>弹出文字</span><span>动作映射</span><span>预览</span><span>操作</span></div>
+                <div id="model-interactions-list" class="model-interactions-list"></div>
+                <p id="model-interactions-empty" class="model-interactions-empty" hidden>当前角色还没有上报可用动作，加载完成后即可添加自定义互动。</p>
+                <div class="model-interactions-actions">
+                  <button id="model-interaction-add" class="text-button" type="button">＋ 新增互动</button>
+                  <button id="model-interactions-reset" class="text-button" type="button">恢复默认</button>
+                  <button class="text-button is-accent" type="submit">保存修改</button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </section>
 
         <div class="models-hint">
-          <p>更多角色：直接导入 <code>.zip</code> 模型包；不兼容的模型会在复制前提示，不会加入角色列表。也可以手动管理下面的 <code>models</code> 文件夹。</p>
+          <span class="setting-icon models-hint-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M3 7.5h7l2-2h9v14H3z"/><path d="M12 11v5m-2.5-2.5h5"/></svg>
+          </span>
+          <div class="models-hint-copy">
+            <strong class="models-title models-title-glass">更多角色：直接导入 <code>.zip</code> 模型包</strong>
+            <strong class="models-title models-title-healing">导入更多角色</strong>
+            <p><span class="healing-only">支持直接拖入 </span><code>.zip</code> 模型包，不兼容的模型会在复制前提示，<br class="healing-only">不会加入角色列表，也可以手动管理下面的 <code>models</code> 文件夹。</p>
+          </div>
+          <span class="models-doodle" aria-hidden="true">发现更多<br>有趣的伙伴吧！♡</span>
           <div class="models-hint-row">
             <span id="models-folder-path" class="models-folder-path"></span>
             <div class="models-hint-actions">
-              <button id="import-model-zip" class="text-button is-accent" type="button">导入 ZIP</button>
-              <button id="open-models-folder" class="text-button" type="button">打开文件夹</button>
+              <button id="import-model-zip" class="text-button is-accent" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4m0 0L8 8m4-4 4 4M5 14v5h14v-5"/></svg><span>导入 ZIP</span></button>
+              <button id="open-models-folder" class="text-button" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7.5h7l2-2h9v14H3z"/></svg><span>打开文件夹</span></button>
             </div>
           </div>
         </div>
 
         <div class="position-panel">
+          <span class="setting-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><rect x="3.5" y="4" width="17" height="13" rx="2"/><path d="M9 21h6M12 17v4"/></svg>
+          </span>
           <div class="setting-copy">
             <label for="preset-grid">窗口位置</label>
             <p>把角色移动到当前屏幕的常用位置。</p>
           </div>
+          <span class="position-doodle" aria-hidden="true">放在你喜欢的<br>任何角落～♡</span>
           <div id="preset-grid" class="preset-grid" role="group" aria-label="窗口位置">
             <button type="button" data-preset="top-left">左上角</button>
             <button type="button" data-preset="top-right">右上角</button>
@@ -117,36 +348,44 @@
         </div>
       </section>
 
-      <section class="settings-section" data-view="behavior" hidden>
+      <section class="settings-section behavior-view" data-view="behavior" hidden>
         <div class="section-heading compact">
           <div>
             <span class="eyebrow">行为</span>
             <h1>克制，但有回应</h1>
+            <p class="page-heading-note">在合适的距离，用刚好的方式陪伴你。</p>
           </div>
+          <span class="page-heading-mark" aria-hidden="true">♡</span>
+          <span class="behavior-heading-side" aria-hidden="true">Always<br>with you. ♡</span>
         </div>
 
         <div class="setting-list">
           <label class="setting-row">
+            <span class="setting-row-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 3.5 19 13l-6.2 1.2L9.5 20z"/><path d="m13 14 4 5"/></svg></span>
             <span class="setting-copy"><strong>近距离跟随</strong><small>指针靠近时轻微转头，远离后自动回正。</small></span>
             <input class="switch-input" type="checkbox" data-setting="cursorFollow">
             <span class="switch-track" aria-hidden="true"></span>
           </label>
           <label class="setting-row">
+            <span class="setting-row-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 2.7c.7 5.4 2 6.7 7.4 7.4-5.4.7-6.7 2-7.4 7.4-.7-5.4-2-6.7-7.4-7.4 5.4-.7 6.7-2 7.4-7.4Z"/><path d="M19 16.5c.3 2 .8 2.5 2.8 2.8-2 .3-2.5.8-2.8 2.8-.3-2-.8-2.5-2.8-2.8 2-.3 2.5-.8 2.8-2.8Z"/></svg></span>
             <span class="setting-copy"><strong>轻量点击反馈</strong><small>保留一次柔和光点，不产生大规模粒子。</small></span>
             <input class="switch-input" type="checkbox" data-setting="effects">
             <span class="switch-track" aria-hidden="true"></span>
           </label>
           <label class="setting-row">
+            <span class="setting-row-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M19.5 15.5A8.5 8.5 0 0 1 8.5 4.5a8.5 8.5 0 1 0 11 11Z"/><path d="M16.5 4.5h4m-2-2v4"/></svg></span>
             <span class="setting-copy"><strong>闲置与睡眠</strong><small>长时间无操作时降低帧率并进入休息状态。</small></span>
             <input class="switch-input" type="checkbox" data-setting="idleEnabled">
             <span class="switch-track" aria-hidden="true"></span>
           </label>
           <label class="setting-row">
+            <span class="setting-row-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3M12 14v3"/></svg></span>
             <span class="setting-copy"><strong>锁定宠物</strong><small>完全穿透鼠标；可从系统托盘菜单解锁。</small></span>
             <input class="switch-input" type="checkbox" data-setting="interactionMode">
             <span class="switch-track" aria-hidden="true"></span>
           </label>
           <label class="setting-row">
+            <span class="setting-row-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="15" rx="2"/><path d="m6 16 4-4 3 3 2-2 3 3"/><circle cx="16.5" cy="8.5" r="1.5"/></svg></span>
             <span class="setting-copy"><strong>背景检测</strong><small>显示完整窗口范围，透明背景也可抓取；关闭后仅角色附近可拖动。</small></span>
             <input class="switch-input" type="checkbox" data-setting="backgroundDetection">
             <span class="switch-track" aria-hidden="true"></span>
@@ -154,14 +393,20 @@
         </div>
 
         <div class="shortcut-panel interaction-guide" aria-label="互动方式">
-          <div><span>轻点角色</span><b>按部位回应</b></div>
-          <div><span>连续双击</span><b>开心回应</b></div>
-          <div><span>长按角色</span><b>安静陪伴</b></div>
-          <div><span>右键角色</span><b>问候、夸奖、投喂</b></div>
+          <header class="guide-heading">
+            <span class="guide-title-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 2.7c.7 5.4 2 6.7 7.4 7.4-5.4.7-6.7 2-7.4 7.4-.7-5.4-2-6.7-7.4-7.4 5.4-.7 6.7-2 7.4-7.4Z"/></svg></span>
+            <h2>交互方式说明</h2>
+            <span class="guide-paw" aria-hidden="true">♣</span>
+            <span class="guide-note" aria-hidden="true">小小的互动，<br>也是大大的开心！♡</span>
+          </header>
+          <div class="guide-row"><i class="guide-dot" aria-hidden="true">1</i><span>轻点角色</span><b>按角色自定义</b></div>
+          <div class="guide-row"><i class="guide-dot" aria-hidden="true">2</i><span>双击 / 三击</span><b>按角色自定义</b></div>
+          <div class="guide-row"><i class="guide-dot" aria-hidden="true">3</i><span>长按 / 拖拽</span><b>按角色自定义</b></div>
+          <div class="guide-row"><i class="guide-dot" aria-hidden="true">4</i><span>右键角色</span><b>可增删互动</b></div>
         </div>
 
         <fieldset class="quality-fieldset">
-          <legend>性能模式</legend>
+          <legend><span class="quality-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 21V11m7 10V3m7 18V8"/></svg></span><span><strong>性能模式</strong><small>流畅的陪伴<br>更长久 ♡</small></span></legend>
           <div class="segmented-control" role="radiogroup" aria-label="性能模式">
             <button type="button" data-quality="auto">自适应</button>
             <button type="button" data-quality="eco">省资源</button>
@@ -171,40 +416,107 @@
         </fieldset>
       </section>
 
-      <section class="settings-section" data-view="ai" hidden>
+      <section class="settings-section ai-view" data-view="ai" hidden>
         <div class="section-heading compact">
           <div>
             <span class="eyebrow">可选能力</span>
             <h1>让伙伴真正听懂你</h1>
+            <p class="page-heading-note">让每一次对话<br>都更靠近你 ♡</p>
           </div>
+          <span class="page-heading-mark" aria-hidden="true">✦</span>
         </div>
 
         <p class="section-intro">设置伙伴与你交流的方式，并选择负责理解、回复和语音播放的模型。</p>
 
-        <section class="ai-settings-block" aria-labelledby="ai-chat-settings-title">
-          <div class="ai-settings-block-heading">
-            <span class="eyebrow">CHAT</span>
-            <h2 id="ai-chat-settings-title">聊天设置</h2>
+        <section class="ai-settings-block chat-settings-block" aria-labelledby="ai-chat-settings-title">
+          <div class="chat-settings-card">
+            <div class="ai-settings-block-heading chat-settings-heading">
+              <span class="block-heading-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 5.5h16v11H9l-5 3z"/><path d="M8 10h8M8 13h5"/></svg></span>
+              <span class="eyebrow">CHAT</span>
+              <h2 id="ai-chat-settings-title">聊天设置</h2>
+              <span class="chat-heading-heart" aria-hidden="true">♥</span>
+              <span class="chat-heading-rule" aria-hidden="true"></span>
+              <span class="chat-heading-doodle" aria-hidden="true">从一句温暖的问候<br>开始我们的故事吧～</span>
+              <span class="chat-heading-flourish" aria-hidden="true">
+                <svg viewBox="0 0 34 30"><path d="M8 4C4 0 0 4 2 9c2 5 6 8 6 8s5-3 7-8c2-5-3-9-7-5Z"/><path d="M17 24c8 2 14-3 14-10"/></svg>
+              </span>
+            </div>
+
+            <form id="chat-greeting-form" class="chat-greeting-panel">
+              <span class="chat-form-icon chat-form-icon-screen" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M9 21h6M12 18v3"/></svg></span>
+              <span class="chat-form-icon chat-form-icon-pencil" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m4 16.5-.8 4.3 4.3-.8L19 8.5 15.5 5z"/><path d="m13.8 6.7 3.5 3.5"/></svg></span>
+              <label for="chat-greeting">聊天开场白</label>
+              <p id="chat-greeting-hint">每个角色首次打开聊天且没有对话记录时显示一次；留空可关闭。</p>
+              <span class="chat-greeting-illustration" aria-hidden="true">
+                <svg viewBox="0 0 132 58">
+                  <path class="chat-illustration-heart" d="M15 8C9 2 1 7 4 15c3 7 11 12 11 12s8-5 11-12C29 7 21 2 15 8Z"/>
+                  <path class="chat-illustration-heart chat-illustration-heart-small" d="M117 5c-4-4-10 0-8 6 2 5 8 8 8 8s6-3 8-8c2-6-4-10-8-6Z"/>
+                  <path class="chat-illustration-cat" d="M48 58c-2-10-1-24 5-34l7 9c11-5 22-5 33 0l8-9c6 10 7 24 4 34"/>
+                  <path class="chat-illustration-cat" d="M66 45h.2M90 45h.2"/>
+                  <path class="chat-illustration-cat" d="M76 52c2 2 5 2 7 0"/>
+                </svg>
+              </span>
+              <textarea id="chat-greeting" rows="3" maxlength="200" aria-describedby="chat-greeting-hint chat-greeting-count" placeholder="例如：你好呀～今天想聊点什么？"></textarea>
+              <div id="chat-greeting-presets" class="chat-greeting-presets" aria-label="常用问候语">
+                <span>快捷问候</span>
+                <button type="button" data-greeting="你好呀～今天想聊点什么？">默认</button>
+                <button type="button" data-greeting="你好呀～今天过得怎么样？">日常问候</button>
+                <button type="button" data-greeting="欢迎回来～要和我聊聊天吗？">欢迎回来</button>
+                <button type="button" data-greeting="辛苦啦，先休息一下吧～">暖心关怀</button>
+                <button type="button" data-greeting="今天想聊点什么？我会认真听的～">开始聊天</button>
+              </div>
+              <div class="chat-greeting-actions">
+                <span id="chat-greeting-count" aria-live="polite">0 / 200</span>
+                <button class="text-button" type="submit">保存开场白</button>
+              </div>
+            </form>
           </div>
 
-          <form id="chat-greeting-form" class="chat-greeting-panel">
-            <label for="chat-greeting">聊天开场白</label>
-            <p id="chat-greeting-hint">每个角色首次打开聊天且没有对话记录时显示一次；留空可关闭。</p>
-            <textarea id="chat-greeting" rows="3" maxlength="200" aria-describedby="chat-greeting-hint chat-greeting-count" placeholder="例如：你好呀～今天想聊点什么？"></textarea>
-            <div class="chat-greeting-actions">
-              <span id="chat-greeting-count" aria-live="polite">0 / 200</span>
-              <button class="text-button" type="submit">保存开场白</button>
+          <section id="bubble-style-customizer" class="bubble-style-customizer" aria-labelledby="bubble-style-title">
+            <div class="bubble-style-selection-panel">
+              <div class="bubble-customizer-heading">
+                <span class="bubble-heading-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 5.5h16v11H9l-5 3z"/><path d="M8 10h8M8 13h5"/></svg></span>
+                <h3 id="bubble-style-title">气泡样式</h3>
+                <p id="bubble-style-description">选择聊天时伙伴说话的气泡样式，让对话更有个性。</p>
+                <span class="bubble-carousel-hint" aria-hidden="true">← 左右滑动查看更多气泡样式 →</span>
+              </div>
+
+              <div class="bubble-style-carousel-shell">
+                <button id="bubble-style-previous" class="bubble-carousel-arrow is-previous" type="button" aria-label="查看上一个气泡样式">
+                  <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m12.5 4.5-5 5.5 5 5.5"/></svg>
+                </button>
+                <div id="bubble-style-options" class="bubble-style-options" role="radiogroup" aria-label="气泡样式"></div>
+                <button id="bubble-style-next" class="bubble-carousel-arrow is-next" type="button" aria-label="查看下一个气泡样式">
+                  <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m7.5 4.5 5 5.5-5 5.5"/></svg>
+                </button>
+              </div>
+              <div id="bubble-style-pagination" class="bubble-style-pagination" aria-hidden="true"></div>
             </div>
-          </form>
+
+            <div class="bubble-style-preview-panel">
+              <div class="bubble-preview-heading">
+                <span class="bubble-preview-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M2.8 12s3.3-5.3 9.2-5.3 9.2 5.3 9.2 5.3-3.3 5.3-9.2 5.3S2.8 12 2.8 12Z"/><circle cx="12" cy="12" r="2.4"/></svg></span>
+                <h3>样式预览</h3>
+                <p>这里是实际聊天时的显示效果预览。</p>
+              </div>
+              <div class="bubble-style-live-preview">
+                <span class="bubble-preview-sparkles" aria-hidden="true">✦　　✧</span>
+                <figure class="bubble-preview-avatar"><img id="bubble-preview-avatar" alt=""></figure>
+                <div id="bubble-live-preview-slot" class="bubble-live-preview-slot"></div>
+                <span id="bubble-preview-note" class="bubble-preview-note" aria-hidden="true">一小句问候，<br>也要有自己的温度 ♡</span>
+              </div>
+            </div>
+          </section>
         </section>
 
         <section class="ai-settings-block" aria-labelledby="ai-model-settings-title">
           <div class="ai-settings-block-heading">
+            <span class="block-heading-icon model-heading-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m12 2.7 8 4.5v9.1l-8 4.5-8-4.5V7.2z"/><path d="m4.3 7.4 7.7 4.4 7.7-4.4M12 11.8v8.7"/></svg></span>
             <span class="eyebrow">MODEL</span>
             <h2 id="ai-model-settings-title">模型设置</h2>
           </div>
 
-          <div class="ai-capability-group">
+          <div class="ai-capability-group chat-model-group">
             <div class="ai-capability-heading">
               <div>
                 <span class="eyebrow">TEXT</span>
@@ -216,9 +528,10 @@
             <div id="ai-chat-plugin-list" class="ai-plugin-list" aria-label="文本模型插件"></div>
           </div>
 
-          <div class="ai-capability-group">
+          <div class="ai-capability-group voice-model-group">
             <div class="ai-capability-heading">
               <div>
+                <span class="voice-heading-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 14v4M8 9v10M12 4v16M16 8v11M20 12v6"/></svg></span>
                 <span class="eyebrow">VOICE</span>
                 <h2>语音模型</h2>
               </div>
@@ -230,11 +543,18 @@
 
           <hr class="ai-section-divider">
 
-          <div class="models-hint">
-            <p>更多插件：把插件文件夹放进下面的 <code>plugins</code> 文件夹（卸载或更新程序都不会删除），然后点击托盘「刷新模型列表」。</p>
+          <div class="plugin-extension-heading">
+            <svg class="plugin-heading-puzzle glass-only" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h4v4a2 2 0 1 0 4 0V3h4v7h-4a2 2 0 1 0 0 4h4v7h-7v-4a2 2 0 1 0-4 0v4H3v-7h4a2 2 0 1 0 0-4H3V3z"/></svg>
+            <svg class="plugin-heading-folder healing-only" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7.5h7l2-2h9v14H3z"/><path d="M12 11v5m-2.5-2.5h5"/></svg>
+            <strong class="glass-only">插件与扩展</strong><strong class="healing-only">更多插件</strong>
+          </div>
+          <div class="models-hint plugin-folder-hint">
+            <span class="setting-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3 7.5h7l2-2h9v14H3z"/><path d="M12 11v5m-2.5-2.5h5"/></svg></span>
+            <div class="models-hint-copy"><strong class="models-title"><span class="glass-only">更多插件：把插件文件夹放进下面的 <code>plugins</code> 文件夹</span><span class="healing-only">更多插件</span></strong><p>把插件文件夹放进下面的 <code>plugins</code> 文件夹（卸载或更新程序都不会删除），然后点击托盘「刷新模型列表」。</p></div>
+            <span class="plugin-folder-doodle" aria-hidden="true">发现更多<br>有趣的伙伴吧！♡</span>
             <div class="models-hint-row">
               <span id="plugins-folder-path" class="models-folder-path"></span>
-              <button id="open-plugins-folder" class="text-button" type="button">打开插件文件夹</button>
+              <button id="open-plugins-folder" class="text-button" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7.5h7l2-2h9v14H3z"/></svg><span>打开插件文件夹</span></button>
             </div>
           </div>
         </section>
@@ -251,20 +571,18 @@
           </div>
 
           <div id="ai-config-body" class="ai-config-body">
-            <label class="field-label" for="ai-api-key">
-              <span>API Key</span>
+            <div class="field-label ai-key-field">
+              <label for="ai-api-key">API Key</label>
               <input id="ai-api-key" class="ai-api-key" type="text" autocomplete="off" spellcheck="false" placeholder="粘贴你的 DeepSeek API Key" aria-describedby="ai-key-hint">
-              <small id="ai-key-hint">Key 将使用系统安全存储加密保存在本机。</small>
-            </label>
+              <div class="ai-key-support">
+                <small id="ai-key-hint">Key 将使用系统安全存储加密保存在本机。</small>
+                <button id="ai-use-environment" class="ai-key-source-action" type="button" hidden>切回环境变量</button>
+              </div>
+            </div>
 
             <label class="field-label" for="ai-model">
               <span id="ai-model-label">模型</span>
-              <select id="ai-model"></select>
-            </label>
-
-            <label id="ai-persona-field" class="field-label" for="ai-persona" data-ai-capability="chat">
-              <span>伙伴性格</span>
-              <textarea id="ai-persona" rows="4" maxlength="1000" placeholder="描述它应该如何与你交流"></textarea>
+              <select id="ai-model" aria-label="模型" data-search-select data-search-placeholder="搜索模型" data-item-label="个模型"></select>
             </label>
 
             <label id="ai-history-field" class="field-label" for="ai-history-limit" data-ai-capability="chat">
@@ -281,9 +599,9 @@
 
             <div id="ai-tts-fields" class="ai-tts-fields" data-ai-capability="tts" hidden>
               <div class="field-label">
-                <label for="ai-voice">音色</label>
+                <label for="ai-voice-trigger">音色</label>
                 <div class="ai-voice-control">
-                  <select id="ai-voice"></select>
+                  <select id="ai-voice" aria-label="音色" data-search-select data-select-legacy="ai-voice" data-search-placeholder="搜索中文名、英文名或拼音" data-empty-title="没有找到这个音色" data-empty-hint="换个中文名、英文名或拼音试试" data-item-label="个音色" data-menu-max-height="216"></select>
                   <button id="ai-voice-preview" class="ai-voice-preview" type="button" aria-label="试听当前音色" title="试听当前音色">
                     <svg viewBox="0 0 18 18" aria-hidden="true">
                       <path d="M3 7h3l3.5-2.8v9.6L6 11H3z"/>
@@ -328,31 +646,39 @@
         </template>
       </section>
 
-      <section class="settings-section" data-view="system" hidden>
+      <section class="settings-section system-view" data-view="system" hidden>
         <div class="section-heading compact">
           <div>
             <span class="eyebrow">系统</span>
             <h1>与桌面自然共处</h1>
+            <p class="system-heading-lead">让桌面伙伴更好地融入你的桌面环境，陪伴在每一个时刻。</p>
           </div>
+          <span class="page-heading-mark" aria-hidden="true">♡</span>
+          <span class="system-heading-doodle" aria-hidden="true"><span class="glass-only">一直在你身边。<br><small>Always with you.</small></span><span class="healing-only">小小的陪伴<br>也能让平凡的桌面<br>变得温暖起来。♡</span></span>
         </div>
 
         <div class="setting-list">
           <label class="setting-row">
+            <span class="setting-row-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m9 3 6 6-2 2 4 5-1 1-5-4-2 2-6-6z"/><path d="m9 15-5 6"/></svg></span>
             <span class="setting-copy"><strong>始终置顶</strong><small>让角色保持在其他窗口上方。</small></span>
             <input class="switch-input" type="checkbox" data-setting="alwaysOnTop">
             <span class="switch-track" aria-hidden="true"></span>
           </label>
           <label class="setting-row">
+            <span class="setting-row-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3v9"/><path d="M7 5.8A8 8 0 1 0 17 5.8"/></svg></span>
             <span class="setting-copy"><strong>开机启动</strong><small>登录 Windows 后自动启动桌面伙伴。</small></span>
             <input class="switch-input" type="checkbox" data-setting="launchAtLogin">
             <span class="switch-track" aria-hidden="true"></span>
           </label>
           <label class="setting-row">
+            <span class="setting-row-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 2.7c.7 5.4 2 6.7 7.4 7.4-5.4.7-6.7 2-7.4 7.4-.7-5.4-2-6.7-7.4-7.4 5.4-.7 6.7-2 7.4-7.4Z"/><path d="M19 16.5c.3 2 .8 2.5 2.8 2.8-2 .3-2.5.8-2.8 2.8-.3-2-.8-2.5-2.8-2.8 2-.3 2.5-.8 2.8-2.8Z"/></svg></span>
             <span class="setting-copy"><strong>减少动态效果</strong><small>关闭附加反馈并限制动画刷新频率。</small></span>
             <input class="switch-input" type="checkbox" data-setting="reducedMotion">
             <span class="switch-track" aria-hidden="true"></span>
           </label>
           <label class="setting-row">
+            <span class="setting-row-icon system-bg-icon system-bg-icon-screen" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="15" rx="2"/><path d="m6 16 4-4 3 3 2-2 3 3"/><circle cx="16.5" cy="8.5" r="1.5"/></svg></span>
+            <span class="setting-row-icon system-bg-icon system-bg-icon-cat" aria-hidden="true"><svg viewBox="0 0 30 24"><path d="M6 8 4 2l6 4c1.5-.6 3.2-.9 5-.9s3.5.3 5 .9l6-4-2 6c1.6 1.4 2.6 3.2 2.6 5.2C26.6 18 21.4 21.6 15 21.6S3.4 18 3.4 13.2C3.4 11.2 4.4 9.4 6 8Z"/><path d="M10 14h.1M20 14h.1M12 17c2 1.3 4 1.3 6 0"/></svg></span>
             <span class="setting-copy"><strong>宠物动态背景</strong><small>在设置窗口背景中显示当前角色，并同步桌面动作。</small></span>
             <input class="switch-input" type="checkbox" data-setting="settingsPetBackground">
             <span class="switch-track" aria-hidden="true"></span>
@@ -360,34 +686,36 @@
         </div>
 
         <fieldset class="theme-fieldset">
-          <legend>页面主题</legend>
+          <legend><span class="theme-heading-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 0 18h1.4a2.1 2.1 0 0 0 0-4.2h-1a1.5 1.5 0 0 1 0-3h1.8A6.8 6.8 0 0 0 21 7c0-2.2-4-4-9-4Z"/><circle cx="7.5" cy="9" r="1"/><circle cx="10.5" cy="6.8" r="1"/><circle cx="15" cy="7" r="1"/></svg></span><span>页面主题</span><small>不同的风格<br>同样的陪伴 ♡</small></legend>
           <p>选择设置窗口的视觉风格，不影响桌面宠物。</p>
           <div class="theme-options" role="radiogroup" aria-label="页面主题">
-            <label class="theme-option">
+            <label class="theme-option theme-option-glass">
               <input class="theme-radio" type="radio" name="settings-theme" value="glass" data-theme-option="glass">
-              <span class="theme-preview is-glass" aria-hidden="true"><i></i><i></i><i></i></span>
-              <span><strong>玻璃质感</strong><small>通透冷紫·方案 B</small></span>
+              <span class="theme-preview is-glass" aria-hidden="true"><img src="assets/theme-glass.png" alt=""></span>
+              <span><strong>玻璃质感</strong><small>通透冷紫</small></span>
               <i class="theme-check" aria-hidden="true"></i>
             </label>
-            <label class="theme-option">
+            <label class="theme-option theme-option-healing">
               <input class="theme-radio" type="radio" name="settings-theme" value="healing" data-theme-option="healing">
-              <span class="theme-preview is-healing" aria-hidden="true"><i></i><i></i><i></i></span>
-              <span><strong>二次元治愈</strong><small>暖白柔紫·方案 C</small></span>
+              <span class="theme-preview is-healing" aria-hidden="true"><img src="assets/theme-healing.png" alt=""></span>
+              <span><strong>二次元治愈</strong><small>暖白柔紫</small></span>
               <i class="theme-check" aria-hidden="true"></i>
             </label>
           </div>
         </fieldset>
 
-        <div class="shortcut-panel">
-          <div><span>打开设置</span><kbd>右键角色</kbd></div>
-          <div><span>锁定后管理</span><kbd>系统托盘</kbd></div>
+        <div class="shortcut-panel system-shortcuts">
+          <div><span class="shortcut-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M9 21h6M12 18v3"/></svg></span><span>打开设置</span><kbd>右键角色</kbd></div>
+          <div><span class="shortcut-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M7 10V7a5 5 0 0 1 10 0v3"/><path d="M5 10h14v11H5z"/><path d="M12 14v3"/></svg></span><span>锁定后台管理</span><kbd>系统托盘</kbd></div>
         </div>
 
         <div class="update-panel">
+          <span class="update-panel-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M20 7v5h-5"/><path d="M19 12a7 7 0 1 0 1 4"/></svg></span>
           <div class="update-copy">
             <strong>版本更新</strong>
             <small id="update-status">正在检查…</small>
           </div>
+          <span class="update-panel-doodle" aria-hidden="true">始终变得更好<br>陪伴更久一点！♡</span>
           <div class="update-actions">
             <button id="check-update" class="text-button" type="button">
               <span id="update-dot" class="update-dot" hidden></span>
@@ -395,6 +723,12 @@
             </button>
           </div>
         </div>
+
+        <button id="contact-author-open" class="contact-author-entry" type="button" aria-haspopup="dialog" aria-controls="contact-author-dialog">
+          <span class="contact-entry-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m4 7 8 6 8-6"/></svg></span>
+          <span class="contact-entry-copy"><strong>联系作者</strong><small>反馈建议、问题咨询或合作交流</small></span>
+          <svg class="contact-entry-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 3 5 5-5 5"/></svg>
+        </button>
 
         <div class="system-actions">
           <button id="reset-settings" class="text-button" type="button">恢复默认设置</button>
@@ -405,8 +739,17 @@
 
     <footer class="app-footer">
       <span>Live2D 桌面伙伴</span>
+      <span class="footer-note" aria-hidden="true">一起度过<br>每一个普通的日常 ♡</span>
+      <svg class="footer-cat" viewBox="0 0 210 94" aria-hidden="true">
+        <path class="cat-back" d="M58 75c1-24 17-48 43-53 25-5 53 5 65 28 8 15 8 31 4 43H58Z"/>
+        <path class="cat-white" d="M83 74c-2-17 3-37 17-49l7-18 14 13c10-2 20 0 28 4l15-11 4 23c6 10 7 24 2 38Z"/>
+        <path class="cat-ear" d="m105 24 4-13 9 10m31 4 12-8 2 16"/>
+        <path class="cat-face" d="M119 49c3 4 7 4 10 0m13 0c3 4 7 4 10 0m-21 11c5 4 10 4 15 0"/>
+        <path class="cat-paw" d="M72 69c8-8 20-4 21 5v15H70c-5-6-4-14 2-20Zm91 2c8-7 18-2 18 6v12h-22c-3-7-2-13 4-18Z"/>
+        <circle class="cat-blush" cx="114" cy="59" r="5"/><circle class="cat-blush" cx="156" cy="59" r="5"/>
+      </svg>
       <div class="footer-right">
-        <button id="footer-update" class="footer-update" type="button" hidden title="发现新版本，点击下载">
+        <button id="footer-update" class="footer-update" type="button" title="检查版本更新">
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5v7.5m0 0 3-3m-3 3L5 7M3.5 12.5h9"/></svg>
         </button>
         <span id="app-version">v1.0.0</span>
@@ -433,6 +776,71 @@
       </footer>
     </div>
   </div>
+
+  <div id="contact-author-dialog" class="contact-author-dialog" hidden>
+    <section class="contact-author-card" role="dialog" aria-modal="true" aria-labelledby="contact-author-title" aria-describedby="contact-author-description">
+      <header class="contact-dialog-header">
+        <span class="contact-dialog-title-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m4 7 8 6 8-6"/></svg></span>
+        <div>
+          <h2 id="contact-author-title">联系作者</h2>
+          <p id="contact-author-description">欢迎反馈建议、问题咨询或合作交流～</p>
+        </div>
+        <span class="contact-dialog-doodle" aria-hidden="true"><span class="glass-only">你的支持<br>是我持续创作的动力！♡</span><span class="healing-only">每一个想法<br>都很珍贵 ♡</span></span>
+        <button id="contact-author-close" class="contact-dialog-close" type="button" aria-label="关闭联系作者面板">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 4l12 12M16 4 4 16"/></svg>
+        </button>
+      </header>
+
+      <div class="contact-profile">
+        <div class="contact-profile-art" aria-hidden="true">
+          <img class="contact-profile-avatar" src="../resources/icon@2x.png" alt="">
+          <span class="contact-profile-heart">♥</span>
+        </div>
+        <div class="contact-profile-copy">
+          <strong>桌面伙伴作者</strong>
+          <p>用可爱的角色，让每一天的桌面更温暖 ♡</p>
+          <small>Make Desktop More Alive</small>
+          <div class="contact-profile-tags" aria-label="项目关键词">
+            <span>Live2D</span><span>二次元</span><span>桌面美化</span><span>可爱治愈</span>
+          </div>
+        </div>
+        <span class="contact-profile-paw paw-one" aria-hidden="true"></span>
+        <span class="contact-profile-paw paw-two" aria-hidden="true"></span>
+        <span class="contact-profile-note healing-only" aria-hidden="true">一起创造<br>更美好的桌面吧！♡</span>
+      </div>
+
+      <div class="contact-channel-list">
+        <button class="contact-channel" type="button" data-contact-url="mailto:luckyblank@163.com">
+          <span class="contact-channel-icon is-mail" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m4 7 8 6 8-6"/></svg></span>
+          <span class="contact-channel-copy"><strong>邮箱</strong><small>发送邮件与我取得联系</small></span>
+          <span class="contact-channel-value">luckyblank@163.com</span>
+          <svg class="contact-channel-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 3 5 5-5 5"/></svg>
+        </button>
+        <button class="contact-channel" type="button" data-contact-url="https://github.com/luckyblank/electron-live2d">
+          <span class="contact-channel-icon is-github" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 2.8a9.2 9.2 0 0 0-2.9 17.9c.5.1.6-.2.6-.5v-1.8c-2.7.6-3.3-1.1-3.3-1.1-.4-1.1-1.1-1.4-1.1-1.4-.9-.6.1-.6.1-.6 1 0 1.5 1 1.5 1 .9 1.5 2.3 1.1 2.9.8.1-.6.3-1.1.6-1.3-2.2-.2-4.5-1.1-4.5-4.8 0-1.1.4-1.9 1-2.6-.1-.3-.4-1.3.1-2.6 0 0 .8-.3 2.7 1a9.3 9.3 0 0 1 4.9 0c1.9-1.3 2.7-1 2.7-1 .5 1.3.2 2.3.1 2.6.6.7 1 1.5 1 2.6 0 3.7-2.3 4.6-4.5 4.8.4.3.7.9.7 1.8v3.4c0 .3.2.6.7.5A9.2 9.2 0 0 0 12 2.8Z"/></svg></span>
+          <span class="contact-channel-copy"><strong>GitHub</strong><small>查看开源项目、提交 Issue 或参与讨论</small></span>
+          <span class="contact-channel-value">github.com/luckyblank</span>
+          <svg class="contact-channel-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 3 5 5-5 5"/></svg>
+        </button>
+        <button class="contact-channel" type="button" data-contact-url="https://github.com/luckyblank/electron-live2d/issues">
+          <span class="contact-channel-icon is-feedback" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 4h16v13H9l-5 3z"/><path d="M8 9h8M8 13h5"/></svg></span>
+          <span class="contact-channel-copy"><strong>问题反馈</strong><small>提交 Bug、功能建议或使用问题</small></span>
+          <span class="contact-channel-value">前往反馈页面</span>
+          <svg class="contact-channel-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 3 5 5-5 5"/></svg>
+        </button>
+      </div>
+
+      <div class="contact-dialog-actions">
+        <button type="button" data-contact-copy="luckyblank@163.com"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="6" y="5" width="10" height="12" rx="2"/><path d="M4 14H3V3h9v1"/></svg><span>复制邮箱</span></button>
+        <button class="is-primary" type="button" data-contact-url="https://github.com/luckyblank/electron-live2d"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M11 3h6v6M17 3l-8 8"/><path d="M15 11v5H4V5h5"/></svg><span>打开主页</span></button>
+        <button type="button" data-contact-url="https://github.com/luckyblank/electron-live2d/issues"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 4h14v10H8l-4 3v-3H3z"/></svg><span>问题反馈</span></button>
+      </div>
+
+      <footer class="contact-dialog-footer" aria-hidden="true"><i></i><span>感谢你的喜欢与支持！♡</span><i></i></footer>
+    </section>
+  </div>
+  <script src="bubble-component.js"></script>
+  <script src="search-select.js"></script>
   <script src="settings.js"></script>
 </body>
 </html>

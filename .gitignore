@@ -6,6 +6,3 @@ dist/
 *.tmp
 .DS_Store
 Thumbs.db
-
-# Model source repo clone (used by download-models.cjs)
-models/_repo/

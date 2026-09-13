@@ -1,7 +1,7 @@
 {
   "id": "zhipu-tts",
   "name": "智谱 GLM-TTS",
-  "shortName": "TTS",
+  "shortName": "GLM",
   "version": "1.0.0",
   "description": "把伙伴的回复合成为语音，并实时驱动 Live2D 口型。",
   "main": "index.js",

@@ -1,18 +1,24 @@
 const crypto = require('crypto')
 const fs = require('fs')
 const path = require('path')
+const { INITIAL_USER_DEFAULTS } = require('../config/defaults')
 
-const DEFAULT_PERSONA = '你是住在用户桌面上的可爱 Live2D 伙伴。请使用自然、温暖、简短的中文回复，每次最多三句话，不使用 Markdown，不假装执行你无法执行的操作。'
-const DEFAULT_HISTORY_MESSAGES = 12
+const DEFAULT_PERSONA = INITIAL_USER_DEFAULTS.ai.persona
+const DEFAULT_HISTORY_MESSAGES = INITIAL_USER_DEFAULTS.ai.historyLimit
 const MAX_HISTORY_MESSAGES = 40
-const DEFAULT_MAX_RESPONSE_CHARACTERS = 300
+const DEFAULT_MAX_RESPONSE_CHARACTERS = INITIAL_USER_DEFAULTS.ai.maxResponseChars
 const MIN_RESPONSE_CHARACTERS = 50
 const MAX_RESPONSE_CHARACTERS = 2000
-const DEFAULT_TTS_SPEED = 1
-const DEFAULT_TTS_VOLUME = 1
+const DEFAULT_TTS_SPEED = INITIAL_USER_DEFAULTS.ai.speed
+const DEFAULT_TTS_VOLUME = INITIAL_USER_DEFAULTS.ai.volume
 const REQUEST_TIMEOUT_MS = 45000
 const TTS_REQUEST_TIMEOUT_MS = 60000
 const SUPPORTED_CAPABILITIES = ['chat', 'tts']
+const MAX_PERSISTED_MESSAGE_CHARACTERS = 2000
+const PREVIEW_AUDIO_URL_PATTERNS = [
+  /^https:\/\/docs\.bigmodel\.cn\/resource\/audio\/[a-z0-9_-]+\.wav$/i,
+  /^https:\/\/help-static-aliyun-doc\.aliyuncs\.com\/file-manage-files\/zh-CN\/\d{8}\/[a-z0-9]+\/[a-z0-9+_.%-]+\.wav$/i,
+]
 
 // 语境情绪标签：要求模型在回复开头标注，主进程解析后驱动宠物情绪动作。
 // 键为模型可能输出的标签词（含常见别名），值为跨插件稳定的情绪键。
@@ -77,19 +83,70 @@ function maskSecret(value) {
 function createAIPluginManager({ pluginsDirectories, store, safeStorage, ttsDirectory }) {
   let registry = null
   const loadedPlugins = new Map()
-  // 会话上下文按「对话插件 × 宠物角色」隔离：换角色后各自的记忆互不干扰，
-  // 换插件亦然。键格式 pluginId::modelId
+  // 会话严格按宠物角色隔离，并持久化到 electron-store。切换文字插件、
+  // 停用插件或重启应用都继续使用同一角色的上下文。
   const conversations = new Map()
   const activeRequests = new Map()
 
-  function conversationKeyFor(pluginId, modelId) {
-    return `${pluginId}::${typeof modelId === 'string' ? modelId : ''}`
+  function conversationKeyFor(modelId) {
+    return typeof modelId === 'string' ? modelId.trim() : ''
   }
 
-  function deleteConversationsForPlugin(pluginId) {
-    for (const key of conversations.keys()) {
-      if (key === pluginId || key.startsWith(`${pluginId}::`)) conversations.delete(key)
+  function normalizedConversationMessages(value) {
+    if (!Array.isArray(value)) return []
+    return value
+      .filter(message => message && ['user', 'assistant'].includes(message.role) && typeof message.content === 'string')
+      .map(message => ({
+        role: message.role,
+        content: Array.from(message.content.trim()).slice(0, MAX_PERSISTED_MESSAGE_CHARACTERS).join(''),
+      }))
+      .filter(message => message.content)
+      .slice(-MAX_HISTORY_MESSAGES)
+  }
+
+  function readPersistedConversations() {
+    const value = store.get('aiConversations')
+    return value && typeof value === 'object' && !Array.isArray(value) ? { ...value } : {}
+  }
+
+  function readConversation(modelId) {
+    const key = conversationKeyFor(modelId)
+    if (!key) return []
+    if (conversations.has(key)) return conversations.get(key)
+    const stored = readPersistedConversations()[key]
+    const messages = normalizedConversationMessages(stored && Array.isArray(stored.messages) ? stored.messages : stored)
+    conversations.set(key, messages)
+    return messages
+  }
+
+  function conversationIdentity(modelId) {
+    const key = conversationKeyFor(modelId)
+    if (!key) return ''
+    const stored = readPersistedConversations()[key]
+    const value = stored && !Array.isArray(stored) ? stored.companionName : ''
+    return typeof value === 'string' ? Array.from(value.trim()).slice(0, 24).join('') : ''
+  }
+
+  function persistConversation(modelId, messages, companionName = '') {
+    const key = conversationKeyFor(modelId)
+    if (!key) return
+    const normalized = normalizedConversationMessages(messages)
+    const stored = readPersistedConversations()
+    if (normalized.length) {
+      const identity = typeof companionName === 'string'
+        ? Array.from(companionName.trim()).slice(0, 24).join('')
+        : ''
+      stored[key] = {
+        messages: normalized,
+        ...(identity ? { companionName: identity } : {}),
+        updatedAt: new Date().toISOString(),
+      }
+      conversations.set(key, normalized)
+    } else {
+      delete stored[key]
+      conversations.delete(key)
     }
+    store.set('aiConversations', stored)
   }
 
   function readState() {
@@ -123,7 +180,7 @@ function createAIPluginManager({ pluginsDirectories, store, safeStorage, ttsDire
     return manifest.voices.flatMap(voice => {
       if (typeof voice === 'string' && voice.length <= 80) return [{ id: voice, name: voice, previewUrl: '' }]
       if (!voice || typeof voice !== 'object' || typeof voice.id !== 'string' || !voice.id || voice.id.length > 80) return []
-      const previewUrl = /^https:\/\/docs\.bigmodel\.cn\/resource\/audio\/[a-z0-9_-]+\.wav$/i.test(voice.previewUrl || '')
+      const previewUrl = PREVIEW_AUDIO_URL_PATTERNS.some(pattern => pattern.test(voice.previewUrl || ''))
         ? voice.previewUrl
         : ''
       return [{ id: voice.id, name: String(voice.name || voice.id).slice(0, 60), previewUrl }]
@@ -157,6 +214,7 @@ function createAIPluginManager({ pluginsDirectories, store, safeStorage, ttsDire
             : []
           if (!capabilities.length || !models.length) continue
           const voices = normalizeVoices(manifest)
+          const configuredDefaults = INITIAL_USER_DEFAULTS.ai.pluginDefaults[manifest.id] || {}
           registry.set(manifest.id, {
             id: manifest.id,
             name: manifest.name.slice(0, 60),
@@ -168,11 +226,16 @@ function createAIPluginManager({ pluginsDirectories, store, safeStorage, ttsDire
             credentialId: /^[a-z0-9-]+$/i.test(manifest.credentialId || '') ? manifest.credentialId : manifest.id,
             capabilities,
             models,
-            defaultModel: models.includes(manifest.defaultModel) ? manifest.defaultModel : models[0],
+            defaultModel: models.includes(configuredDefaults.model)
+              ? configuredDefaults.model
+              : (models.includes(manifest.defaultModel) ? manifest.defaultModel : models[0]),
+            ttsTuning: manifest.ttsTuning !== false,
             voices,
-            defaultVoice: voices.some(voice => voice.id === manifest.defaultVoice)
-              ? manifest.defaultVoice
-              : (voices[0] ? voices[0].id : ''),
+            defaultVoice: voices.some(voice => voice.id === configuredDefaults.voice)
+              ? configuredDefaults.voice
+              : (voices.some(voice => voice.id === manifest.defaultVoice)
+                  ? manifest.defaultVoice
+                  : (voices[0] ? voices[0].id : '')),
             entryPath,
           })
         } catch (error) {
@@ -203,8 +266,7 @@ function createAIPluginManager({ pluginsDirectories, store, safeStorage, ttsDire
     const selectedId = state.activeIds[capability]
     const selected = selectedId && discover().get(selectedId)
     if (selected && state.installed.includes(selected.id) && supports(selected, capability)) return selected.id
-    const fallback = [...discover().values()].find(plugin => state.installed.includes(plugin.id) && supports(plugin, capability))
-    return fallback ? fallback.id : ''
+    return ''
   }
 
   function environmentKey(plugin) {
@@ -279,6 +341,7 @@ function createAIPluginManager({ pluginsDirectories, store, safeStorage, ttsDire
         capabilities: plugin.capabilities,
         models: plugin.models,
         defaultModel: plugin.defaultModel,
+        ttsTuning: plugin.ttsTuning,
         voices: plugin.voices,
         installed: state.installed.includes(plugin.id),
         activeCapabilities: plugin.capabilities.filter(capability => activeIds[capability] === plugin.id),
@@ -340,35 +403,16 @@ function createAIPluginManager({ pluginsDirectories, store, safeStorage, ttsDire
     return getSnapshot()
   }
 
-  function uninstall(pluginId) {
+  function deactivate(pluginId, capability) {
     const plugin = pluginOrThrow(pluginId)
+    const targetCapability = SUPPORTED_CAPABILITIES.includes(capability) ? capability : plugin.capabilities[0]
     const state = readState()
-    const request = activeRequests.get(pluginId)
-    if (request) request.abort()
+    if (!state.installed.includes(pluginId)) throw new Error('这个 AI 模型尚未安装')
+    if (!supports(plugin, targetCapability)) throw new Error('这个模型不支持所选能力')
+    const activeRequest = activeRequests.get(pluginId)
+    if (activeRequest) activeRequest.abort()
     activeRequests.delete(pluginId)
-    deleteConversationsForPlugin(pluginId)
-    loadedPlugins.delete(pluginId)
-    delete require.cache[plugin.entryPath]
-    state.installed = state.installed.filter(id => id !== pluginId)
-    delete state.settings[pluginId]
-    for (const capability of plugin.capabilities) {
-      if (state.activeIds[capability] === pluginId) state.activeIds[capability] = ''
-    }
-    const credentialStillUsed = [...discover().values()].some(candidate =>
-      candidate.id !== pluginId && candidate.credentialId === plugin.credentialId && state.installed.includes(candidate.id)
-    )
-    if (!credentialStillUsed) {
-      delete state.secrets[plugin.credentialId]
-      delete state.credentialPreferences[plugin.credentialId]
-    }
-    for (const capability of SUPPORTED_CAPABILITIES) {
-      if (!state.activeIds[capability]) {
-        const fallback = [...discover().values()].find(candidate =>
-          state.installed.includes(candidate.id) && supports(candidate, capability)
-        )
-        state.activeIds[capability] = fallback ? fallback.id : ''
-      }
-    }
+    if (state.activeIds[targetCapability] === pluginId) state.activeIds[targetCapability] = ''
     saveState(state)
     return getSnapshot()
   }
@@ -397,7 +441,17 @@ function createAIPluginManager({ pluginsDirectories, store, safeStorage, ttsDire
     if (previous.credentialPreference === 'local' && state.secrets[plugin.credentialId]) {
       state.credentialPreferences[plugin.credentialId] = 'local'
     }
-    if (typeof patch.apiKey === 'string' && patch.apiKey.trim()) {
+    if (patch.credentialPreference === 'environment') {
+      if (!environmentKey(plugin)) {
+        const name = plugin.apiKeyEnv || 'API Key 环境变量'
+        throw new Error(`未检测到环境变量 ${name}，无法切换`)
+      }
+      // A manually entered key sets a persistent local preference. Remove that
+      // override when the user explicitly switches back so every plugin sharing
+      // this credential immediately reads the environment value again.
+      delete state.secrets[plugin.credentialId]
+      state.credentialPreferences[plugin.credentialId] = 'environment'
+    } else if (typeof patch.apiKey === 'string' && patch.apiKey.trim()) {
       if (!safeStorage.isEncryptionAvailable()) throw new Error('当前系统无法安全保存 API Key')
       state.secrets[plugin.credentialId] = safeStorage.encryptString(patch.apiKey.trim()).toString('base64')
       state.credentialPreferences[plugin.credentialId] = 'local'
@@ -405,7 +459,6 @@ function createAIPluginManager({ pluginsDirectories, store, safeStorage, ttsDire
     state.settings[pluginId] = { model, persona, historyLimit, maxResponseChars, voice, speed, volume }
     for (const capability of plugin.capabilities) state.activeIds[capability] = pluginId
     saveState(state)
-    deleteConversationsForPlugin(pluginId)
     return getSnapshot()
   }
 
@@ -533,7 +586,7 @@ function createAIPluginManager({ pluginsDirectories, store, safeStorage, ttsDire
     throw new Error('这个插件没有可测试的能力')
   }
 
-  async function chat({ pluginId, text, companionName, modelId }) {
+  async function chat({ pluginId, text, companionName, companionBaseName, companionProfile, modelId }) {
     const state = readState()
     const selectedId = pluginId || activeIdFor(state, 'chat')
     if (!selectedId) throw new Error('请先安装并启用文字对话插件')
@@ -543,15 +596,30 @@ function createAIPluginManager({ pluginsDirectories, store, safeStorage, ttsDire
     if (!input) throw new Error('请输入要说的话')
     const config = pluginConfig(state, plugin)
     const identity = typeof companionName === 'string' && companionName.trim()
-      ? companionName.trim().slice(0, 24)
+      ? Array.from(companionName.trim()).slice(0, 24).join('')
       : '伙伴'
-    const conversationKey = conversationKeyFor(selectedId, modelId)
-    const history = conversations.get(conversationKey) || []
+    const baseIdentity = typeof companionBaseName === 'string' && companionBaseName.trim()
+      ? Array.from(companionBaseName.trim()).slice(0, 120).join('')
+      : ''
+    const previousIdentity = conversationIdentity(modelId)
+    const history = readConversation(modelId)
+    const staleIdentities = [...new Set([previousIdentity, baseIdentity])]
+      .filter(value => value && value !== identity)
+    const identityCorrection = staleIdentities.length
+      ? `历史对话中出现的${staleIdentities.map(value => JSON.stringify(value)).join('、')}都是旧称呼或模型文件名，不能再用作你的名字。`
+      : '如果历史对话中出现其他名字，一律视为已经失效的旧称呼。'
     const messages = [
-      { role: 'system', content: config.persona },
       {
         role: 'system',
-        content: `你当前的名字是${JSON.stringify(identity)}。这是用户为你设置的固定昵称；当用户询问你的名字或身份时，请准确使用这个昵称回答，不要自行编造其他名字。`,
+        content: typeof companionProfile === 'string' && companionProfile.trim()
+          ? companionProfile.trim().slice(0, 4000)
+          : DEFAULT_PERSONA,
+      },
+      {
+        // 兼容只读取开头 system 指令的服务端实现；历史之后还会再放一条
+        // 最新身份校正，用来覆盖旧对话里的过期自称。
+        role: 'system',
+        content: `你当前的名字是${JSON.stringify(identity)}。这是用户设置的固定昵称；当用户询问你的名字或身份时，请准确使用这个昵称回答。`,
       },
       {
         role: 'system',
@@ -562,6 +630,12 @@ function createAIPluginManager({ pluginsDirectories, store, safeStorage, ttsDire
         content: `回复正文不得超过 ${config.maxResponseChars} 个字符。请优先完整表达最重要的信息，不要为了凑字数重复内容。`,
       },
       ...(config.historyLimit > 0 ? history.slice(-config.historyLimit) : []),
+      {
+        // 身份指令必须放在历史之后：改名以前的 assistant 消息可能仍在
+        // 上下文里自称旧昵称，最后再校正一次才能让当前昵称覆盖旧记忆。
+        role: 'system',
+        content: `最新身份信息：你当前且唯一的名字是${JSON.stringify(identity)}。${identityCorrection}从本轮开始，当用户询问你的名字、身份或要求自我介绍时，只能准确使用${JSON.stringify(identity)}回答。`,
+      },
       { role: 'user', content: input },
     ]
     const result = await runChat(selectedId, messages)
@@ -570,13 +644,13 @@ function createAIPluginManager({ pluginsDirectories, store, safeStorage, ttsDire
     const reply = truncateResponse(extracted.text, config.maxResponseChars)
     const emotion = extracted.emotion
     if (config.historyLimit > 0) {
-      conversations.set(conversationKey, [
+      persistConversation(modelId, [
         ...history,
         { role: 'user', content: input },
         { role: 'assistant', content: reply },
-      ].slice(-config.historyLimit))
+      ].slice(-config.historyLimit), identity)
     } else {
-      conversations.delete(conversationKey)
+      persistConversation(modelId, [])
     }
     return { ok: true, pluginId: plugin.id, text: reply, emotion, model: result.model, usage: result.usage }
   }
@@ -601,10 +675,17 @@ function createAIPluginManager({ pluginsDirectories, store, safeStorage, ttsDire
     }
   }
 
-  function clearConversation(pluginId, modelId) {
-    const state = readState()
-    const selectedId = pluginId || activeIdFor(state, 'chat')
-    if (selectedId) conversations.delete(conversationKeyFor(selectedId, modelId))
+  function getConversation(modelId) {
+    return {
+      ok: true,
+      modelId: conversationKeyFor(modelId),
+      companionName: conversationIdentity(modelId),
+      messages: readConversation(modelId).map(message => ({ ...message })),
+    }
+  }
+
+  function clearConversation(_pluginId, modelId) {
+    persistConversation(modelId, [])
     return { ok: true }
   }
 
@@ -615,7 +696,7 @@ function createAIPluginManager({ pluginsDirectories, store, safeStorage, ttsDire
     loadedPlugins.clear()
   }
 
-  return { getSnapshot, refresh, install, activate, uninstall, configure, test, chat, synthesize, clearConversation, dispose }
+  return { getSnapshot, refresh, install, activate, deactivate, configure, test, chat, synthesize, getConversation, clearConversation, dispose }
 }
 
 module.exports = { createAIPluginManager }

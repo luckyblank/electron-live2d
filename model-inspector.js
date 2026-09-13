@@ -108,6 +108,50 @@ function inspectFolderModel(directory, descriptor) {
   }
 }
 
+function inspectVideoPetManifest(directory, manifestName = 'pet.json') {
+  try {
+    const manifestPath = path.join(directory, manifestName)
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'))
+    if (!manifest || manifest.format !== 'video-pet-v1') {
+      return invalidModel(manifestName, 'video-pet', 'pet.json 缺少 format: video-pet-v1')
+    }
+    if (!manifest.animations || typeof manifest.animations !== 'object' || Array.isArray(manifest.animations)) {
+      return invalidModel(manifestName, 'video-pet', 'pet.json 缺少 animations 配置')
+    }
+
+    const root = path.resolve(directory)
+    const files = Object.values(manifest.animations).flatMap(value => Array.isArray(value) ? value : [])
+    if (!Array.isArray(manifest.animations.idle) || !manifest.animations.idle.length) {
+      return invalidModel(manifestName, 'video-pet', '视频宠物至少需要一个 idle 动画')
+    }
+    if (!files.length || files.some(file => typeof file !== 'string' || path.extname(file).toLowerCase() !== '.webm')) {
+      return invalidModel(manifestName, 'video-pet', 'animations 只能引用 WebM 文件')
+    }
+    for (const file of files) {
+      const resolved = path.resolve(directory, file)
+      if (resolved !== root && !resolved.startsWith(`${root}${path.sep}`)) {
+        return invalidModel(manifestName, 'video-pet', `动画路径不能离开模型目录：${file}`)
+      }
+      if (!fs.existsSync(resolved)) {
+        return invalidModel(manifestName, 'video-pet', `缺少动画文件：${file}`)
+      }
+    }
+
+    const declaredName = typeof manifest.name === 'string' ? manifest.name.trim().slice(0, 80) : ''
+    return {
+      source: manifestName,
+      name: declaredName,
+      format: 'video-pet',
+      modelType: 'video',
+      cubismVersion: null,
+      status: 'ready',
+      statusMessage: '',
+    }
+  } catch (error) {
+    return invalidModel(manifestName, 'video-pet', `无法读取 pet.json：${error.message}`)
+  }
+}
+
 function inspectArchive(directory, archive) {
   try {
     const entryNames = readZipEntryNames(path.join(directory, archive))
@@ -154,6 +198,9 @@ function inspectModelDirectory(directory) {
   const descriptor = files.find(file => file.toLowerCase().endsWith('.model3.json'))
   if (descriptor) return inspectFolderModel(directory, descriptor)
 
+  const videoManifest = files.find(file => file.toLowerCase() === 'pet.json')
+  if (videoManifest) return inspectVideoPetManifest(directory, videoManifest)
+
   const legacyDescriptor = files.find(file => {
     const lower = file.toLowerCase()
     return lower === 'model.json' || lower.endsWith('.model.json')
@@ -164,4 +211,4 @@ function inspectModelDirectory(directory) {
   return archive ? inspectArchive(directory, archive) : null
 }
 
-module.exports = { inspectModelArchive, inspectModelDirectory, readZipEntryNames }
+module.exports = { inspectModelArchive, inspectModelDirectory, inspectVideoPetManifest, readZipEntryNames }

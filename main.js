@@ -1,84 +1,95 @@
-const { app, BrowserWindow, Menu, Tray, ipcMain, nativeImage, screen, shell, safeStorage, dialog } = require('electron')
+const { app, BrowserWindow, Menu, Tray, ipcMain, nativeImage, screen, shell, safeStorage, dialog, clipboard } = require('electron')
 const fs = require('fs')
 const { Readable } = require('stream')
 const path = require('path')
 const { pathToFileURL } = require('url')
 const Store = require('electron-store')
 const { createAIPluginManager } = require('./ai/plugin-manager')
+const {
+  CURRENT_SCHEMA_VERSION,
+  INITIAL_USER_DEFAULTS,
+  PREFERENCE_DEFAULTS: preferenceDefaults,
+  createInitialStoreDefaults,
+} = require('./config/defaults')
+const { BUBBLE_THEME_DEFINITIONS, normalizeBubbleStyles } = require('./config/bubble-styles')
 const { inspectModelArchive, inspectModelDirectory } = require('./model-inspector')
+const { captureSettingsPanel, normalizedSection } = require('./settings-screenshot')
 
 const PET_WIDTH = 400
 const PET_HEIGHT = 600
-const SETTINGS_WIDTH = 430
-const SETTINGS_HEIGHT = 670
-const COVER_CACHE_SUFFIX = '.centered-v2.png'
+const SETTINGS_WIDTH = 470
+const SETTINGS_HEIGHT = 760
+const COVER_CACHE_SUFFIX = '.centered-v4.png'
 const POSITION_SAVE_DELAY = 180
 const CURSOR_NEAR_DISTANCE = 220
 const PET_VISIBLE_MARGIN = 80
 const CHAT_GREETING_MAX_LENGTH = 200
-const PET_INTERACTIONS = [
-  { label: '打个招呼', kind: 'greet' },
-  { label: '摸摸头', kind: 'head' },
-  { label: '夸夸她', kind: 'praise' },
-  { label: '投喂点心', kind: 'snack' },
-  { label: '随机互动', kind: 'random' },
-]
-
-const preferenceDefaults = {
-  interactionMode: 'smart',
-  cursorFollow: 'near',
-  effects: 'subtle',
-  idleEnabled: true,
-  qualityMode: 'auto',
-  alwaysOnTop: true,
-  launchAtLogin: false,
-  reducedMotion: 'system',
-  onboardingSeen: false,
-  backgroundDetection: false,
-  settingsPetBackground: false,
-  settingsTheme: 'glass',
-  chatGreeting: '你好呀～今天想聊点什么？',
-}
+const MODEL_PROFILE_LIMITS = Object.freeze({
+  species: 40,
+  age: 40,
+  height: 40,
+  personality: 160,
+  likes: 200,
+  bio: 600,
+  worldview: 1200,
+  relationship: 600,
+  rules: 800,
+})
+const GENERIC_MODEL_PROFILE = Object.freeze({
+  species: '未设定',
+  age: '未设定',
+  height: '未设定',
+  personality: '温柔、自然、乐于陪伴',
+  likes: '与你相处、分享日常',
+  bio: '住在桌面上的伙伴，希望用自然、温暖的方式陪伴你。',
+  worldview: '生活在与你相连的桌面世界，可以感受到你分享的日常。',
+  relationship: '把用户视为重要的伙伴，尊重用户的感受与边界。',
+  rules: '使用自然、温暖、简短的中文；不使用 Markdown；不假装执行无法完成的操作。',
+})
+const USER_DATA_DIRECTORY_NAME = 'Live2DCompanion'
+const MODEL_INTERACTION_LIMIT = 12
+const DEFAULT_PET_INTERACTIONS = Object.freeze([
+  { id: 'greet', label: '打个招呼', kind: 'greet', text: '你好呀～', defaultMapping: '问候 / 挥手动作' },
+  { id: 'head', label: '摸摸头', kind: 'head', text: '好舒服～', defaultMapping: '摸头动作' },
+  { id: 'praise', label: '夸夸她', kind: 'praise', text: '被夸奖了 ✦', defaultMapping: '开心 / 夸奖动作' },
+  { id: 'snack', label: '投喂点心', kind: 'snack', text: '好吃！', defaultMapping: '投喂动作' },
+  { id: 'random', label: '随机互动', kind: 'random', text: '来和我玩吧～', defaultMapping: '随机选择可用互动' },
+])
+const DEFAULT_PET_GESTURES = Object.freeze([
+  { id: 'tap-head', label: '单击头部', kind: 'head', text: '好舒服～', enabled: true, defaultMapping: '摸头动作' },
+  { id: 'tap-body', label: '单击身体', kind: 'curious', text: '在忙什么呀？', enabled: true, defaultMapping: '点击 / 好奇动作' },
+  { id: 'double-click', label: '连续双击', kind: 'praise', text: '被夸奖了 ✦', enabled: true, defaultMapping: '开心 / 夸奖动作' },
+  { id: 'triple-click', label: '连续三击', kind: 'excited', text: '最喜欢你啦！', enabled: true, defaultMapping: '兴奋 / 开心动作' },
+  { id: 'long-press-head', label: '长按头部', kind: 'head', text: '再摸一下嘛', enabled: true, defaultMapping: '摸头动作' },
+  { id: 'long-press-body', label: '长按身体', kind: 'calm', text: '让我靠一会儿', enabled: true, defaultMapping: '休息 / 安静动作' },
+  { id: 'drag-end', label: '拖拽结束', kind: 'drag', text: '新位置不错', enabled: true, defaultMapping: '拖拽动作' },
+])
+const appliedWindowLevels = new WeakMap()
 
 if (!app.requestSingleInstanceLock()) {
   app.quit()
   return
 }
 
-// 旧版本（中文产品名）数据迁移到新英文名目录
-const legacyUserData = path.join(app.getPath('appData'), 'Live2D 桌面伙伴')
-const currentUserData = app.getPath('userData')
-if (legacyUserData !== currentUserData && fs.existsSync(legacyUserData) && !fs.existsSync(path.join(currentUserData, 'config.json'))) {
-  try {
-    for (const entry of ['config.json', 'covers', 'models', 'plugins', 'tts']) {
-      const from = path.join(legacyUserData, entry)
-      const to = path.join(currentUserData, entry)
-      if (fs.existsSync(from)) fs.cpSync(from, to, { recursive: true })
-    }
-  } catch (error) {
-    console.warn('Legacy user data migration failed:', error.message)
-  }
-}
+// Keep development and packaged builds on one stable, ASCII-only user-data path.
+app.setPath('userData', path.join(app.getPath('appData'), USER_DATA_DIRECTORY_NAME))
+// electron-store 在第一次写入前没有 config.json。启动时先记录这个事实，
+// 用来区分真正的新用户和升级后尚未拥有新标记的既有用户。
+const storeConfigExistedAtStartup = fs.existsSync(path.join(app.getPath('userData'), 'config.json'))
 
 const store = new Store({
-  defaults: {
-    schemaVersion: 1,
-    windowX: undefined,
-    windowY: undefined,
-    currentModelId: '',
-    modelScales: {},
-    modelNicknames: {},
-    ignoredUpdateVersion: '',
-    aiPlugins: { installed: [], activeIds: { chat: '', tts: '' }, settings: {}, secrets: {}, credentialPreferences: {} },
-    ...preferenceDefaults,
-  },
+  defaults: createInitialStoreDefaults(),
 })
 
 let petWindow = null
 let settingsWindow = null
+let settingsCaptureWindow = null
 let tray = null
 let modelsCache = null
 let coversCache = null
+const modelAssetCatalogs = new Map()
+const pendingModelPreviews = new Map()
+let modelPreviewSequence = 0
 let positionSaveTimer = null
 let cursorTimer = null
 let dragCandidate = null
@@ -96,11 +107,20 @@ let petOffScreen = false
 let petLastPosition = null
 let petChatOpen = false
 let speechBubbleBounds = null
+let statusToastBounds = null
 let aiPluginManager = null
 const UPDATE_MANIFEST_URL = 'https://qny.luckyblank.cn/live2d-pet/latest.yml'
 let lastUpdateCheck = null
 let lastDownloadedPath = null
 let updateDownloadController = null
+let settingsScreenshotBusy = false
+
+const SETTINGS_SECTION_LABELS = Object.freeze({
+  characters: '角色',
+  behavior: '行为',
+  ai: 'AI',
+  system: '系统',
+})
 
 function compareVersions(a, b) {
   const partsA = String(a).split('.').map(Number)
@@ -184,9 +204,10 @@ function listModels() {
         if (!inspection) continue
         byId.set(entry.name, {
           id: entry.name,
-          name: entry.name,
+          name: inspection.name || entry.name,
           path: pathToFileURL(path.join(directory, inspection.source)).href,
           format: inspection.format,
+          modelType: inspection.modelType || 'live2d',
           cubismVersion: inspection.cubismVersion,
           status: inspection.status,
           statusMessage: inspection.statusMessage,
@@ -197,9 +218,17 @@ function listModels() {
     }
   }
 
+  const storedOrder = store.get('modelOrder')
+  const order = Array.isArray(storedOrder)
+    ? new Map(storedOrder.filter(id => typeof id === 'string').map((id, index) => [id, index]))
+    : new Map()
   modelsCache = [...byId.values()].sort((a, b) => {
-    if (a.id === 'hiyori') return -1
-    if (b.id === 'hiyori') return 1
+    const aOrder = order.has(a.id) ? order.get(a.id) : Number.POSITIVE_INFINITY
+    const bOrder = order.has(b.id) ? order.get(b.id) : Number.POSITIVE_INFINITY
+    if (aOrder !== bOrder) return aOrder - bOrder
+    const preferredModelId = INITIAL_USER_DEFAULTS.characters.preferredModelId.toLowerCase()
+    if (a.id.toLowerCase() === preferredModelId) return -1
+    if (b.id.toLowerCase() === preferredModelId) return 1
     return a.name.localeCompare(b.name, 'zh-CN')
   })
   return modelsCache
@@ -238,14 +267,38 @@ function requestMissingCovers() {
   const covers = cachedCovers()
   const missing = listModels()
     .filter(model => model.status === 'ready' && !covers[model.id])
-    .map(model => ({ id: model.id, path: model.path }))
+    .map(model => ({ id: model.id, name: model.name, path: model.path, format: model.format, modelType: model.modelType }))
   if (missing.length) sendToWindow(petWindow, 'covers:request', missing)
 }
 
 function selectedModel() {
   const models = listModels().filter(model => model.status === 'ready')
   const currentId = store.get('currentModelId')
-  return models.find(model => model.id === currentId) || models[0] || null
+  return models.find(model => model.id === currentId)
+    || models.find(model => model.id.toLowerCase() === INITIAL_USER_DEFAULTS.characters.preferredModelId)
+    || models[0]
+    || null
+}
+
+function updateModelOrder(modelIds) {
+  if (!Array.isArray(modelIds)) throw new Error('角色顺序格式无效')
+  const models = listModels()
+  const knownIds = new Set(models.map(model => model.id))
+  const seen = new Set()
+  const normalized = []
+  for (const id of modelIds) {
+    if (typeof id !== 'string' || !knownIds.has(id) || seen.has(id)) continue
+    seen.add(id)
+    normalized.push(id)
+  }
+  for (const model of models) {
+    if (!seen.has(model.id)) normalized.push(model.id)
+  }
+  store.set('modelOrder', normalized)
+  modelsCache = [...models].sort((left, right) => normalized.indexOf(left.id) - normalized.indexOf(right.id))
+  updateTrayMenu()
+  broadcastState('model-order-updated')
+  return getSnapshot()
 }
 
 function modelNickname(modelId) {
@@ -255,6 +308,224 @@ function modelNickname(modelId) {
   return typeof value === 'string' ? value.trim().slice(0, 24) : ''
 }
 
+function sanitizeProfileValue(value, limit, fallback = '') {
+  if (typeof value !== 'string') return fallback
+  return Array.from(value)
+    .filter(character => {
+      const code = character.charCodeAt(0)
+      return code === 10 || code === 13 || code === 9 || (code > 31 && code !== 127)
+    })
+    .join('')
+    .trim()
+    .slice(0, limit)
+}
+
+function normalizeModelInteractions(value) {
+  const source = Array.isArray(value) ? value.slice(0, MODEL_INTERACTION_LIMIT) : []
+  const defaultsById = new Map(DEFAULT_PET_INTERACTIONS.map(item => [item.id, item]))
+  const normalizeDefault = (defaultItem, stored = {}) => ({
+      id: defaultItem.id,
+      label: sanitizeProfileValue(stored.label, 24, defaultItem.label) || defaultItem.label,
+      kind: defaultItem.kind,
+      text: sanitizeProfileValue(stored.text, 80, defaultItem.text) || defaultItem.text,
+      actionId: sanitizeProfileValue(stored.actionId, 180),
+      enabled: stored.enabled !== false,
+      isDefault: true,
+      defaultLabel: defaultItem.label,
+      defaultText: defaultItem.text,
+      defaultMapping: defaultItem.defaultMapping,
+  })
+  const normalized = []
+  const usedIds = new Set()
+  let customCount = 0
+  for (const item of source) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) continue
+    const id = sanitizeProfileValue(item.id, 48).replace(/[^a-z0-9_-]/gi, '')
+    if (!id || usedIds.has(id)) continue
+    const defaultItem = defaultsById.get(id)
+    if (defaultItem) {
+      usedIds.add(id)
+      normalized.push(normalizeDefault(defaultItem, item))
+      continue
+    }
+    if (!id.startsWith('custom-') || customCount >= MODEL_INTERACTION_LIMIT - DEFAULT_PET_INTERACTIONS.length) continue
+    usedIds.add(id)
+    customCount++
+    normalized.push({
+      id,
+      label: sanitizeProfileValue(item.label, 24, '新互动') || '新互动',
+      kind: 'custom',
+      text: sanitizeProfileValue(item.text, 80, sanitizeProfileValue(item.label, 80, '一起来玩吧～')) || '一起来玩吧～',
+      actionId: sanitizeProfileValue(item.actionId, 180),
+      enabled: item.enabled !== false,
+      isDefault: false,
+      defaultLabel: '',
+      defaultText: '',
+      defaultMapping: '',
+    })
+  }
+  for (const defaultItem of DEFAULT_PET_INTERACTIONS) {
+    if (!usedIds.has(defaultItem.id)) normalized.push(normalizeDefault(defaultItem))
+  }
+  return normalized.sort((left, right) => Number(right.enabled) - Number(left.enabled))
+}
+
+function modelInteractions(modelId) {
+  const stored = store.get('modelInteractions')
+  const value = stored && typeof stored === 'object' && !Array.isArray(stored) ? stored[modelId] : null
+  return normalizeModelInteractions(value)
+}
+
+function updateModelInteractions(modelId, value) {
+  const model = listModels().find(item => item.id === modelId)
+  if (!model) throw new Error('找不到这个角色')
+  const stored = store.get('modelInteractions')
+  const next = stored && typeof stored === 'object' && !Array.isArray(stored) ? { ...stored } : {}
+  if (value == null) {
+    delete next[modelId]
+  } else {
+    if (!Array.isArray(value)) throw new Error('互动方式格式无效')
+    next[modelId] = normalizeModelInteractions(value).map(item => ({
+      id: item.id,
+      label: item.label,
+      text: item.text,
+      actionId: item.actionId,
+      enabled: item.enabled,
+    }))
+  }
+  store.set('modelInteractions', next)
+  updateTrayMenu()
+  broadcastState('model-interactions-updated')
+  return getSnapshot()
+}
+
+function normalizeModelGestures(value) {
+  const source = Array.isArray(value) ? value : []
+  const sourceById = new Map(source
+    .filter(item => item && typeof item === 'object' && !Array.isArray(item))
+    .map(item => [sanitizeProfileValue(item.id, 48), item]))
+  return DEFAULT_PET_GESTURES.map(defaultItem => {
+    const stored = sourceById.get(defaultItem.id) || {}
+    return {
+      ...defaultItem,
+      actionId: sanitizeProfileValue(stored.actionId, 180),
+      text: sanitizeProfileValue(stored.text, 80, defaultItem.text) || defaultItem.text,
+      enabled: stored.enabled !== false,
+    }
+  })
+}
+
+function modelGestures(modelId) {
+  const stored = store.get('modelGestures')
+  const value = stored && typeof stored === 'object' && !Array.isArray(stored) ? stored[modelId] : null
+  return normalizeModelGestures(value)
+}
+
+function updateModelGestures(modelId, value) {
+  const model = listModels().find(item => item.id === modelId)
+  if (!model) throw new Error('找不到这个角色')
+  const stored = store.get('modelGestures')
+  const next = stored && typeof stored === 'object' && !Array.isArray(stored) ? { ...stored } : {}
+  if (value == null) {
+    delete next[modelId]
+  } else {
+    if (!Array.isArray(value)) throw new Error('手势互动格式无效')
+    next[modelId] = normalizeModelGestures(value).map(item => ({
+      id: item.id,
+      actionId: item.actionId,
+      text: item.text,
+      enabled: item.enabled,
+    }))
+  }
+  store.set('modelGestures', next)
+  broadcastState('model-gestures-updated')
+  return getSnapshot()
+}
+
+function modelProfile(modelId) {
+  const bundled = INITIAL_USER_DEFAULTS.characters.modelProfiles
+    && INITIAL_USER_DEFAULTS.characters.modelProfiles[modelId]
+  const storedProfiles = store.get('modelProfiles')
+  const stored = storedProfiles && typeof storedProfiles === 'object' && !Array.isArray(storedProfiles)
+    ? storedProfiles[modelId]
+    : null
+  const source = { ...GENERIC_MODEL_PROFILE, ...(bundled || {}), ...(stored || {}) }
+  return Object.fromEntries(Object.entries(MODEL_PROFILE_LIMITS).map(([key, limit]) => [
+    key,
+    sanitizeProfileValue(source[key], limit, GENERIC_MODEL_PROFILE[key]),
+  ]))
+}
+
+function updateModelProfile(modelId, patch) {
+  const model = listModels().find(item => item.id === modelId)
+  if (!model) throw new Error('找不到这个角色')
+  if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new Error('角色设定格式无效')
+  const previous = modelProfile(modelId)
+  const next = { ...previous }
+  for (const [key, limit] of Object.entries(MODEL_PROFILE_LIMITS)) {
+    if (Object.prototype.hasOwnProperty.call(patch, key)) {
+      next[key] = sanitizeProfileValue(patch[key], limit, '')
+    }
+  }
+  const storedProfiles = store.get('modelProfiles')
+  const profiles = storedProfiles && typeof storedProfiles === 'object' && !Array.isArray(storedProfiles)
+    ? { ...storedProfiles }
+    : {}
+  profiles[modelId] = next
+  store.set('modelProfiles', profiles)
+  broadcastState('model-profile-updated')
+  return getSnapshot()
+}
+
+function modelProfilePrompt(model) {
+  if (!model) return INITIAL_USER_DEFAULTS.ai.persona
+  const profile = modelProfile(model.id)
+  return [
+    `你是住在用户桌面上的伙伴${JSON.stringify(modelDisplayName(model))}。`,
+    `基础设定：种族是${profile.species || '未设定'}；年龄是${profile.age || '未设定'}；身高是${profile.height || '未设定'}；性格是${profile.personality || '未设定'}；喜欢${profile.likes || '未设定'}。`,
+    profile.bio ? `角色简介：${profile.bio}` : '',
+    profile.worldview ? `世界观：${profile.worldview}` : '',
+    profile.relationship ? `与用户的关系：${profile.relationship}` : '',
+    profile.rules ? `行为与表达规则：${profile.rules}` : '',
+  ].filter(Boolean).join('\n')
+}
+
+function normalizeModelAssetCatalog(value) {
+  const normalizeList = (items, kind) => (Array.isArray(items) ? items : [])
+    .slice(0, 160)
+    .map(item => {
+      if (!item || typeof item !== 'object') return null
+      const id = sanitizeProfileValue(item.id, 180)
+      const label = sanitizeProfileValue(item.label, 40)
+      if (!id || !label) return null
+      if (kind === 'action') {
+        return {
+          id,
+          label,
+          type: ['clip', 'group', 'interaction', 'video'].includes(item.type) ? item.type : 'group',
+          clip: sanitizeProfileValue(item.clip, 160),
+          video: sanitizeProfileValue(item.video, 180),
+          group: sanitizeProfileValue(item.group, 120),
+          index: Math.max(0, Math.min(999, Math.round(Number(item.index) || 0))),
+          interaction: sanitizeProfileValue(item.interaction, 40),
+        }
+      }
+      return {
+        id,
+        label,
+        type: ['profile', 'native', 'interaction'].includes(item.type) ? item.type : 'native',
+        source: sanitizeProfileValue(item.source, 160),
+        expressionId: sanitizeProfileValue(item.expressionId, 240),
+        interaction: sanitizeProfileValue(item.interaction, 40),
+      }
+    })
+    .filter(Boolean)
+  return {
+    actions: normalizeList(value && value.actions, 'action'),
+    expressions: normalizeList(value && value.expressions, 'expression'),
+  }
+}
+
 function modelDisplayName(model) {
   return model ? (modelNickname(model.id) || model.name) : '伙伴'
 }
@@ -262,7 +533,15 @@ function modelDisplayName(model) {
 function modelsWithNicknames() {
   return listModels().map(model => {
     const nickname = modelNickname(model.id)
-    return { ...model, nickname, displayName: nickname || model.name }
+    return {
+      ...model,
+      nickname,
+      displayName: nickname || model.name,
+      profile: modelProfile(model.id),
+      assets: modelAssetCatalogs.get(model.id) || { actions: [], expressions: [] },
+      interactions: modelInteractions(model.id),
+      gestures: modelGestures(model.id),
+    }
   })
 }
 
@@ -289,6 +568,11 @@ function updateModelNickname(modelId, value) {
 
 function migrateStore() {
   const previousVersion = Number(store.get('schemaVersion')) || 1
+  if (!store.has('initialSettingsShown')) {
+    // 既有配置升级时不要突然弹设置页；只有启动前连配置文件都不存在的
+    // 全新用户，才保留 false 并在窗口创建完成后执行一次首次展示。
+    store.set('initialSettingsShown', storeConfigExistedAtStartup)
+  }
   const models = listModels()
   const readyModels = models.filter(model => model.status === 'ready')
   const oldModelPath = store.get('currentModel')
@@ -297,7 +581,11 @@ function migrateStore() {
     if (match) store.set('currentModelId', match.id)
   }
 
-  if (!selectedModel() && readyModels.length) store.set('currentModelId', readyModels[0].id)
+  const currentId = store.get('currentModelId')
+  if (!readyModels.some(model => model.id === currentId) && readyModels.length) {
+    const initialModel = readyModels.find(model => model.id.toLowerCase() === INITIAL_USER_DEFAULTS.characters.preferredModelId) || readyModels[0]
+    store.set('currentModelId', initialModel.id)
+  }
   if (!store.has('launchAtLogin') && typeof store.get('autoLaunch') === 'boolean') {
     store.set('launchAtLogin', store.get('autoLaunch'))
   }
@@ -313,13 +601,99 @@ function migrateStore() {
     // 第一次使用均从 100% 开始。
     store.set('modelScales', {})
   }
-  store.set('schemaVersion', 3)
+  if (previousVersion < 4) {
+    const conversations = store.get('aiConversations')
+    if (!conversations || typeof conversations !== 'object' || Array.isArray(conversations)) {
+      store.set('aiConversations', {})
+    }
+  }
+  if (previousVersion < 5) {
+    // v5 removes the blocking first-run guide. Accounts that never completed
+    // it should enter the app with the documented initial character and the
+    // quieter default instead of inheriting the old hiyori/onboarding state.
+    if (store.get('onboardingSeen') !== true) {
+      const preferredModel = readyModels.find(model =>
+        model.id.toLowerCase() === INITIAL_USER_DEFAULTS.characters.preferredModelId.toLowerCase()
+      )
+      if (preferredModel) store.set('currentModelId', preferredModel.id)
+      store.set('idleEnabled', INITIAL_USER_DEFAULTS.behavior.idleEnabled)
+    }
+    store.set('onboardingSeen', true)
+
+    // Bundled providers are product capabilities, not optional downloads.
+    // Preserve user settings/secrets while marking every bundled default as
+    // installed and selecting it when that capability has no active provider.
+    const previousAIState = store.get('aiPlugins')
+    const aiState = previousAIState && typeof previousAIState === 'object' && !Array.isArray(previousAIState)
+      ? { ...previousAIState }
+      : {}
+    aiState.installed = [...new Set([
+      ...(Array.isArray(aiState.installed) ? aiState.installed : []),
+      ...INITIAL_USER_DEFAULTS.ai.installedPluginIds,
+    ])]
+    aiState.activeIds = aiState.activeIds && typeof aiState.activeIds === 'object'
+      ? { ...INITIAL_USER_DEFAULTS.ai.activePluginIds, ...aiState.activeIds }
+      : { ...INITIAL_USER_DEFAULTS.ai.activePluginIds }
+    for (const capability of ['chat', 'tts']) {
+      if (!aiState.activeIds[capability]) {
+        aiState.activeIds[capability] = INITIAL_USER_DEFAULTS.ai.activePluginIds[capability]
+      }
+    }
+    aiState.settings = aiState.settings && typeof aiState.settings === 'object' ? aiState.settings : {}
+    aiState.secrets = aiState.secrets && typeof aiState.secrets === 'object' ? aiState.secrets : {}
+    aiState.credentialPreferences = aiState.credentialPreferences && typeof aiState.credentialPreferences === 'object'
+      ? aiState.credentialPreferences
+      : {}
+    store.set('aiPlugins', aiState)
+  }
+  if (previousVersion < 6) {
+    store.set('bubbleStyles', normalizeBubbleStyles(store.get('bubbleStyles')))
+  }
+  if (previousVersion < 7) {
+    const profiles = store.get('modelProfiles')
+    if (!profiles || typeof profiles !== 'object' || Array.isArray(profiles)) store.set('modelProfiles', {})
+  }
+  if (previousVersion < 8) {
+    // Qwen-TTS ships as a built-in provider. Make it immediately configurable
+    // for existing users without replacing their selected TTS provider or Key.
+    const previousAIState = store.get('aiPlugins')
+    const aiState = previousAIState && typeof previousAIState === 'object' && !Array.isArray(previousAIState)
+      ? { ...previousAIState }
+      : {}
+    aiState.installed = [...new Set([
+      ...(Array.isArray(aiState.installed) ? aiState.installed : []),
+      'qwen-tts',
+    ])]
+    aiState.activeIds = aiState.activeIds && typeof aiState.activeIds === 'object'
+      ? { ...aiState.activeIds }
+      : { ...INITIAL_USER_DEFAULTS.ai.activePluginIds }
+    aiState.settings = aiState.settings && typeof aiState.settings === 'object' ? aiState.settings : {}
+    aiState.secrets = aiState.secrets && typeof aiState.secrets === 'object' ? aiState.secrets : {}
+    aiState.credentialPreferences = aiState.credentialPreferences && typeof aiState.credentialPreferences === 'object'
+      ? aiState.credentialPreferences
+      : {}
+    store.set('aiPlugins', aiState)
+  }
+  if (previousVersion < 9) {
+    const interactions = store.get('modelInteractions')
+    if (!interactions || typeof interactions !== 'object' || Array.isArray(interactions)) {
+      store.set('modelInteractions', {})
+    }
+  }
+  if (previousVersion < 10) {
+    const gestures = store.get('modelGestures')
+    if (!gestures || typeof gestures !== 'object' || Array.isArray(gestures)) {
+      store.set('modelGestures', {})
+    }
+  }
+  store.set('schemaVersion', CURRENT_SCHEMA_VERSION)
 }
 
 function modelScale(modelId) {
   const scales = store.get('modelScales')
-  if (!modelId || !scales || typeof scales !== 'object' || Array.isArray(scales)) return 1
-  return clamp(scales[modelId], 0.5, 2, 1)
+  const defaultScale = INITIAL_USER_DEFAULTS.characters.scale
+  if (!modelId || !scales || typeof scales !== 'object' || Array.isArray(scales)) return defaultScale
+  return clamp(scales[modelId], 0.5, 2, defaultScale)
 }
 
 function storeModelScale(modelId, value) {
@@ -327,7 +701,7 @@ function storeModelScale(modelId, value) {
   const stored = store.get('modelScales')
   const scales = stored && typeof stored === 'object' && !Array.isArray(stored) ? { ...stored } : {}
   const scale = clamp(value, 0.5, 2, modelScale(modelId))
-  if (Math.abs(scale - 1) < 0.001) delete scales[modelId]
+  if (Math.abs(scale - INITIAL_USER_DEFAULTS.characters.scale) < 0.001) delete scales[modelId]
   else scales[modelId] = scale
   store.set('modelScales', scales)
 }
@@ -361,10 +735,11 @@ function getPreferences() {
     reducedMotion: ['system', 'on', 'off'].includes(reducedMotion) ? reducedMotion : 'system',
     onboardingSeen: store.get('onboardingSeen') === true,
     backgroundDetection: store.get('backgroundDetection') === true,
-    settingsPetBackground: store.get('settingsPetBackground') === true,
+    settingsPetBackground: store.get('settingsPetBackground') !== false,
     settingsTheme: ['glass', 'healing'].includes(store.get('settingsTheme'))
       ? store.get('settingsTheme')
       : preferenceDefaults.settingsTheme,
+    bubbleStyles: normalizeBubbleStyles(store.get('bubbleStyles')),
     chatGreeting: typeof storedChatGreeting === 'string'
       ? storedChatGreeting.trim().slice(0, CHAT_GREETING_MAX_LENGTH)
       : preferenceDefaults.chatGreeting,
@@ -382,6 +757,7 @@ function getSnapshot() {
     ttsFolder: userTtsDir(),
     currentModelId: current ? current.id : '',
     preferences: getPreferences(),
+    bubbleStyleCatalog: BUBBLE_THEME_DEFINITIONS,
     ai: aiPluginManager
       ? aiPluginManager.getSnapshot()
       : {
@@ -428,9 +804,10 @@ function broadcastState(reason = 'updated') {
 
 function defaultPetPosition() {
   const display = screen.getPrimaryDisplay()
+  const area = display.workArea
   return {
-    x: display.workArea.x + display.workArea.width - PET_WIDTH - 32,
-    y: display.workArea.y + display.workArea.height - PET_HEIGHT - 24,
+    x: area.x + Math.round((area.width - PET_WIDTH) / 2),
+    y: area.y + Math.round((area.height - PET_HEIGHT) / 2),
   }
 }
 
@@ -488,6 +865,7 @@ function applyPetInteractionRegion() {
       ? { x: 0, y: 0, width: PET_WIDTH, height: PET_HEIGHT }
       : interactionRegionFromBounds()]
     if (speechBubbleBounds) regions.push(speechBubbleBounds)
+    if (statusToastBounds) regions.push(statusToastBounds)
     petWindow.setShape(regions)
   } catch (error) {
     console.warn('Failed to apply pet interaction region:', error.message)
@@ -518,7 +896,7 @@ function movePetToPreset(preset) {
       y: area.y + Math.round((area.height - box.height) / 2),
     },
   }
-  const target = anchors[preset] || anchors['bottom-right']
+  const target = anchors[preset] || anchors.center
   // 窗口左上角 = 目标 - 包围盒在窗口内的偏移，角色整体落在屏幕内
   placePetWindow(target.x - box.x, target.y - box.y)
   persistPetPosition()
@@ -618,8 +996,7 @@ function createPetWindow() {
   applyPetInteractionRegion()
 
   petWindow.once('ready-to-show', () => {
-    // 首次启动（引导未完成）时先隐藏宠物，完成引导后再显示
-    if (petWindow && !petWindow.isDestroyed() && getPreferences().onboardingSeen) petWindow.showInactive()
+    if (petWindow && !petWindow.isDestroyed()) petWindow.showInactive()
   })
 
   if (process.argv.includes('--dev') || process.env.NODE_ENV === 'development') {
@@ -644,9 +1021,6 @@ function createPetWindow() {
   petWindow.on('blur', () => {
     petWindow.setMenuBarVisibility(false)
     petWindow.setTitle('')
-    // Windows 失焦时可能给透明窗口重绘出一条残留标题栏
-    // (electron/electron#47440)，重置背景色强制重绘将其清除。
-    petWindow.setBackgroundColor('#00000000')
   })
   petWindow.on('closed', () => {
     stopCursorTracking()
@@ -655,18 +1029,28 @@ function createPetWindow() {
 }
 
 function createSettingsWindow() {
+  const { workArea } = screen.getPrimaryDisplay()
+  // 在高 DPI 或较矮屏幕上为桌面和任务栏留出呼吸空间，避免设置页
+  // 贴着屏幕上下边缘；内容区本身保持可滚动，不通过拉满窗口解决布局。
+  const availableHeight = Math.max(0, workArea.height - 32)
+  const preferredHeight = Math.round(workArea.height * 0.9)
+  const settingsHeight = Math.min(SETTINGS_HEIGHT, availableHeight, Math.max(640, preferredHeight))
   settingsWindow = new BrowserWindow({
     width: SETTINGS_WIDTH,
-    height: SETTINGS_HEIGHT,
-    minWidth: 380,
-    minHeight: 560,
+    height: settingsHeight,
+    minWidth: SETTINGS_WIDTH,
+    maxWidth: SETTINGS_WIDTH,
+    minHeight: settingsHeight,
+    maxHeight: settingsHeight,
+    center: true,
     show: false,
     frame: false,
-    transparent: false,
-    backgroundColor: '#F8F5F1',
-    resizable: true,
+    transparent: true,
+    backgroundColor: '#00000000',
+    resizable: false,
     maximizable: false,
-    alwaysOnTop: true,
+    hasShadow: false,
+    alwaysOnTop: false,
     skipTaskbar: false,
     icon: path.join(__dirname, 'resources', 'icon.png'),
     webPreferences: {
@@ -687,32 +1071,251 @@ function createSettingsWindow() {
   })
 
   settingsWindow.on('show', () => {
+    if (store.get('initialSettingsShown') !== true) store.set('initialSettingsShown', true)
     syncWindowLevels()
+    updateTrayMenu()
     broadcastState('settings-opened')
     syncSettingsPetBackgroundCapture()
   })
   settingsWindow.on('hide', () => {
     syncWindowLevels()
+    updateTrayMenu()
     syncSettingsPetBackgroundCapture()
   })
-  settingsWindow.on('minimize', syncSettingsPetBackgroundCapture)
-  settingsWindow.on('restore', syncSettingsPetBackgroundCapture)
+  // Windows 拖动活动窗口后可能调整同一 topmost Z 带内的顺序。
+  // 只在焦点变化和拖动完成时恢复一次宠物层级，避免移动过程中反复
+  // 操作透明 WebGL 窗口，触发 DWM 重新合成和画面闪烁。
+  settingsWindow.on('focus', raisePinnedPet)
+  settingsWindow.on('moved', raisePinnedPet)
+  settingsWindow.on('minimize', () => {
+    syncWindowLevels()
+    updateTrayMenu()
+    syncSettingsPetBackgroundCapture()
+  })
+  settingsWindow.on('restore', () => {
+    syncWindowLevels()
+    updateTrayMenu()
+    raisePinnedPet()
+    syncSettingsPetBackgroundCapture()
+  })
   settingsWindow.on('closed', () => {
     settingsWindow = null
     syncWindowLevels()
+    updateTrayMenu()
     syncSettingsPetBackgroundCapture()
   })
 }
 
-function openSettings(section = 'characters') {
-  if (!settingsWindow || settingsWindow.isDestroyed()) createSettingsWindow()
+function openSettings(section, notice) {
+  const requestedSection = ['characters', 'behavior', 'ai', 'system'].includes(section) ? section : null
+  const created = !settingsWindow || settingsWindow.isDestroyed()
+  if (created) createSettingsWindow()
   if (settingsWindow.isMinimized()) settingsWindow.restore()
   settingsWindow.show()
-  syncWindowLevels()
   settingsWindow.focus()
-  settingsWindow.moveTop()
-  sendToWindow(settingsWindow, 'settings:navigate', section)
+  syncWindowLevels({ raisePet: true })
+  // “打开设置”只负责恢复已有窗口，保留用户正在查看的页签。只有带有
+  // 明确目标的入口（例如“安装 AI 插件”）才导航；新窗口未加载完成时
+  // 延迟到 did-finish-load，避免首个导航消息丢失。
+  const deliverNavigation = targetWindow => {
+    if (requestedSection) sendToWindow(targetWindow, 'settings:navigate', requestedSection)
+    if (typeof notice === 'string' && notice.trim()) sendToWindow(targetWindow, 'settings:notice', notice.trim())
+  }
+  if (created && settingsWindow.webContents.isLoadingMainFrame()) {
+    const targetWindow = settingsWindow
+    targetWindow.webContents.once('did-finish-load', () => {
+      if (!targetWindow.isDestroyed()) deliverNavigation(targetWindow)
+    })
+  } else if (requestedSection || notice) {
+    deliverNavigation(settingsWindow)
+  }
   requestMissingCovers()
+}
+
+function waitForSettingsReady(targetWindow) {
+  if (!targetWindow || targetWindow.isDestroyed()) return Promise.reject(new Error('设置面板暂不可用'))
+  if (!targetWindow.webContents.isLoadingMainFrame()) return Promise.resolve()
+  return new Promise((resolve, reject) => {
+    const cleanup = () => {
+      targetWindow.webContents.removeListener('did-finish-load', handleReady)
+      targetWindow.removeListener('closed', handleClosed)
+    }
+    const handleReady = () => {
+      cleanup()
+      resolve()
+    }
+    const handleClosed = () => {
+      cleanup()
+      reject(new Error('设置面板已关闭'))
+    }
+    targetWindow.webContents.once('did-finish-load', handleReady)
+    targetWindow.once('closed', handleClosed)
+  })
+}
+
+function screenshotTimestamp(date = new Date()) {
+  const value = number => String(number).padStart(2, '0')
+  return `${date.getFullYear()}-${value(date.getMonth() + 1)}-${value(date.getDate())}_${value(date.getHours())}-${value(date.getMinutes())}-${value(date.getSeconds())}`
+}
+
+async function currentSettingsCaptureState(targetWindow, requestedSection) {
+  const state = await targetWindow.webContents.executeJavaScript(`(() => {
+    const activeProfileTab = document.querySelector('[data-profile-tab].is-active')
+    const profile = document.getElementById('character-profile')
+    return {
+      section: document.documentElement.dataset.settingsView,
+      profileTab: activeProfileTab ? activeProfileTab.dataset.profileTab : 'basic',
+      profileCollapsed: Boolean(profile && profile.classList.contains('is-collapsed')),
+    }
+  })()`, true)
+  return {
+    section: Object.hasOwn(SETTINGS_SECTION_LABELS, requestedSection)
+      ? requestedSection
+      : normalizedSection(state && state.section),
+    profileTab: ['basic', 'world', 'actions', 'expressions', 'interactions'].includes(state && state.profileTab)
+      ? state.profileTab
+      : 'basic',
+    profileCollapsed: Boolean(state && state.profileCollapsed),
+  }
+}
+
+async function settingsBackgroundFrame(targetWindow) {
+  if (!targetWindow || targetWindow.isDestroyed()) return null
+  const dataUrl = await targetWindow.webContents.executeJavaScript(`(() => {
+    const root = document.getElementById('settings-pet-background')
+    const canvas = document.getElementById('settings-pet-background-canvas')
+    return root && root.classList.contains('is-ready') && canvas
+      ? canvas.toDataURL('image/webp', .9)
+      : ''
+  })()`, true).catch(() => '')
+  const match = /^data:image\/webp;base64,(.+)$/.exec(dataUrl || '')
+  return match ? Buffer.from(match[1], 'base64') : null
+}
+
+async function waitForScreenshotRenderer(targetWindow) {
+  const ready = await targetWindow.webContents.executeJavaScript(`new Promise(resolve => {
+    const startedAt = Date.now()
+    const check = () => {
+      if (window.settingsLongScreenshot && document.documentElement.dataset.settingsReady === 'true') {
+        resolve(true)
+      } else if (Date.now() - startedAt >= 5000) {
+        resolve(false)
+      } else {
+        setTimeout(check, 25)
+      }
+    }
+    check()
+  })`, true)
+  if (!ready) throw new Error('截图面板渲染超时')
+}
+
+async function captureSettingsPanelInBackground(sourceWindow, captureState, outputPath) {
+  const backgroundFrame = await settingsBackgroundFrame(sourceWindow)
+  const captureWindow = new BrowserWindow({
+    width: SETTINGS_WIDTH,
+    height: SETTINGS_HEIGHT,
+    show: false,
+    frame: false,
+    transparent: false,
+    backgroundColor: '#f3f0ff',
+    resizable: false,
+    maximizable: false,
+    minimizable: false,
+    movable: false,
+    focusable: false,
+    hasShadow: false,
+    skipTaskbar: true,
+    webPreferences: {
+      preload: path.join(__dirname, 'settings-preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      webSecurity: true,
+      backgroundThrottling: false,
+    },
+  })
+  settingsCaptureWindow = captureWindow
+  secureLocalWindow(captureWindow)
+  captureWindow.setMenu(null)
+
+  try {
+    await captureWindow.loadFile(path.join(__dirname, 'renderer', 'settings.html'), {
+      query: { capture: '1' },
+    })
+    await waitForScreenshotRenderer(captureWindow)
+    if (backgroundFrame) {
+      sendToWindow(captureWindow, 'settings:pet-background-frame', backgroundFrame)
+      await new Promise(resolve => setTimeout(resolve, 100))
+    }
+    return await captureSettingsPanel({
+      browserWindow: captureWindow,
+      section: captureState.section,
+      state: captureState,
+      outputPath,
+    })
+  } finally {
+    if (!captureWindow.isDestroyed()) captureWindow.destroy()
+    if (settingsCaptureWindow === captureWindow) settingsCaptureWindow = null
+  }
+}
+
+async function saveSettingsLongScreenshot(targetWindow, requestedSection) {
+  if (!targetWindow || targetWindow.isDestroyed()) return { ok: false, error: '设置面板暂不可用' }
+  if (settingsScreenshotBusy) return { ok: false, error: 'APP 长截图正在保存，请稍候' }
+  settingsScreenshotBusy = true
+
+  try {
+    await waitForSettingsReady(targetWindow)
+    const captureState = await currentSettingsCaptureState(targetWindow, requestedSection)
+    const section = captureState.section
+    const label = SETTINGS_SECTION_LABELS[section]
+    const defaultPath = path.join(
+      app.getPath('pictures'),
+      `Live2DCompanion-${label}-${screenshotTimestamp()}.png`
+    )
+    const choice = await dialog.showSaveDialog(targetWindow, {
+      title: '保存 APP 长截图',
+      defaultPath,
+      buttonLabel: '保存长截图',
+      filters: [{ name: 'PNG 图片', extensions: ['png'] }],
+      properties: ['showOverwriteConfirmation'],
+    })
+    if (choice.canceled || !choice.filePath) return { ok: false, canceled: true }
+
+    const outputPath = path.extname(choice.filePath).toLowerCase() === '.png'
+      ? choice.filePath
+      : `${choice.filePath}.png`
+    const capture = await captureSettingsPanelInBackground(
+      targetWindow,
+      captureState,
+      outputPath
+    )
+    return {
+      ok: true,
+      filePath: outputPath,
+      fileName: path.basename(outputPath),
+      ...capture,
+    }
+  } catch (error) {
+    console.error('APP long screenshot failed:', error)
+    return { ok: false, error: 'APP 长截图保存失败，请重试' }
+  } finally {
+    settingsScreenshotBusy = false
+  }
+}
+
+async function captureSettingsFromTray() {
+  try {
+    openSettings()
+    const targetWindow = settingsWindow
+    await waitForSettingsReady(targetWindow)
+    const result = await saveSettingsLongScreenshot(targetWindow)
+    if (result.ok) sendToWindow(targetWindow, 'settings:notice', `长截图已保存：${result.fileName}`)
+    else if (!result.canceled) sendToWindow(targetWindow, 'settings:notice', result.error || 'APP 长截图保存失败')
+  } catch (error) {
+    console.error('Unable to start APP long screenshot:', error)
+    sendToWindow(settingsWindow, 'settings:notice', 'APP 长截图暂不可用')
+  }
 }
 
 function togglePetVisibility() {
@@ -728,9 +1331,6 @@ function togglePetVisibility() {
     petWindow.setIgnoreMouseEvents(true)
     broadcastState('pet-visibility')
     petWindow.setOpacity(0)
-  } else if (!getPreferences().onboardingSeen) {
-    // 引导未完成时不直接显示宠物，引导用户先完成引导
-    openSettings('characters')
   } else {
     const [x, y] = petLastPosition || [undefined, undefined]
     const position = safePetPosition(x, y)
@@ -753,14 +1353,31 @@ function setPetChatOpen(open) {
   updateTrayMenu()
 }
 
-function openAIChat() {
+function aiCapabilityAvailability(capability) {
   const ai = aiPluginManager ? aiPluginManager.getSnapshot() : null
-  if (!ai || !ai.ready) {
-    openSettings('ai')
-    return
+  const plugins = ai && Array.isArray(ai.plugins) ? ai.plugins : []
+  const installed = plugins.filter(plugin => plugin.installed && plugin.capabilities.includes(capability))
+  const configured = installed.filter(plugin => plugin.configured)
+  const activeIds = ai && ai.activePluginIds ? ai.activePluginIds : {}
+  const active = installed.find(plugin => plugin.id === activeIds[capability])
+  return {
+    configured: configured.length > 0,
+    ready: Boolean(active && active.configured),
   }
-  if (!getPreferences().onboardingSeen) {
-    openSettings('ai')
+}
+
+function aiCapabilitySetupMessage(capability) {
+  const availability = aiCapabilityAvailability(capability)
+  const modelKind = capability === 'tts' ? '语音模型' : '文本模型'
+  return availability.configured
+    ? `${modelKind}尚未启用，请先启用${modelKind}`
+    : `请先配置${modelKind}`
+}
+
+function openAIChat() {
+  const availability = aiCapabilityAvailability('chat')
+  if (!availability.ready) {
+    openSettings('ai', aiCapabilitySetupMessage('chat'))
     return
   }
   if (petOffScreen) togglePetVisibility()
@@ -867,20 +1484,43 @@ function applyPreferences() {
   }
 }
 
-function syncWindowLevels() {
-  const settingsVisible = Boolean(settingsWindow && !settingsWindow.isDestroyed() && settingsWindow.isVisible())
+function applyAlwaysOnTop(targetWindow, enabled, level) {
+  if (!targetWindow || targetWindow.isDestroyed()) return false
+  const desiredLevel = enabled ? level : 'normal'
+  const appliedState = appliedWindowLevels.get(targetWindow)
+  if (
+    appliedState &&
+    appliedState.enabled === enabled &&
+    appliedState.level === desiredLevel &&
+    targetWindow.isAlwaysOnTop() === enabled
+  ) return false
+
+  targetWindow.setAlwaysOnTop(enabled, desiredLevel)
+  appliedWindowLevels.set(targetWindow, { enabled, level: desiredLevel })
+  return true
+}
+
+function raisePinnedPet() {
+  if (appIsQuitting || !getPreferences().alwaysOnTop) return
+  if (!petWindow || petWindow.isDestroyed() || petOffScreen) return
+  petWindow.moveTop()
+}
+
+function syncWindowLevels({ raisePet = false } = {}) {
+  const settingsVisible = Boolean(
+    settingsWindow && !settingsWindow.isDestroyed() &&
+    settingsWindow.isVisible() && !settingsWindow.isMinimized()
+  )
   const alwaysOnTop = getPreferences().alwaysOnTop
-  if (petWindow && !petWindow.isDestroyed()) {
-    // 设置窗口出现时也不能把宠物降回普通窗口层级，否则切换模型期间
-    // 任意普通应用都能盖住宠物。两者都置顶，再让设置窗口排在宠物之上。
-    petWindow.setAlwaysOnTop(alwaysOnTop, 'floating')
-  }
-  if (settingsWindow && !settingsWindow.isDestroyed()) {
-    settingsWindow.setAlwaysOnTop(alwaysOnTop && settingsVisible, 'floating')
-  }
-  if (alwaysOnTop && settingsVisible && petWindow && !petWindow.isDestroyed()) {
-    petWindow.moveTop()
-    settingsWindow.moveTop()
+  // setAlwaysOnTop 会改变原生窗口样式。状态未变化时跳过调用，避免透明
+  // WebGL 表面被无意义地移出并重新加入 DWM 合成树。
+  const petLevelChanged = applyAlwaysOnTop(petWindow, alwaysOnTop, 'screen-saver')
+  const settingsLevelChanged = applyAlwaysOnTop(settingsWindow, settingsVisible, 'floating')
+
+  // 设置页刚加入 topmost 层级时，把已置顶宠物恢复到其上方。moveTop()
+  // 不改变焦点，也不会像重复 setAlwaysOnTop() 那样重建窗口样式。
+  if (alwaysOnTop && settingsVisible && (raisePet || petLevelChanged || settingsLevelChanged)) {
+    raisePinnedPet()
   }
 }
 
@@ -901,6 +1541,7 @@ function updatePreferences(patch) {
     backgroundDetection: value => Boolean(value),
     settingsPetBackground: value => Boolean(value),
     settingsTheme: value => ['glass', 'healing'].includes(value) ? value : currentPreferences.settingsTheme,
+    bubbleStyles: value => normalizeBubbleStyles(value),
     chatGreeting: value => typeof value === 'string'
       ? value.trim().slice(0, CHAT_GREETING_MAX_LENGTH)
       : currentPreferences.chatGreeting,
@@ -944,26 +1585,48 @@ function toggleAnimationPause() {
   updateTrayMenu()
 }
 
-function requestPetInteraction(kind = 'random') {
+function requestPetInteraction(request = 'random') {
   if (!petWindow || petWindow.isDestroyed()) return
   if (petOffScreen) togglePetVisibility()
   if (petOffScreen) return
-  sendToWindow(petWindow, 'pet:interact', { kind })
+  const payload = typeof request === 'string' ? { kind: request } : request
+  const allowedKinds = new Set([
+    ...DEFAULT_PET_INTERACTIONS.map(item => item.kind),
+    ...DEFAULT_PET_GESTURES.map(item => item.kind),
+    'custom',
+  ])
+  sendToWindow(petWindow, 'pet:interact', {
+    kind: allowedKinds.has(payload && payload.kind) ? payload.kind : 'random',
+    actionId: sanitizeProfileValue(payload && payload.actionId, 180),
+    label: sanitizeProfileValue(payload && payload.label, 24),
+    text: sanitizeProfileValue(payload && payload.text, 80),
+  })
 }
 
 function interactionMenuTemplate() {
-  return PET_INTERACTIONS.map(item => ({
-    label: item.label,
-    click: () => requestPetInteraction(item.kind),
-  }))
+  const current = selectedModel()
+  if (!current) return [{ label: '暂无可用互动', enabled: false }]
+  const availableActionIds = new Set((modelAssetCatalogs.get(current.id)?.actions || []).map(item => item.id))
+  const items = modelInteractions(current.id)
+    .filter(item => item.enabled)
+    .map(item => {
+      const mappingAvailable = !item.actionId || availableActionIds.has(item.actionId)
+      return {
+        label: mappingAvailable ? item.label : `${item.label}（动作不可用）`,
+        enabled: mappingAvailable,
+        click: () => requestPetInteraction({ kind: item.kind, actionId: item.actionId, label: item.label, text: item.text }),
+      }
+    })
+  return items.length ? items : [{ label: '暂无已启用的互动', enabled: false }]
 }
 
 function aiMenuItem() {
-  const ready = Boolean(aiPluginManager && aiPluginManager.getSnapshot().ready)
-  if (!ready) {
+  const availability = aiCapabilityAvailability('chat')
+  if (!availability.ready) {
+    const message = aiCapabilitySetupMessage('chat')
     return {
-      label: '安装 AI 对话插件…',
-      click: () => openSettings('ai'),
+      label: `${message}…`,
+      click: () => openSettings('ai', message),
     }
   }
   if (petChatOpen) {
@@ -1028,6 +1691,10 @@ function updateTrayMenu() {
   if (!tray) return
   const current = selectedModel()
   const preferences = getPreferences()
+  const settingsPanelVisible = Boolean(
+    settingsWindow && !settingsWindow.isDestroyed() &&
+    settingsWindow.isVisible() && !settingsWindow.isMinimized()
+  )
   tray.setContextMenu(Menu.buildFromTemplate([
     {
       label: petOffScreen ? '显示宠物' : '隐藏宠物',
@@ -1064,6 +1731,7 @@ function updateTrayMenu() {
         requestMissingCovers()
       },
     },
+    ...(settingsPanelVisible ? [{ label: 'APP长截图', click: captureSettingsFromTray }] : []),
     { label: '退出', click: () => app.quit() },
   ]))
 }
@@ -1113,6 +1781,14 @@ function startCursorTracking() {
   cursorTimer = setTimeout(cursorTick, 0)
 }
 
+function refreshCursorTracking() {
+  if (cursorTimer) clearTimeout(cursorTimer)
+  cursorTimer = null
+  lastCursor = null
+  lastCursorNear = false
+  startCursorTracking()
+}
+
 function stopCursorTracking(reset = false) {
   if (cursorTimer) clearTimeout(cursorTimer)
   cursorTimer = null
@@ -1126,7 +1802,13 @@ function stopCursorTracking(reset = false) {
 // 宠物追着过期目标来回跳、越拖越偏）。渲染进程只负责上报拖拽起止。
 function movePetDrag() {
   if (!dragActive || !dragCandidate || !petWindow || petWindow.isDestroyed()) return
-  const cursor = screen.getCursorScreenPoint()
+  const nativeCursor = screen.getCursorScreenPoint()
+  const reportedCursor = dragCandidate.reportedCursor
+  if (dragCandidate.useReportedCursor && Date.now() - dragCandidate.reportedAt > 800) {
+    endPetDrag()
+    return
+  }
+  const cursor = dragCandidate.useReportedCursor && reportedCursor ? reportedCursor : nativeCursor
   // 越窗松手/窗口失焦等场景下 mouseup 偶尔会丢失，dragActive 一直为真，
   // 宠物会追着真实光标漂移（用户常描述为"自己往一边飘"）。真正按住拖
   // 动时窗口跟随光标，光标应始终落在窗口内：光标离开窗口超过阈值即认
@@ -1161,20 +1843,39 @@ function dragTick() {
   dragTimer = setTimeout(dragTick, 16)
 }
 
-function primePetDrag() {
+function normalizedDragPoint(point) {
+  if (!point || !Number.isFinite(point.screenX) || !Number.isFinite(point.screenY)) return null
+  return { x: Math.round(point.screenX), y: Math.round(point.screenY) }
+}
+
+function primePetDrag(_event, point) {
   if (!petWindow || petWindow.isDestroyed()) return
   // 上一次拖拽若因 mouseup 丢失仍处于激活（宠物在追光标），这次按下
   // 说明用户已重新抓取，先干净地结束上一次拖拽再记录新起点。
   if (dragActive) endPetDrag()
+  const nativeCursor = screen.getCursorScreenPoint()
+  const reportedCursor = normalizedDragPoint(point)
   dragCandidate = {
     bounds: petWindow.getBounds(),
-    cursor: screen.getCursorScreenPoint(),
+    cursor: reportedCursor || nativeCursor,
+    reportedCursor,
+    reportedAt: reportedCursor ? Date.now() : 0,
+    useReportedCursor: Boolean(reportedCursor && Math.hypot(reportedCursor.x - nativeCursor.x, reportedCursor.y - nativeCursor.y) > 3),
   }
 }
 
-function startPetDrag() {
+function startPetDrag(event, point) {
   if (!petWindow || petWindow.isDestroyed()) return
-  if (!dragCandidate) primePetDrag()
+  if (!dragCandidate) primePetDrag(event, point)
+  const reportedCursor = normalizedDragPoint(point)
+  if (reportedCursor) {
+    const nativeCursor = screen.getCursorScreenPoint()
+    dragCandidate.reportedCursor = reportedCursor
+    dragCandidate.reportedAt = Date.now()
+    if (Math.hypot(reportedCursor.x - nativeCursor.x, reportedCursor.y - nativeCursor.y) > 3) {
+      dragCandidate.useReportedCursor = true
+    }
+  }
   dragActive = true
   dragOutsideSince = null
   lastCursor = null
@@ -1188,8 +1889,18 @@ function startPetDrag() {
   if (!dragTimer) dragTimer = setTimeout(dragTick, 16)
 }
 
-function updatePetDrag() {
-  // 渲染进程 mousemove 只作为即时触发点，位置仍由真实光标决定
+function updatePetDrag(_event, point) {
+  // 真实鼠标优先使用系统光标；Windows 自动化/辅助输入若只派发指针
+  // 事件而不移动系统光标，则锁定到渲染进程上报的屏幕坐标。
+  const reportedCursor = normalizedDragPoint(point)
+  if (dragCandidate && reportedCursor) {
+    const nativeCursor = screen.getCursorScreenPoint()
+    dragCandidate.reportedCursor = reportedCursor
+    dragCandidate.reportedAt = Date.now()
+    if (Math.hypot(reportedCursor.x - nativeCursor.x, reportedCursor.y - nativeCursor.y) > 3) {
+      dragCandidate.useReportedCursor = true
+    }
+  }
   movePetDrag()
 }
 
@@ -1216,7 +1927,7 @@ function endPetDrag() {
 }
 
 function resetPetPosition() {
-  return movePetToPreset('bottom-right')
+  return movePetToPreset(INITIAL_USER_DEFAULTS.characters.windowPosition)
 }
 
 function setupIPC() {
@@ -1326,12 +2037,12 @@ function setupIPC() {
       return { ok: false, error: error.message }
     }
   })
-  ipcMain.handle('ai:plugin-uninstall', (_event, pluginId) => {
+  ipcMain.handle('ai:plugin-deactivate', (_event, pluginId, capability) => {
     try {
-      const ai = aiPluginManager.uninstall(pluginId)
+      const ai = aiPluginManager.deactivate(pluginId, capability)
       if (!ai.ready) setPetChatOpen(false)
       updateTrayMenu()
-      broadcastState('ai-plugin-uninstalled')
+      broadcastState('ai-plugin-deactivated')
       return { ok: true, ai }
     } catch (error) {
       return { ok: false, error: error.message }
@@ -1357,11 +2068,13 @@ function setupIPC() {
   ipcMain.handle('ai:chat', async (_event, payload) => {
     try {
       const current = selectedModel()
-      return await aiPluginManager.chat({
-        ...(payload || {}),
-        modelId: current ? current.id : '',
-        companionName: current ? modelDisplayName(current) : '伙伴',
-      })
+        return await aiPluginManager.chat({
+          ...(payload || {}),
+          modelId: current ? current.id : '',
+          companionName: current ? modelDisplayName(current) : '伙伴',
+          companionBaseName: current ? current.name : '',
+          companionProfile: modelProfilePrompt(current),
+        })
     } catch (error) {
       return { ok: false, error: error.message }
     }
@@ -1377,9 +2090,29 @@ function setupIPC() {
     const current = selectedModel()
     return aiPluginManager.clearConversation(pluginId, current ? current.id : '')
   })
+  ipcMain.handle('ai:conversation-get', (_event, modelId) => {
+    const current = selectedModel()
+    const requestedModelId = typeof modelId === 'string' && listModels().some(model => model.id === modelId)
+      ? modelId
+      : (current ? current.id : '')
+    return aiPluginManager.getConversation(requestedModelId)
+  })
   ipcMain.handle('settings:update', (_event, patch) => updatePreferences(patch))
+  ipcMain.handle('settings:capture-long-screenshot', (event, section) => {
+    if (!settingsWindow || settingsWindow.isDestroyed() || event.sender.id !== settingsWindow.webContents.id) {
+      return { ok: false, error: '设置面板暂不可用' }
+    }
+    return saveSettingsLongScreenshot(settingsWindow, section)
+  })
   ipcMain.handle('settings:reset', () => resetPreferences())
   ipcMain.handle('model:select', (_event, modelId) => ({ ok: selectModel(modelId), snapshot: getSnapshot() }))
+  ipcMain.handle('model:reorder', (_event, modelIds) => {
+    try {
+      return { ok: true, snapshot: updateModelOrder(modelIds) }
+    } catch (error) {
+      return { ok: false, error: error.message, snapshot: getSnapshot() }
+    }
+  })
   ipcMain.handle('model:import-zip', () => importModelZip())
   ipcMain.handle('model:nickname-update', (_event, modelId, nickname) => {
     try {
@@ -1387,6 +2120,62 @@ function setupIPC() {
     } catch (error) {
       return { ok: false, error: error.message }
     }
+  })
+  ipcMain.handle('model:profile-update', (_event, modelId, patch) => {
+    try {
+      return { ok: true, snapshot: updateModelProfile(modelId, patch) }
+    } catch (error) {
+      return { ok: false, error: error.message }
+    }
+  })
+  ipcMain.handle('model:interactions-update', (_event, modelId, interactions) => {
+    try {
+      return { ok: true, snapshot: updateModelInteractions(modelId, interactions) }
+    } catch (error) {
+      return { ok: false, error: error.message }
+    }
+  })
+  ipcMain.handle('model:gestures-update', (_event, modelId, gestures) => {
+    try {
+      return { ok: true, snapshot: updateModelGestures(modelId, gestures) }
+    } catch (error) {
+      return { ok: false, error: error.message }
+    }
+  })
+  ipcMain.handle('model:interaction-preview', (_event, modelId, request) => {
+    const current = selectedModel()
+    if (!current || current.id !== modelId) return { ok: false, error: '请先选择这个角色' }
+    const actionId = sanitizeProfileValue(request && request.actionId, 180)
+    const catalog = modelAssetCatalogs.get(modelId) || { actions: [] }
+    if (actionId && !catalog.actions.some(item => item.id === actionId)) {
+      return { ok: false, error: '映射的动作当前不可用' }
+    }
+    requestPetInteraction({
+      kind: sanitizeProfileValue(request && request.kind, 24),
+      actionId,
+      label: sanitizeProfileValue(request && request.label, 24),
+      text: sanitizeProfileValue(request && request.text, 80),
+    })
+    return { ok: true }
+  })
+  ipcMain.handle('model:preview', async (_event, modelId, kind, assetId) => {
+    const current = selectedModel()
+    if (!current || current.id !== modelId) return { ok: false, error: '请先选择这个角色' }
+    const catalog = modelAssetCatalogs.get(modelId) || { actions: [], expressions: [] }
+    const list = kind === 'expression' ? catalog.expressions : catalog.actions
+    const asset = list.find(item => item.id === assetId)
+    if (!asset) return { ok: false, error: '这个预览项目暂不可用' }
+    if (!petWindow || petWindow.isDestroyed()) return { ok: false, error: '角色窗口暂不可用' }
+    const requestId = `${Date.now()}-${++modelPreviewSequence}`
+    const senderId = petWindow.webContents.id
+    return new Promise(resolve => {
+      const timer = setTimeout(() => {
+        pendingModelPreviews.delete(requestId)
+        resolve({ ok: false, error: '预览启动超时，请重试' })
+      }, 2500)
+      pendingModelPreviews.set(requestId, { resolve, timer, senderId })
+      sendToWindow(petWindow, 'model:preview', { requestId, modelId, kind, asset })
+    })
   })
   ipcMain.handle('model:scale-update', (_event, modelId, scale) => {
     try {
@@ -1396,18 +2185,33 @@ function setupIPC() {
     }
   })
   ipcMain.handle('window:reset-pet-position', () => resetPetPosition())
-  ipcMain.handle('window:move-pet', (_event, preset) => movePetToPreset(POSITION_PRESETS.includes(preset) ? preset : 'bottom-right'))
+  ipcMain.handle('window:move-pet', (_event, preset) => movePetToPreset(
+    POSITION_PRESETS.includes(preset) ? preset : INITIAL_USER_DEFAULTS.characters.windowPosition
+  ))
   ipcMain.handle('window:open-models-folder', () => shell.openPath(userModelsDir()).then(() => true).catch(() => false))
   ipcMain.handle('window:open-plugins-folder', () => shell.openPath(userPluginsDir()).then(() => true).catch(() => false))
   ipcMain.handle('window:open-external', (_event, url) => {
-    if (typeof url === 'string' && /^https?:\/\//i.test(url)) {
+    if (typeof url !== 'string' || /[\r\n]/.test(url)) return false
+    try {
+      const protocol = new URL(url).protocol
+      if (!['https:', 'mailto:'].includes(protocol)) return false
       shell.openExternal(url)
       return true
+    } catch (error) {
+      return false
     }
-    return false
+  })
+  ipcMain.handle('clipboard:write-text', (_event, value) => {
+    if (typeof value !== 'string' || !value || value.length > 5000) return false
+    clipboard.writeText(value)
+    return true
   })
 
   ipcMain.on('window:open-settings', (_event, section) => openSettings(section))
+  ipcMain.on('cursor:refresh', event => {
+    if (!settingsWindow || settingsWindow.isDestroyed() || event.sender.id !== settingsWindow.webContents.id) return
+    refreshCursorTracking()
+  })
   ipcMain.on('window:open-ai-chat', openAIChat)
   ipcMain.on('window:settings-close', () => settingsWindow && settingsWindow.close())
   ipcMain.on('window:settings-minimize', () => settingsWindow && settingsWindow.minimize())
@@ -1438,6 +2242,23 @@ function setupIPC() {
       speechBubbleBounds = { x: left, y: top, width: right - left, height: bottom - top }
     } else {
       speechBubbleBounds = null
+    }
+    applyPetInteractionRegion()
+  })
+
+  ipcMain.on('pet:status-bounds', (_event, bounds) => {
+    if (
+      bounds && Number.isFinite(bounds.x) && Number.isFinite(bounds.y) &&
+      Number.isFinite(bounds.width) && Number.isFinite(bounds.height) &&
+      bounds.width > 0 && bounds.height > 0
+    ) {
+      const left = Math.max(0, Math.floor(bounds.x - 10))
+      const top = Math.max(0, Math.floor(bounds.y - 10))
+      const right = Math.min(PET_WIDTH, Math.ceil(bounds.x + bounds.width + 10))
+      const bottom = Math.min(PET_HEIGHT, Math.ceil(bounds.y + bounds.height + 10))
+      statusToastBounds = { x: left, y: top, width: right - left, height: bottom - top }
+    } else {
+      statusToastBounds = null
     }
     applyPetInteractionRegion()
   })
@@ -1488,11 +2309,58 @@ function setupIPC() {
       requestMissingCovers()
     }
   })
+  ipcMain.on('model:assets-report', (event, payload) => {
+    if (!petWindow || petWindow.isDestroyed() || event.sender !== petWindow.webContents) return
+    const modelId = payload && typeof payload.modelId === 'string' ? payload.modelId : ''
+    if (!modelId || !listModels().some(model => model.id === modelId)) return
+    modelAssetCatalogs.set(modelId, normalizeModelAssetCatalog(payload))
+    updateTrayMenu()
+    broadcastState('model-assets-updated')
+  })
+  ipcMain.on('model:preview-result', (event, payload) => {
+    const requestId = payload && typeof payload.requestId === 'string' ? payload.requestId : ''
+    const pending = pendingModelPreviews.get(requestId)
+    if (!pending || event.sender.id !== pending.senderId) return
+    clearTimeout(pending.timer)
+    pendingModelPreviews.delete(requestId)
+    if (!payload.ok) {
+      pending.resolve({ ok: false, error: String(payload.error || '预览启动失败').slice(0, 120) })
+      return
+    }
+    const reported = payload.preview && typeof payload.preview === 'object' ? payload.preview : {}
+    const frame = typeof reported.frame === 'string' && reported.frame.length <= 700000 && /^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(reported.frame)
+      ? reported.frame
+      : ''
+    pending.resolve({
+      ok: true,
+      preview: {
+        modelId: String(reported.modelId || '').slice(0, 120),
+        kind: reported.kind === 'expression' ? 'expression' : 'action',
+        assetId: String(reported.assetId || '').slice(0, 180),
+        active: Boolean(reported.active),
+        restoreAfterMs: Math.min(10000, Math.max(1000, Number(reported.restoreAfterMs) || 3600)),
+        changedParameters: Math.max(0, Number(reported.changedParameters) || 0),
+        parameterDelta: Math.max(0, Number(reported.parameterDelta) || 0),
+        largestParameterDelta: Math.max(0, Number(reported.largestParameterDelta) || 0),
+        frame,
+      },
+    })
+  })
+  ipcMain.on('model:preview-restored', (event, payload) => {
+    if (!petWindow || petWindow.isDestroyed() || event.sender.id !== petWindow.webContents.id) return
+    const current = selectedModel()
+    const modelId = payload && typeof payload.modelId === 'string' ? payload.modelId : ''
+    const kind = payload && payload.kind === 'expression' ? 'expression' : 'action'
+    const assetId = payload && typeof payload.assetId === 'string' ? payload.assetId : ''
+    if (!current || current.id !== modelId || !assetId) return
+    sendToWindow(settingsWindow, 'model:preview-restored', { modelId, kind, assetId })
+  })
 }
 
 app.whenReady().then(() => {
   Menu.setApplicationMenu(null)
   migrateStore()
+  const shouldOpenInitialSettings = store.get('initialSettingsShown') !== true
   aiPluginManager = createAIPluginManager({
     pluginsDirectories: pluginDirectories(),
     store,
@@ -1504,18 +2372,10 @@ app.whenReady().then(() => {
   createTray()
   applyPreferences()
   startCursorTracking()
-
-  if (!getPreferences().onboardingSeen) openSettings('characters')
+  if (shouldOpenInitialSettings) openSettings('characters')
 })
 
 app.on('second-instance', () => openSettings())
-
-// 任一应用窗口失焦时重绘宠物窗口背景，清除 Windows 透明窗口偶发的残影。
-app.on('browser-window-blur', () => {
-  if (petWindow && !petWindow.isDestroyed()) {
-    petWindow.setBackgroundColor('#00000000')
-  }
-})
 
 app.on('before-quit', () => {
   appIsQuitting = true
