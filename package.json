@@ -1,23 +1,41 @@
 {
   "name": "electron-live2d-pet",
-  "version": "1.0.0",
+  "productName": "Live2DCompanion",
+  "version": "1.0.1",
   "description": "Live2D 桌面 Q 版宠物",
   "main": "main.js",
   "scripts": {
     "start": "nodemon --exec electron .",
     "dev": "nodemon --exec \"electron . --dev\"",
-    "check": "node --check main.js && node --check preload.js && node --check renderer/app.js",
+    "reset:new-user": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/reset-new-user.ps1",
+    "check": "node --check main.js && node --check model-inspector.js && node --check settings-screenshot.js && node --check preload.js && node --check settings-preload.js && node --check config/bubble-styles.js && node --check config/model-reactions.js && node --check ai/plugin-manager.js && node --check plugins/deepseek/index.js && node --check plugins/zhipu-tts/index.js && node --check plugins/qwen-tts/index.js && node --check renderer/bubble-component.js && node --check renderer/video-pet-model.js && node --check renderer/app.js && node --check renderer/settings.js",
     "lint": "eslint .",
-    "package:win": "npm run check && electron-builder --win"
+    "qa:check": "node --check qa/settings-ui.cjs && node --check qa/chat-acceptance.cjs && node --check qa/settings-background.cjs && node --check qa/directory-model.cjs && node --check qa/conversation-persistence.cjs && node --check qa/model-reactions.cjs && node --check qa/model-reaction-runtime.cjs && node --check qa/qwen-tts.cjs && node --check qa/video-pet-smoke.cjs",
+    "qa:settings": "electron qa/settings-ui.cjs",
+    "qa:chat": "electron qa/chat-acceptance.cjs",
+    "qa:background": "electron qa/settings-background.cjs",
+    "qa:directory": "electron qa/directory-model.cjs",
+    "qa:conversation": "node qa/conversation-persistence.cjs",
+    "qa:qwen": "node qa/qwen-tts.cjs",
+    "qa:models": "node qa/model-reactions.cjs",
+    "qa:reactions": "electron qa/model-reaction-runtime.cjs",
+    "qa:video": "electron qa/video-pet-smoke.cjs",
+    "package:win": "npm run check && electron-builder --win",
+    "release": "npm run check && electron-builder --win"
   },
   "build": {
     "appId": "com.luckyblank.live2d",
+    "artifactName": "${productName}-Setup-${version}.${ext}",
+    "electronLanguages": [
+      "zh-CN"
+    ],
     "files": [
       "**/*",
       "!plan/**",
+      "!release/**",
       "!**/*.{bak,md}",
-      "!test-electron.js",
-      "!download-models.cjs",
+      "!qa/**",
+      "!scripts/reset-new-user.ps1",
       "!resources/generate-icon.js",
       "!renderer/diagnose_tmp.txt",
       "!dist/**",
@@ -39,14 +57,15 @@
     },
     "nsis": {
       "oneClick": false,
-      "perMachine": true,
+      "perMachine": false,
       "allowToChangeInstallationDirectory": true
     }
   },
   "devDependencies": {
-    "electron": "^36.2.1",
+    "electron": "^37.10.3",
     "electron-builder": "^26.0.12",
     "eslint": "^8.57.0",
+    "jszip": "^3.10.1",
     "nodemon": "^3.1.10",
     "sharp": "^0.35.3"
   },

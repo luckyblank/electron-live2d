@@ -1,0 +1,13 @@
+{
+  "id": "deepseek",
+  "name": "DeepSeek",
+  "shortName": "DS",
+  "version": "1.0.0",
+  "description": "使用你自己的 DeepSeek API Key 与桌面伙伴进行文字对话。",
+  "main": "index.js",
+  "homepage": "https://api-docs.deepseek.com/",
+  "apiKeyEnv": "DEEPSEEK_API_KEY",
+  "capabilities": ["chat"],
+  "models": ["deepseek-v4-flash", "deepseek-v4-pro"],
+  "defaultModel": "deepseek-v4-flash"
+}

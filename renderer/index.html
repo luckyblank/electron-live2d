@@ -1,79 +1,50 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-<meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' 'unsafe-eval' file: data: blob:;">
-<link rel="stylesheet" href="styles.css">
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' file: data: blob:; script-src 'self' 'unsafe-inline' 'unsafe-eval' file:; style-src 'self' 'unsafe-inline'; img-src 'self' file: data: blob:">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title></title>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="scrollbars.css">
 </head>
 <body>
-<canvas id="c"></canvas>
-<div id="fx-layer"></div>
-
-<!-- ── Control Panel ────────────────────────── -->
-<div id="control-panel" class="control-panel">
-  <div class="panel-header">
-    <span>控制</span>
-    <button id="panel-close" class="panel-btn" type="button" aria-label="关闭控制面板">✕</button>
-  </div>
-  <div class="panel-body">
-    <!-- Scale section -->
-    <div class="control-section">
-      <label>缩放</label>
-      <div class="scale-controls">
-        <button id="scale-minus" class="scale-btn" type="button" aria-label="缩小">−</button>
-        <input id="scale-slider" type="range" min="0.5" max="2" step="0.1" value="1" aria-label="角色缩放">
-        <button id="scale-plus" class="scale-btn" type="button" aria-label="放大">+</button>
+  <main id="pet-stage" aria-label="Live2D 桌面伙伴"></main>
+  <canvas id="fx-canvas" aria-hidden="true"></canvas>
+  <pet-speech-bubble id="interaction-bubble" class="interaction-bubble-widget" theme="glass" style-name="glass" role="status" aria-live="polite"></pet-speech-bubble>
+  <section id="ai-chat-panel" class="ai-chat-panel is-collapsed" aria-label="与桌面伙伴对话" hidden>
+    <header class="ai-chat-head">
+      <div class="ai-chat-identity">
+        <span class="ai-chat-meta">
+          <strong id="ai-chat-name">伙伴</strong>
+          <span class="ai-chat-presence"><i aria-hidden="true"></i><em id="ai-chat-presence-text">在线</em></span>
+        </span>
       </div>
-      <div class="scale-display" id="scale-display">100%</div>
-    </div>
-
-    <!-- Model section -->
-    <div class="control-section">
-      <label>角色</label>
-      <select id="model-select" style="width: 100%; padding: 6px; border-radius: 4px; border: 1px solid #ccc; -webkit-app-region: no-drag;">
-        <option>加载中...</option>
-      </select>
-      <div id="model-status" style="margin-top: 6px; font-size: 11px; color: #777;" role="status" aria-live="polite">正在准备模型...</div>
-    </div>
-
-    <!-- Interaction tips -->
-    <div class="control-section">
-      <label>交互方式</label>
-      <div class="tips">
-        <div class="tip">🖱️ 左键 × 3: 兴奋</div>
-        <div class="tip">🖱️ 左键 × 2: 高兴</div>
-        <div class="tip">🖱️ 左键 × 1: 触摸</div>
-        <div class="tip">🖱️ 右键: 不满</div>
-        <div class="tip">⌨️ H: 爱心</div>
-        <div class="tip">⌨️ S: 惊讶</div>
-        <div class="tip">⌨️ F: 开心</div>
+      <div class="ai-chat-head-actions">
+        <button id="ai-chat-clear" type="button">清空</button>
+        <button id="ai-chat-close" type="button" aria-label="关闭对话">×</button>
       </div>
-    </div>
-
-    <!-- Click-through toggle -->
-    <div class="control-section">
-      <label>鼠标穿透</label>
-      <div class="toggle-row">
-        <span class="toggle-label">启用后透明区域可点击穿透</span>
-        <label class="switch">
-          <input id="click-through-toggle" type="checkbox">
-          <span class="slider"></span>
-        </label>
-      </div>
-    </div>
-
-    <!-- Settings -->
-    <div class="control-section">
-      <div style="display: flex; gap: 8px; margin-top: 12px;">
-        <button id="btn-reset" class="action-btn" type="button">重置位置</button>
-        <button id="btn-exit" class="action-btn" type="button" style="background: #ff6b6b;">退出</button>
-      </div>
-    </div>
-  </div>
-</div>
-
-<!-- Floating toggle button -->
-<button id="panel-toggle" class="panel-toggle" type="button" title="打开控制面板 (Ctrl+M)" aria-label="打开控制面板">⚙️</button>
-<script src="app.js"></script>
+    </header>
+    <div id="ai-chat-messages" class="ai-chat-messages" role="log" aria-live="polite" aria-relevant="additions"></div>
+    <form id="ai-chat-form" class="ai-chat-form">
+      <button id="ai-chat-toggle" class="ai-chat-toggle" type="button" aria-label="展开对话" aria-expanded="false" aria-controls="ai-chat-messages" title="展开对话">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m6 12 4-4 4 4"/></svg>
+      </button>
+      <textarea id="ai-chat-input" rows="1" maxlength="2000" placeholder="说点什么…" aria-label="对话内容"></textarea>
+      <button id="ai-chat-mute" class="ai-chat-mute is-muted" type="button" aria-label="已静音，点击开启语音" aria-pressed="true" title="已静音，点击开启语音">
+        <svg viewBox="0 0 20 20" aria-hidden="true">
+          <path d="M3.5 8h3L10 5.2v9.6L6.5 12h-3z"/>
+          <path class="ai-chat-volume-waves" d="M13 7.2a4 4 0 0 1 0 5.6M15 5.2a6.8 6.8 0 0 1 0 9.6"/>
+          <path class="ai-chat-volume-slash" d="m13 8 4 4m0-4-4 4"/>
+        </svg>
+      </button>
+      <button id="ai-chat-send" type="submit" aria-label="发送消息" disabled>
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m4 10 11-6-3.8 12-2.1-4.1L4 10Zm5.1 1.9L15 4"/></svg>
+      </button>
+    </form>
+  </section>
+  <div id="status-toast" class="status-toast" role="status" aria-live="polite"></div>
+  <script src="bubble-component.js"></script>
+  <script src="app.js"></script>
 </body>
 </html>
