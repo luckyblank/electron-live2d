@@ -64,7 +64,7 @@ Each subdirectory becomes one tray-selectable model. The `hiyori` model is prior
 
 - No build step for source code - Electron loads `main.js`, `preload.js`, and `renderer/index.html` directly.
 - `npm run package:win` runs `electron-builder` which reads the `build` config from `package.json` and produces an NSIS installer in `dist/`.
-- Reusable QA scripts live in `qa/`. The `build.files` glob excludes that directory and other dev-only files (*.bak, *.md, generate-icon.js, build outputs) so they are not shipped.
+- Reusable QA scripts live in `qa/`. The `build.files` glob excludes `qa/`, `design-demos/`, and other dev-only files (*.bak, *.md, generate-icon.js, build outputs) so they are not shipped.
 
 ## Interaction Design
 

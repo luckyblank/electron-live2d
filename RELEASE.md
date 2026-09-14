@@ -22,6 +22,11 @@
    - `latest.yml` — 更新清单（`version`、安装包文件名、sha512）
    - `Live2DCompanion-Setup-<version>.exe.blockmap` — 差异更新用（当前未启用，可不上传）
 
+   `package.json > build.files` 会排除 `design-demos/`、`plan/`、
+   `release/`、`qa/` 及其他开发期文件。`design-demos/` 中的原型
+   HTML、验证脚本、截图和设计资料只保留在源码仓库，不得进入
+   `app.asar` 或安装目录。
+
 3. **上传到 CDN**：把安装包、`latest.yml` 和发布说明上传到
    `https://qny.luckyblank.cn/live2d-pet/`（三者同目录）：
 
@@ -36,7 +41,8 @@
    > 实际文件名一致。发布说明文件名格式固定为
    > `release-notes-<版本号>.md`。
 
-4. **验证**：打开应用设置 → 系统页，应显示「发现新版本
+4. **验证**：先解包或检查 `app.asar`，确认不存在
+   `design-demos/`；再打开应用设置 → 系统页，应显示「发现新版本
    v\<version\>」并出现「下载更新」按钮；手动点「检查更新」
    可随时重查。
 

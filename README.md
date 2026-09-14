@@ -88,7 +88,7 @@ npm run qa:check
 npm run package:win
 ```
 
-`npm run check` 会检查主进程、两个 preload、模型检查器、AI 插件和两个 renderer 脚本的 JavaScript 语法。`npm run package:win` 会先运行该检查，再通过 electron-builder 生成 x64 NSIS 安装包，产物位于 `dist/`。
+`npm run check` 会检查主进程、两个 preload、模型检查器、AI 插件和两个 renderer 脚本的 JavaScript 语法。`npm run package:win` 会先运行该检查，再通过 electron-builder 生成 x64 NSIS 安装包，产物位于 `dist/`。`design-demos/` 仅用于仓库内的设计原型与视觉验收，已通过 `build.files` 明确排除，不会进入正式应用包。
 
 完整的可用命令如下：
 
@@ -185,6 +185,7 @@ electron-live2d/
 │   └── settings.css        # 设置窗口视觉样式
 ├── models/                 # 内置 Live2D 模型（随安装包发货）
 ├── qa/                     # 不进入安装包的回归验证脚本
+├── design-demos/           # 不进入安装包的设计原型与验收素材
 ├── scripts/
 │   └── reset-new-user.ps1  # 可恢复的全新用户环境重置工具
 ├── docs/                   # UI 实现、验收与回归记录

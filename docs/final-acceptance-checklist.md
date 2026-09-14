@@ -213,6 +213,6 @@ npm run qa:directory
 - 文档中的状态与本次 JSON 结果一致；
 - 删除的智谱文字插件没有残留入口、检查脚本或 README 描述；
 - 没有“卸载模型”按钮、IPC 和 manager 逻辑残留；
-- 发行包排除 `docs/`、`qa/`、`plan/`、`release/` 和开发工具；
+- 发行包排除 `docs/`、`design-demos/`、`qa/`、`plan/`、`release/` 和开发工具；
 - 不提交 `%APPDATA%` 中的真实配置、聊天内容、语音归档或 API Key；
 - 用户明确要求发版前，再执行正式打包与发布流程；完成开发不等于已授权发版。
