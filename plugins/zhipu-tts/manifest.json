@@ -11,6 +11,7 @@
   "capabilities": ["tts"],
   "models": ["glm-tts"],
   "defaultModel": "glm-tts",
+  "ttsCacheKeyFields": ["model", "voice", "speed", "volume"],
   "voices": [
     { "id": "tongtong", "name": "彤彤", "previewUrl": "https://docs.bigmodel.cn/resource/audio/tongtong.wav" },
     { "id": "chuichui", "name": "锤锤", "previewUrl": "https://docs.bigmodel.cn/resource/audio/chuichui.wav" },

@@ -1,0 +1,2284 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light" data-layout="console" data-density="comfortable">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <link rel="icon" href="data:,">
+  <title>外部消息测试台</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --accent: #6f63d9;
+      --accent-deep: #5749c4;
+      --accent-soft: #eeeafd;
+      --ink: #272331;
+      --ink-soft: #706a7b;
+      --canvas: #eeedf3;
+      --surface: rgba(255, 255, 255, .86);
+      --surface-strong: #fff;
+      --surface-muted: #f6f4f9;
+      --hairline: rgba(92, 78, 151, .15);
+      --success: #4f9e77;
+      --danger: #ad5663;
+      --shadow: 0 24px 70px rgba(57, 47, 91, .13);
+      --radius-large: 14px;
+      --radius-medium: 10px;
+      --space: 12px;
+      font-family: "Segoe UI Variable Text", "Microsoft YaHei UI", sans-serif;
+    }
+
+    :root[data-theme="dark"] {
+      color-scheme: dark;
+      --accent: #a79cf5;
+      --accent-deep: #c3bbff;
+      --accent-soft: rgba(128, 112, 225, .18);
+      --ink: #f1eef8;
+      --ink-soft: #aaa4b8;
+      --canvas: #1f1d26;
+      --surface: rgba(42, 39, 51, .88);
+      --surface-strong: #312e39;
+      --surface-muted: #292630;
+      --hairline: rgba(211, 202, 238, .14);
+      --success: #73bf98;
+      --danger: #dd8993;
+      --shadow: 0 28px 80px rgba(0, 0, 0, .32);
+    }
+
+    * { box-sizing: border-box; scrollbar-width: none; }
+    *::-webkit-scrollbar { display: none; width: 0; height: 0; }
+    [hidden] { display: none !important; }
+
+    html { height: 100%; min-width: 320px; overflow: hidden; background: transparent; }
+
+    body {
+      height: 100%;
+      min-height: 0;
+      margin: 0;
+      overflow: hidden;
+      background: transparent;
+      color: var(--ink);
+      font-size: 13px;
+      text-wrap: pretty;
+    }
+
+    button,
+    input,
+    textarea,
+    select { font: inherit; }
+
+    button { cursor: pointer; }
+    button:disabled { cursor: not-allowed; opacity: .48; }
+
+    .shell {
+      display: flex;
+      width: 100%;
+      height: 100vh;
+      min-height: 0;
+      flex-direction: column;
+      margin: 0;
+      padding: 5px 8px 8px;
+      overflow: hidden;
+      border: 1px solid rgba(255, 255, 255, .78);
+      border-radius: 18px;
+      background:
+        linear-gradient(rgba(111, 99, 217, .035) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(111, 99, 217, .035) 1px, transparent 1px),
+        var(--canvas);
+      background-size: 32px 32px;
+      box-shadow: 0 18px 46px rgba(57, 47, 91, .2);
+    }
+
+    .app-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex: 0 0 auto;
+      gap: 12px;
+      min-height: 42px;
+      margin-bottom: 6px;
+      padding: 0 1px 5px 3px;
+      border-bottom: 1px solid var(--hairline);
+      -webkit-app-region: no-drag;
+      cursor: grab;
+      touch-action: none;
+      user-select: none;
+    }
+
+    .app-bar.is-window-dragging { cursor: grabbing; }
+
+    .identity {
+      display: flex;
+      min-width: 0;
+      align-items: center;
+      gap: 9px;
+    }
+
+    .identity-mark {
+      display: grid;
+      width: 34px;
+      height: 34px;
+      flex: 0 0 auto;
+      border: 1px solid rgba(255, 255, 255, .7);
+      border-radius: 10px;
+      background: linear-gradient(145deg, #877ceb, #6256ce);
+      box-shadow: 0 8px 22px rgba(88, 73, 190, .25), inset 0 1px 0 rgba(255,255,255,.38);
+      color: white;
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: .08em;
+      place-items: center;
+    }
+
+    .identity-copy { min-width: 0; }
+    .identity-copy strong { display: block; font-size: 15px; line-height: 1.25; }
+    .identity-copy span { display: block; margin-top: 1px; color: var(--ink-soft); font-size: 11px; }
+
+    .service-pill {
+      display: inline-flex;
+      min-height: 30px;
+      align-items: center;
+      gap: 9px;
+      padding: 0 10px;
+      border: 1px solid var(--hairline);
+      border-radius: 20px;
+      background: var(--surface);
+      box-shadow: 0 4px 16px rgba(50, 42, 77, .06);
+      color: var(--ink-soft);
+      font-size: 11px;
+      white-space: nowrap;
+    }
+
+    .service-dot {
+      width: 9px;
+      height: 9px;
+      border: 2px solid var(--surface-strong);
+      border-radius: 50%;
+      background: var(--danger);
+      box-shadow: 0 0 0 4px color-mix(in srgb, var(--danger) 14%, transparent);
+    }
+
+    .service-pill[data-state="online"] .service-dot { background: var(--success); box-shadow: 0 0 0 4px color-mix(in srgb, var(--success) 14%, transparent); }
+    .service-pill[data-state="checking"] .service-dot { background: var(--accent); animation: pulse 1s ease-in-out infinite; }
+
+    .app-bar-tools,
+    .window-actions { display: flex; align-items: center; }
+    .app-bar-tools { min-width: 0; align-self: stretch; gap: 5px; }
+    .window-actions { align-self: stretch; -webkit-app-region: no-drag; }
+    .window-actions button {
+      display: grid;
+      width: 34px;
+      min-height: 34px;
+      align-self: center;
+      padding: 0;
+      border: 0;
+      border-radius: 9px;
+      background: transparent;
+      color: var(--ink-soft);
+      place-items: center;
+      transition: background 140ms ease, color 140ms ease, transform 120ms ease;
+    }
+    .window-actions button:hover { background: var(--surface-muted); color: var(--ink); }
+    .window-actions button:last-child:hover { background: #bf4747; color: white; }
+    .window-actions button:active { transform: scale(.93); }
+    .window-actions button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+    .window-actions svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.6; }
+
+    .tab-bar {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      flex: 0 0 auto;
+      gap: 3px;
+      margin-bottom: 8px;
+      padding: 3px;
+      border: 1px solid var(--hairline);
+      border-radius: 11px;
+      background: color-mix(in srgb, var(--surface) 82%, transparent);
+      box-shadow: 0 6px 20px rgba(50, 42, 77, .06);
+    }
+
+    .tab-button {
+      min-width: 0;
+      min-height: 32px;
+      padding: 0 9px;
+      border: 0;
+      border-radius: 9px;
+      background: transparent;
+      color: var(--ink-soft);
+      font-size: 11px;
+      font-weight: 750;
+      transition: background 150ms ease, box-shadow 150ms ease, color 150ms ease;
+    }
+
+    .tab-button[aria-selected="true"] {
+      background: var(--surface-strong);
+      box-shadow: 0 3px 12px rgba(63, 51, 100, .1);
+      color: var(--accent-deep);
+    }
+
+    .tab-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .tab-panel { min-height: 0; flex: 1 1 auto; overflow-y: auto; overscroll-behavior: contain; }
+    .tab-panel[data-tab-panel="debug"] { overflow: hidden; }
+    .tab-panel[hidden] { display: none; }
+
+    .workspace {
+      display: grid;
+      height: 100%;
+      min-height: 0;
+      grid-template-columns: minmax(0, 1.08fr) minmax(300px, .92fr);
+      gap: 8px;
+      align-items: stretch;
+    }
+
+    .panel {
+      min-width: 0;
+      overflow: hidden;
+      border: 1px solid var(--hairline);
+      border-radius: var(--radius-large);
+      background: var(--surface);
+      box-shadow: 0 12px 34px rgba(57, 47, 91, .1);
+      backdrop-filter: blur(18px) saturate(1.08);
+    }
+
+    .panel-head {
+      display: flex;
+      min-height: 44px;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 0 12px;
+      border-bottom: 1px solid var(--hairline);
+    }
+
+    .panel-head strong { font-size: 12px; }
+    .panel-head small { display: block; margin-top: 1px; color: var(--ink-soft); font-size: 10px; }
+    .panel-body { padding: 11px; }
+    .request-panel,
+    .log-panel { height: 100%; min-height: 0; }
+    .request-panel { min-width: 0; }
+    .log-panel { display: flex; flex-direction: column; }
+
+    .connection-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 6px;
+      margin-bottom: 8px;
+    }
+
+    .field { display: grid; gap: 3px; }
+    .field + .field { margin-top: 7px; }
+
+    .field-label,
+    .group-label {
+      color: var(--ink-soft);
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: .04em;
+    }
+
+    input,
+    textarea,
+    select {
+      width: 100%;
+      border: 1px solid var(--hairline);
+      border-radius: 9px;
+      outline: 0;
+      background: var(--surface-strong);
+      color: var(--ink);
+      transition: border-color 150ms ease, box-shadow 150ms ease, background 150ms ease;
+    }
+
+    input,
+    select { min-height: 32px; padding: 0 9px; }
+
+    textarea {
+      height: clamp(96px, 14vh, 108px);
+      min-height: 96px;
+      resize: none;
+      padding: 8px 9px;
+      line-height: 1.45;
+    }
+
+    input:focus,
+    textarea:focus,
+    select:focus {
+      border-color: color-mix(in srgb, var(--accent) 60%, transparent);
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 13%, transparent);
+    }
+
+    .segmented {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 3px;
+      padding: 3px;
+      border: 1px solid var(--hairline);
+      border-radius: 10px;
+      background: var(--surface-muted);
+    }
+
+    .segmented button {
+      min-height: 30px;
+      border: 0;
+      border-radius: 7px;
+      background: transparent;
+      color: var(--ink-soft);
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .segmented button[aria-pressed="true"] {
+      background: var(--surface-strong);
+      box-shadow: 0 3px 12px rgba(63, 51, 100, .09);
+      color: var(--accent-deep);
+    }
+
+    .two-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin-top: 7px; }
+
+    .option-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-top: 7px;
+      padding: 6px 8px;
+      border: 1px solid var(--hairline);
+      border-radius: 10px;
+      background: var(--surface-muted);
+    }
+
+    .option-row strong { display: block; font-size: 11px; }
+    .option-row small { display: block; margin-top: 1px; color: var(--ink-soft); font-size: 9px; }
+
+    .option-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 6px; }
+    .option-grid .option-row { margin-top: 0; }
+
+    .switch { position: relative; width: 36px; height: 20px; flex: 0 0 auto; }
+    .switch input { position: absolute; opacity: 0; pointer-events: none; }
+    .switch span { position: absolute; inset: 0; border-radius: 13px; background: #b9b5c2; transition: background 150ms ease; }
+    .switch span::after { position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: white; box-shadow: 0 2px 6px rgba(37,31,50,.2); content: ""; transition: transform 150ms ease; }
+    .switch input:checked + span { background: var(--accent); }
+    .switch input:checked + span::after { transform: translateX(16px); }
+    .switch input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+    .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 8px; }
+
+    .button {
+      display: inline-flex;
+      min-height: 32px;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      border: 1px solid var(--hairline);
+      border-radius: 10px;
+      background: var(--surface-strong);
+      color: var(--ink);
+      font-size: 11px;
+      font-weight: 750;
+      transition: transform 120ms ease, background 150ms ease, border-color 150ms ease, box-shadow 150ms ease;
+    }
+
+    .button:hover:not(:disabled) { border-color: color-mix(in srgb, var(--accent) 38%, transparent); background: var(--accent-soft); }
+    .button:active:not(:disabled) { transform: scale(.98); }
+    .button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .button.primary { border-color: transparent; background: var(--accent); box-shadow: 0 8px 20px color-mix(in srgb, var(--accent) 25%, transparent); color: white; }
+    .button.primary:hover:not(:disabled) { background: var(--accent-deep); }
+
+    .button svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.8; }
+
+    .log-tools { display: flex; align-items: center; gap: 5px; }
+    .icon-button { display: grid; width: 30px; height: 30px; padding: 0; border: 1px solid var(--hairline); border-radius: 8px; background: var(--surface-strong); color: var(--ink-soft); place-items: center; }
+    .icon-button:hover { color: var(--accent-deep); }
+    .icon-button svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.7; }
+
+    .event-log {
+      display: grid;
+      min-height: 0;
+      flex: 1 1 auto;
+      grid-auto-rows: max-content;
+      align-content: start;
+      gap: 6px;
+      overflow-y: auto;
+      overflow-x: hidden;
+      overflow-anchor: none;
+      padding: 8px 5px 8px 8px;
+      overscroll-behavior: contain;
+      scrollbar-color: color-mix(in srgb, var(--accent) 58%, transparent) transparent;
+      scrollbar-width: thin;
+    }
+    .event-log::-webkit-scrollbar { display: block; width: 6px; height: 6px; }
+    .event-log::-webkit-scrollbar-track { background: transparent; }
+    .event-log::-webkit-scrollbar-thumb {
+      border: 1px solid transparent;
+      border-radius: 999px;
+      background: color-mix(in srgb, var(--accent) 58%, transparent);
+      background-clip: padding-box;
+    }
+    .event-log::-webkit-scrollbar-thumb:hover { background: color-mix(in srgb, var(--accent-deep) 78%, transparent); }
+    .event-empty { display: grid; height: 100%; min-height: 180px; place-items: center; color: var(--ink-soft); text-align: center; }
+    .event-empty strong { display: block; margin-bottom: 3px; color: var(--ink); font-size: 11px; }
+    .event-empty span { font-size: 9px; }
+
+    .event-group-card {
+      --event-group-color: var(--accent);
+      --event-group-fill: color-mix(in srgb, var(--event-group-color) 7%, var(--surface-strong));
+      min-height: max-content;
+      overflow: visible;
+      border: 1px solid color-mix(in srgb, var(--event-group-color) 42%, var(--hairline));
+      border-radius: 11px;
+      background: color-mix(in srgb, var(--event-group-color) 3%, var(--surface-strong));
+      animation: event-enter 160ms ease-out;
+    }
+    .event-group-card[data-transport="http"] {
+      --event-group-color: #3d9d73;
+      --event-group-fill: color-mix(in srgb, #74caa2 16%, var(--surface-strong));
+    }
+    .event-group-card[data-transport="websocket"] {
+      --event-group-color: #6b5bd5;
+      --event-group-fill: color-mix(in srgb, #7d6ae6 14%, var(--surface-strong));
+    }
+    .event-group-card[data-transport="system"] {
+      --event-group-color: #71717d;
+      --event-group-fill: color-mix(in srgb, #9a9aa5 12%, var(--surface-strong));
+    }
+    :root[data-theme="dark"] .event-group-card[data-transport="http"] {
+      --event-group-color: #7ed0a9;
+      --event-group-fill: color-mix(in srgb, #5bb88b 18%, var(--surface-strong));
+    }
+    :root[data-theme="dark"] .event-group-card[data-transport="websocket"] {
+      --event-group-color: #b2a8ff;
+      --event-group-fill: color-mix(in srgb, #8d7ff0 18%, var(--surface-strong));
+    }
+    :root[data-theme="dark"] .event-group-card[data-transport="system"] {
+      --event-group-color: #beb9c8;
+      --event-group-fill: color-mix(in srgb, #85818f 18%, var(--surface-strong));
+    }
+    .event-group-card[open] {
+      background: transparent;
+      box-shadow: none;
+    }
+    .event-group-header {
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto auto;
+      min-height: 30px;
+      align-items: center;
+      gap: 7px;
+      padding: 6px 8px 6px 11px;
+      border-radius: 10px 10px 0 0;
+      background: color-mix(in srgb, var(--event-group-color) 7%, var(--surface-strong));
+      color: var(--ink);
+      cursor: pointer;
+      list-style: none;
+      user-select: none;
+    }
+    .event-group-header::-webkit-details-marker { display: none; }
+    .event-group-header:focus-visible { outline: 2px solid var(--event-group-color); outline-offset: -2px; }
+    .event-group-card:not([open]) .event-group-header { border-radius: 10px; background: var(--event-group-fill); }
+    .event-group-card[open] .event-group-header { border-bottom: 1px solid color-mix(in srgb, var(--event-group-color) 20%, var(--hairline)); }
+    .event-group-name { overflow: hidden; color: var(--event-group-color); font-size: 11px; font-weight: 800; text-overflow: ellipsis; white-space: nowrap; }
+    .event-group-protocol {
+      display: inline-flex;
+      min-height: 17px;
+      align-items: center;
+      justify-content: center;
+      margin-right: 6px;
+      padding: 0 5px;
+      border: 1px solid color-mix(in srgb, var(--event-group-color) 32%, transparent);
+      border-radius: 5px;
+      background: color-mix(in srgb, var(--event-group-color) 10%, transparent);
+      color: var(--event-group-color);
+      font-size: 9px;
+      font-weight: 800;
+      letter-spacing: .02em;
+      vertical-align: 1px;
+    }
+    .event-group-count { color: var(--ink-soft); font-size: 10px; white-space: nowrap; }
+    .event-group-toggle {
+      display: inline-flex;
+      min-width: 34px;
+      min-height: 18px;
+      align-items: center;
+      justify-content: center;
+      border-radius: 5px;
+      background: color-mix(in srgb, var(--event-group-color) 10%, transparent);
+      color: var(--event-group-color);
+      font-size: 10px;
+      font-weight: 700;
+    }
+    .event-group-events {
+      display: grid;
+      min-height: max-content;
+      grid-auto-rows: max-content;
+      gap: 4px;
+      padding: 4px 5px 5px;
+    }
+    .event-group-card:not([open]) > .event-group-events { display: none; }
+
+    .event {
+      display: grid;
+      min-height: max-content;
+      grid-template-columns: auto minmax(0, 1fr) auto;
+      gap: 5px 7px;
+      align-items: start;
+      padding: 7px 8px;
+      border: 1px solid var(--hairline);
+      border-radius: 8px;
+      background: var(--surface-strong);
+      animation: event-enter 160ms ease-out;
+    }
+
+    .event-badge { display: inline-flex; min-height: 18px; align-items: center; padding: 0 5px; border-radius: 4px; background: var(--accent); color: white; font-size: 9px; font-weight: 800; letter-spacing: .04em; }
+    .event-main { min-width: 0; }
+    .event-main strong { display: block; overflow: hidden; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+    .event-main p { margin: 2px 0 0; color: var(--ink-soft); font-size: 9px; line-height: 1.4; overflow-wrap: anywhere; }
+    .event time { color: var(--ink-soft); font: 9px/1.2 "Cascadia Mono", Consolas, monospace; }
+    .event-detail { grid-column: 1 / -1; min-width: 0; }
+    .event-detail summary { width: fit-content; color: var(--accent-deep); cursor: pointer; font-size: 9px; font-weight: 700; list-style: none; }
+    .event-detail summary::-webkit-details-marker { display: none; }
+    .event-detail summary::before { content: none; }
+    .event-detail pre {
+      width: 100%;
+      max-height: min(280px, 45vh);
+      margin: 5px 0 0;
+      overflow: auto;
+      overscroll-behavior: contain;
+      padding: 8px;
+      border-radius: 7px;
+      outline: 0;
+      background: var(--surface-muted);
+      color: var(--ink-soft);
+      font: 9px/1.5 "Cascadia Mono", Consolas, monospace;
+      white-space: pre-wrap;
+      word-break: break-word;
+      user-select: text;
+      scrollbar-width: none;
+    }
+    .event-detail pre::-webkit-scrollbar { display: none; width: 0; height: 0; }
+    .event-detail pre:focus-visible { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent) 45%, transparent); }
+    .event[data-level="error"] .event-badge { background: var(--danger); }
+    .event[data-level="success"] .event-badge { background: var(--success); }
+
+    .guide {
+      display: block;
+      margin-bottom: 8px;
+      padding: 11px;
+      border: 1px solid var(--hairline);
+      border-radius: var(--radius-large);
+      background: var(--surface);
+      box-shadow: var(--shadow);
+    }
+
+    .guide h2 { margin: 0 0 8px; font-size: 12px; }
+    .guide-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; }
+    .guide article { padding: 8px; border: 1px solid var(--hairline); border-radius: 8px; background: var(--surface-strong); }
+    .guide article b { display: block; margin-bottom: 3px; color: var(--accent-deep); font-size: 10px; }
+    .guide article span { color: var(--ink-soft); font-size: 9px; line-height: 1.5; }
+
+    .reference-body { display: grid; gap: 11px; }
+    .reference-section { min-width: 0; }
+    .reference-section h3 { margin: 0 0 6px; color: var(--accent-deep); font-size: 11px; }
+    .reference-section p { margin: 0; color: var(--ink-soft); font-size: 10px; line-height: 1.55; }
+    .endpoint-list { display: grid; gap: 5px; margin-top: 6px; }
+    .endpoint { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 7px; align-items: start; }
+    .endpoint b { color: var(--ink-soft); font-size: 9px; line-height: 1.5; }
+    .endpoint code,
+    .reference-section code { user-select: text; color: var(--ink); font: 9px/1.5 "Cascadia Mono", Consolas, monospace; overflow-wrap: anywhere; }
+    .api-table { width: 100%; margin-top: 6px; border-collapse: collapse; font-size: 9px; }
+    .api-table th,
+    .api-table td { padding: 5px 6px; border: 1px solid var(--hairline); text-align: left; vertical-align: top; }
+    .api-table th { background: var(--surface-muted); color: var(--ink-soft); }
+    .api-table td:first-child { color: var(--accent-deep); font-family: "Cascadia Mono", Consolas, monospace; overflow-wrap: anywhere; }
+    .code-sample { margin: 6px 0 0; padding: 8px; border: 1px solid var(--hairline); border-radius: 8px; background: var(--surface-muted); color: var(--ink); font: 9px/1.5 "Cascadia Mono", Consolas, monospace; white-space: pre-wrap; word-break: break-word; user-select: text; }
+    .behavior-note { padding: 7px 8px; border-left: 3px solid var(--accent); border-radius: 7px; background: var(--accent-soft); color: var(--ink-soft); font-size: 9px; line-height: 1.5; }
+
+    #tab-history > .panel { display: flex; height: 100%; min-height: 0; flex-direction: column; }
+    .history-toolbar {
+      display: grid;
+      grid-template-columns: minmax(210px, .7fr) minmax(260px, 1.3fr);
+      flex: 0 0 auto;
+      gap: 7px;
+      padding: 8px 9px;
+      border-bottom: 1px solid var(--hairline);
+      background: color-mix(in srgb, var(--surface-muted) 55%, transparent);
+    }
+    .history-tabs {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 3px;
+      padding: 3px;
+      border: 1px solid var(--hairline);
+      border-radius: 9px;
+      background: var(--surface-muted);
+    }
+    .history-tabs button {
+      min-height: 29px;
+      padding: 0 9px;
+      border: 0;
+      border-radius: 6px;
+      background: transparent;
+      color: var(--ink-soft);
+      font-size: 11px;
+      font-weight: 750;
+    }
+    .history-tabs button[aria-selected="true"] {
+      background: var(--surface-strong);
+      box-shadow: 0 3px 10px rgba(63, 51, 100, .09);
+      color: var(--accent-deep);
+    }
+    .history-search { position: relative; display: flex; min-width: 0; align-items: center; }
+    .history-search svg {
+      position: absolute;
+      left: 10px;
+      width: 15px;
+      height: 15px;
+      fill: none;
+      stroke: var(--ink-soft);
+      stroke-linecap: round;
+      stroke-width: 1.8;
+      pointer-events: none;
+    }
+    .history-search input { min-width: 0; padding: 0 32px 0 32px; }
+    .history-search button {
+      position: absolute;
+      right: 4px;
+      display: grid;
+      width: 26px;
+      height: 26px;
+      padding: 0;
+      border: 0;
+      border-radius: 6px;
+      background: transparent;
+      color: var(--ink-soft);
+      font-size: 16px;
+      place-items: center;
+    }
+    .history-search button:hover { background: var(--surface-muted); color: var(--ink); }
+    .history-list {
+      display: grid;
+      min-height: 0;
+      flex: 1 1 auto;
+      grid-auto-rows: max-content;
+      align-content: start;
+      gap: 7px;
+      overflow-y: auto;
+      overflow-x: hidden;
+      padding: 9px;
+      overscroll-behavior: contain;
+    }
+    .history-item {
+      min-height: max-content;
+      overflow: hidden;
+      border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--hairline));
+      border-radius: 10px;
+      background: var(--surface-strong);
+      box-shadow: inset 3px 0 0 color-mix(in srgb, var(--accent) 72%, transparent);
+    }
+    .history-item > header { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 9px 7px 12px; border-bottom: 1px solid var(--hairline); }
+    .history-item > header div { display: flex; min-width: 0; align-items: center; gap: 7px; }
+    .history-item > header strong { overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+    .history-item time { color: var(--ink-soft); font: 10px/1.2 "Cascadia Mono", Consolas, monospace; white-space: nowrap; }
+    .history-conversation { display: grid; gap: 6px; padding: 8px 9px 7px 12px; }
+    .history-message { display: grid; grid-template-columns: 58px minmax(0, 1fr); gap: 7px; align-items: start; }
+    .history-message b { padding-top: 1px; color: var(--ink-soft); font-size: 10px; line-height: 1.5; }
+    .history-message p { margin: 0; color: var(--ink); font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; white-space: pre-wrap; }
+    .history-message-content { display: flex; min-width: 0; align-items: flex-start; gap: 6px; }
+    .history-message-content p { min-width: 0; flex: 1 1 auto; }
+    .history-message[data-role="external"]:not([data-expanded="true"]) .history-message-content p {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      overflow-wrap: normal;
+    }
+    .history-message-toggle {
+      min-height: 17px;
+      flex: 0 0 auto;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      color: var(--accent-deep);
+      font-size: 10px;
+      font-weight: 750;
+      line-height: 1.5;
+      white-space: nowrap;
+    }
+    .history-message-toggle:hover { text-decoration: underline; }
+    .history-message-toggle:focus-visible { border-radius: 3px; outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent); outline-offset: 2px; }
+    .history-message[data-role="assistant"] p { color: var(--accent-deep); }
+    .history-audio { display: grid; grid-template-columns: 58px minmax(0, 1fr); gap: 7px; align-items: center; padding: 0 9px 8px 12px; }
+    .history-audio b { color: var(--ink-soft); font-size: 10px; }
+    .history-audio audio { width: 100%; height: 30px; min-width: 0; }
+    .history-audio span { color: var(--ink-soft); font-size: 10px; }
+    .history-meta { display: flex; flex-wrap: wrap; gap: 4px; padding: 0 9px 8px 12px; }
+    .history-meta span { padding: 2px 5px; border-radius: 4px; background: var(--surface-muted); color: var(--ink-soft); font-size: 9px; }
+    .history-data { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; padding: 0 9px 9px 12px; }
+    .history-data details { min-width: 0; border: 1px solid var(--hairline); border-radius: 7px; background: var(--surface-muted); }
+    .history-data summary { padding: 6px 8px; color: var(--accent-deep); cursor: pointer; font-size: 10px; font-weight: 750; list-style: none; }
+    .history-data summary::-webkit-details-marker { display: none; }
+    .history-data summary::before { content: none; }
+    .history-data pre { max-height: 190px; margin: 0; overflow: auto; padding: 0 8px 8px; color: var(--ink-soft); font: 9px/1.45 "Cascadia Mono", Consolas, monospace; white-space: pre-wrap; word-break: break-word; user-select: text; }
+    .history-empty { display: grid; min-height: 180px; place-items: center; padding: 20px; color: var(--ink-soft); font-size: 11px; line-height: 1.6; text-align: center; }
+    .history-pagination {
+      display: flex;
+      min-height: 43px;
+      flex: 0 0 auto;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 6px 9px;
+      border-top: 1px solid var(--hairline);
+      background: color-mix(in srgb, var(--surface-muted) 58%, transparent);
+    }
+    .pagination-summary { color: var(--ink-soft); font-size: 10px; white-space: nowrap; }
+    .pagination-controls { display: flex; min-width: 0; align-items: center; justify-content: flex-end; gap: 5px; }
+    .pagination-size { display: flex; align-items: center; gap: 5px; color: var(--ink-soft); font-size: 10px; white-space: nowrap; }
+    .pagination-size select {
+      width: 58px;
+      min-height: 28px;
+      padding: 0 7px;
+      border-radius: 7px;
+      background-color: var(--surface-strong);
+      font-size: 10px;
+    }
+    .pagination-pages { display: flex; align-items: center; gap: 3px; }
+    .pagination-button,
+    .pagination-page {
+      display: inline-flex;
+      min-width: 28px;
+      min-height: 28px;
+      align-items: center;
+      justify-content: center;
+      padding: 0 7px;
+      border: 1px solid var(--hairline);
+      border-radius: 7px;
+      background: var(--surface-strong);
+      color: var(--ink-soft);
+      font-size: 10px;
+      font-weight: 700;
+      transition: background 140ms ease, border-color 140ms ease, color 140ms ease, transform 120ms ease;
+    }
+    .pagination-button:hover:not(:disabled),
+    .pagination-page:hover:not([aria-current="page"]) { border-color: color-mix(in srgb, var(--accent) 38%, transparent); background: var(--accent-soft); color: var(--accent-deep); }
+    .pagination-button:active:not(:disabled),
+    .pagination-page:active { transform: scale(.96); }
+    .pagination-button:focus-visible,
+    .pagination-page:focus-visible,
+    .pagination-size select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+    .pagination-page[aria-current="page"] { border-color: var(--accent); background: var(--accent); color: white; }
+    .pagination-ellipsis { display: inline-flex; min-width: 18px; min-height: 28px; align-items: center; justify-content: center; color: var(--ink-soft); font-size: 10px; }
+
+    .shortcut-note { display: flex; flex-wrap: wrap; justify-content: center; gap: 3px 14px; margin: 5px 0 0; color: var(--ink-soft); font-size: 10px; text-align: center; }
+    .shortcut-note span { white-space: nowrap; }
+
+    @keyframes pulse { 50% { opacity: .4; transform: scale(.82); } }
+    @keyframes event-enter { from { opacity: 0; transform: translateY(4px); } }
+
+    @media (max-width: 760px) {
+      .shell { width: 100%; padding: 7px 0; }
+      .tab-panel[data-tab-panel="debug"] { overflow-y: auto; }
+      .workspace { height: auto; grid-template-columns: 1fr; }
+      .request-panel,
+      .log-panel { height: auto; }
+      .event-log { height: 280px; min-height: 280px; flex: 0 0 auto; }
+      .guide-grid { grid-template-columns: 1fr; }
+    }
+
+    @media (max-width: 560px) {
+      .app-bar { align-items: flex-start; }
+      .service-pill { min-height: 28px; padding-inline: 8px; }
+      .service-pill span:last-child { display: none; }
+      .app-bar-tools { gap: 2px; }
+      .window-actions button { width: 31px; }
+      .two-fields,
+      .option-grid,
+      .actions { grid-template-columns: 1fr; }
+      .connection-grid { grid-template-columns: 1fr; }
+      .panel-head { padding-inline: 10px; }
+      .panel-body { padding: 9px; }
+      .event-log { height: 250px; min-height: 250px; }
+      .tab-button { padding-inline: 5px; font-size: 10px; }
+      .api-table { display: block; overflow-wrap: anywhere; }
+      .history-toolbar { grid-template-columns: 1fr; }
+      .history-pagination { align-items: flex-start; flex-direction: column; }
+      .pagination-controls { width: 100%; justify-content: space-between; }
+      .pagination-pages { margin-inline: auto; }
+      .history-data { grid-template-columns: 1fr; }
+      .history-message,
+      .history-audio { grid-template-columns: 52px minmax(0, 1fr); }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; }
+    }
+  </style>
+  <link rel="stylesheet" href="/external-message-tester-redesign.css">
+</head>
+<body>
+  <!--
+    Huashu-Design full-pass icon system.
+    Every visible icon is drawn from this one sprite so weight, joins and color
+    remain consistent across the debug, history and API-document views.
+  -->
+  <svg class="svg-defs" aria-hidden="true" focusable="false">
+    <defs>
+      <symbol id="icon-plane" viewBox="0 0 24 24">
+        <path fill="currentColor" d="M22.38 2.27a1.13 1.13 0 0 0-1.18-.2L2.68 9.48a1.08 1.08 0 0 0 .08 2.04l7.06 2.34 2.34 7.06a1.08 1.08 0 0 0 2.04.08l7.42-18.52a1.13 1.13 0 0 0-.24-1.21ZM11.1 12.15 6.24 10.54l11.77-4.71-6.91 6.32Zm2.36 5.87-1.61-4.86 6.32-6.91-4.71 11.77Z"/>
+      </symbol>
+      <symbol id="icon-clock" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="8.6" fill="none" stroke="currentColor" stroke-width="2.25"/>
+        <path d="M12 7.25v5.15l3.55 2.05" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2.25"/>
+      </symbol>
+      <symbol id="icon-book" viewBox="0 0 24 24">
+        <path d="M3.5 5.8A3.8 3.8 0 0 1 7.3 2H11v17.2H7.3a3.8 3.8 0 0 0-3.8 2.8V5.8Zm17 0A3.8 3.8 0 0 0 16.7 2H13v17.2h3.7a3.8 3.8 0 0 1 3.8 2.8V5.8Z" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2.15"/>
+      </symbol>
+      <symbol id="icon-chat-dots" viewBox="0 0 24 24">
+        <path fill="currentColor" d="M12 2.6c5.3 0 9.6 3.67 9.6 8.2S17.3 19 12 19c-1.03 0-2.02-.14-2.95-.4L4.3 21.37c-.74.43-1.63-.25-1.37-1.06l1.54-4.84A7.55 7.55 0 0 1 2.4 10.8c0-4.53 4.3-8.2 9.6-8.2Z"/>
+        <circle cx="7.75" cy="10.75" r="1.15" fill="white"/>
+        <circle cx="12" cy="10.75" r="1.15" fill="white"/>
+        <circle cx="16.25" cy="10.75" r="1.15" fill="white"/>
+      </symbol>
+      <symbol id="icon-paw" viewBox="0 0 24 24">
+        <ellipse cx="7.1" cy="6.2" rx="2.25" ry="3.15" fill="currentColor" transform="rotate(-27 7.1 6.2)"/>
+        <ellipse cx="12.2" cy="4.75" rx="2.2" ry="3.05" fill="currentColor"/>
+        <ellipse cx="17.05" cy="6.65" rx="2.25" ry="3.15" fill="currentColor" transform="rotate(27 17.05 6.65)"/>
+        <ellipse cx="4.85" cy="11.3" rx="2" ry="2.75" fill="currentColor" transform="rotate(-43 4.85 11.3)"/>
+        <path fill="currentColor" d="M12.06 9.15c3.66 0 6.8 3.42 6.8 6.48 0 2.8-2.38 4.63-5.12 3.63a4.92 4.92 0 0 0-3.38 0c-2.75 1-5.13-.83-5.13-3.63 0-3.06 3.16-6.48 6.83-6.48Z"/>
+      </symbol>
+      <symbol id="icon-link" viewBox="0 0 24 24">
+        <path d="m9.35 14.65 5.3-5.3M7.25 17.75 5.8 19.2a3.54 3.54 0 0 1-5-5l3.1-3.1a3.54 3.54 0 0 1 5 0m6.2 1.8a3.54 3.54 0 0 1 0-5l3.1-3.1a3.54 3.54 0 1 1 5 5l-1.45 1.45" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2.25"/>
+      </symbol>
+      <symbol id="icon-link-off" viewBox="0 0 24 24">
+        <path d="m8.9 15.1-3.1 3.1a3.54 3.54 0 0 1-5-5l2.25-2.25M15.1 8.9l3.1-3.1a3.54 3.54 0 1 1 5 5l-2.25 2.25M8.15 8.15l7.7 7.7M2 2l20 20" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2.15"/>
+      </symbol>
+      <symbol id="icon-trash" viewBox="0 0 24 24">
+        <path d="M4.25 6.4h15.5M9 3.1h6l1.2 3.3H7.8L9 3.1Zm-2.5 3.3.9 14.4h9.2l.9-14.4M10 10v6.7m4-6.7v6.7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2.05"/>
+      </symbol>
+      <symbol id="icon-cube" viewBox="0 0 24 24">
+        <path d="m12 2.65 8 4.6v9.5l-8 4.6-8-4.6v-9.5l8-4.6Zm0 9.35 8-4.75M12 12 4 7.25M12 12v9.35" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2.05"/>
+      </symbol>
+      <symbol id="icon-message-box" viewBox="0 0 24 24">
+        <path fill="currentColor" d="M3 3.5h18a1.5 1.5 0 0 1 1.5 1.5v11A1.5 1.5 0 0 1 21 17.5H9l-5.25 3.6A.8.8 0 0 1 2.5 20.44V5A1.5 1.5 0 0 1 4 3.5Z"/>
+        <path d="M7 8.25h10M7 12h6.5" fill="none" stroke="white" stroke-linecap="round" stroke-width="1.8"/>
+      </symbol>
+      <symbol id="icon-user" viewBox="0 0 24 24">
+        <circle cx="12" cy="7.1" r="4.1" fill="currentColor"/>
+        <path fill="currentColor" d="M3.2 21c.42-4.78 3.73-7.45 8.8-7.45s8.38 2.67 8.8 7.45H3.2Z"/>
+      </symbol>
+      <symbol id="icon-hash" viewBox="0 0 24 24">
+        <path d="M9 3 7 21M17 3l-2 18M4 9h17M3 15h17" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="2.35"/>
+      </symbol>
+      <symbol id="icon-mic" viewBox="0 0 24 24">
+        <rect x="8.25" y="2.25" width="7.5" height="13" rx="3.75" fill="none" stroke="currentColor" stroke-width="2.15"/>
+        <path d="M4.9 11.5a7.1 7.1 0 0 0 14.2 0M12 18.6v3.15M8.4 21.75h7.2" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="2.15"/>
+      </symbol>
+      <symbol id="icon-sparkles" viewBox="0 0 24 24">
+        <path fill="currentColor" d="M12.2 1.5c.28 4.16 2.14 6.03 6.3 6.3-4.16.28-6.02 2.14-6.3 6.3-.28-4.16-2.14-6.02-6.3-6.3 4.16-.27 6.02-2.14 6.3-6.3ZM19 13.3c.17 2.49 1.28 3.6 3.77 3.77-2.49.17-3.6 1.29-3.77 3.78-.17-2.5-1.29-3.61-3.78-3.78 2.49-.17 3.61-1.28 3.78-3.77ZM4.25 13.8c.14 1.93 1 2.8 2.94 2.93-1.94.14-2.8 1-2.94 2.94-.13-1.94-1-2.8-2.93-2.94 1.94-.13 2.8-1 2.93-2.93Z"/>
+      </symbol>
+      <symbol id="icon-wifi" viewBox="0 0 24 24">
+        <path d="M3 8.4a13.2 13.2 0 0 1 18 0M6.5 12a8.2 8.2 0 0 1 11 0M10 15.55a3.2 3.2 0 0 1 4 0" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="2.35"/>
+        <circle cx="12" cy="19.1" r="1.4" fill="currentColor"/>
+      </symbol>
+      <symbol id="icon-refresh" viewBox="0 0 24 24">
+        <path d="M20.1 8.25V3.8l-2 2A8.25 8.25 0 1 0 20 15.5" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2.25"/>
+        <path d="M20.1 3.8h-4.45" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="2.25"/>
+      </symbol>
+      <symbol id="icon-check-circle" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="10" fill="currentColor"/>
+        <path d="m7.4 12.1 3.05 3.05 6.2-6.3" fill="none" stroke="white" stroke-linecap="round" stroke-linejoin="round" stroke-width="2.35"/>
+      </symbol>
+      <symbol id="icon-search" viewBox="0 0 24 24">
+        <circle cx="10.5" cy="10.5" r="6.7" fill="none" stroke="currentColor" stroke-width="2.25"/>
+        <path d="m15.5 15.5 5 5" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="2.25"/>
+      </symbol>
+      <symbol id="icon-copy" viewBox="0 0 24 24">
+        <rect x="8.1" y="8.1" width="11.4" height="11.4" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.9"/>
+        <path d="M15.9 8.1V5.8a1.3 1.3 0 0 0-1.3-1.3H5.8a1.3 1.3 0 0 0-1.3 1.3v8.8a1.3 1.3 0 0 0 1.3 1.3h2.3" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.9"/>
+      </symbol>
+      <symbol id="icon-tools" viewBox="0 0 24 24">
+        <path fill="currentColor" d="M20.77 3.23a5.5 5.5 0 0 1-6.64 7.59L6.2 18.75a2.1 2.1 0 1 1-2.97-2.97l7.93-7.93a5.5 5.5 0 0 1 7.6-6.63l-3.2 3.2.75 3.27 3.27.75 3.2-3.2-2.01-2.01ZM4.72 17.27a.92.92 0 1 0 0 1.84.92.92 0 0 0 0-1.84Z"/>
+        <path fill="currentColor" d="m3.13 2.22-.91.91 4.23 5.3 1.98-1.98-5.3-4.23Zm5.9 5.4-1.41 1.41 9.85 11.23a2.22 2.22 0 1 0 2.79-2.79L9.03 7.62Z"/>
+      </symbol>
+      <symbol id="icon-shield" viewBox="0 0 24 24">
+        <path fill="currentColor" d="M12 2.2c2.65 2.05 5.58 2.8 8.2 3.05v5.7c0 5.1-3.2 8.65-8.2 10.85-5-2.2-8.2-5.75-8.2-10.85v-5.7C6.42 5 9.35 4.25 12 2.2Z"/>
+        <path d="m8.25 12 2.3 2.3 5.2-5.25" fill="none" stroke="white" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"/>
+      </symbol>
+      <symbol id="icon-play" viewBox="0 0 24 24">
+        <path fill="currentColor" d="M7.2 4.8a1.35 1.35 0 0 1 2.06-1.15l9.5 6a1.35 1.35 0 0 1 0 2.3l-9.5 6A1.35 1.35 0 0 1 7.2 16.8v-12Z"/>
+      </symbol>
+      <symbol id="icon-broadcast" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="2.15" fill="currentColor"/>
+        <path d="M7.6 7.6a6.2 6.2 0 0 0 0 8.8M16.4 7.6a6.2 6.2 0 0 1 0 8.8M4.35 4.35a10.8 10.8 0 0 0 0 15.3M19.65 4.35a10.8 10.8 0 0 1 0 15.3" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="2"/>
+      </symbol>
+      <symbol id="icon-document" viewBox="0 0 24 24">
+        <path fill="currentColor" d="M5 2.5h9.3L20 8.2v13.3H5v-19Zm9 1.8v4.2h4.2L14 4.3Z"/>
+        <path d="M8.4 12h8M8.4 15.2h8M8.4 18.4h5.6" fill="none" stroke="white" stroke-linecap="round" stroke-width="1.35"/>
+      </symbol>
+      <symbol id="icon-info" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="9.6" fill="currentColor"/>
+        <circle cx="12" cy="7.2" r="1.2" fill="white"/>
+        <path d="M12 11v6" fill="none" stroke="white" stroke-linecap="round" stroke-width="2"/>
+      </symbol>
+      <symbol id="icon-chevron-down" viewBox="0 0 24 24">
+        <path d="m6.5 9.25 5.5 5.5 5.5-5.5" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2.3"/>
+      </symbol>
+      <symbol id="icon-chevron-right" viewBox="0 0 24 24">
+        <path d="m9.25 6.5 5.5 5.5-5.5 5.5" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2.3"/>
+      </symbol>
+      <symbol id="icon-plus" viewBox="0 0 24 24">
+        <path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="2.2"/>
+      </symbol>
+      <symbol id="icon-minus" viewBox="0 0 24 24">
+        <path d="M5 12h14" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="2.2"/>
+      </symbol>
+      <symbol id="icon-cat" viewBox="0 0 120 100">
+        <path fill="currentColor" d="M16 96c-5-16-5-38 2-54L10 8l26 19c14-7 34-7 48 0l26-19-8 35c7 15 7 36 2 53H16Zm24-43c-6 0-10 6-10 13s4 13 10 13 10-6 10-13-4-13-10-13Zm40 0c-6 0-10 6-10 13s4 13 10 13 10-6 10-13-4-13-10-13Z"/>
+      </symbol>
+    </defs>
+  </svg>
+  <main class="shell">
+    <header class="app-bar">
+      <div class="identity">
+        <span class="identity-mark" aria-hidden="true">EXT</span>
+        <div class="identity-copy">
+          <strong>外部消息测试台</strong>
+          <span>Live2DCompanion · HTTP / WebSocket</span>
+        </div>
+      </div>
+      <div class="header-art" aria-hidden="true">
+        <img src="/assets/external-tester-header-art.png" alt="">
+      </div>
+      <div class="app-bar-tools">
+        <div id="service-pill" class="service-pill" data-state="checking" role="status" aria-live="polite">
+          <span class="service-dot" aria-hidden="true"></span>
+          <span id="service-status">检查服务中</span>
+        </div>
+        <div id="window-actions" class="window-actions" aria-label="窗口控制" hidden>
+          <button id="minimize-window" type="button" aria-label="最小化" title="最小化">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8.5h10"/></svg>
+          </button>
+          <button id="close-window" type="button" aria-label="关闭" title="关闭">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8"/></svg>
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <nav class="tab-bar" role="tablist" aria-label="测试台内容">
+      <button id="tab-trigger-debug" class="tab-button" type="button" role="tab" aria-selected="true" aria-controls="tab-debug" data-tab="debug">
+        <svg class="ui-icon icon-fill" aria-hidden="true"><use href="#icon-plane"/></svg>
+        <span>消息调试</span>
+      </button>
+      <button id="tab-trigger-history" class="tab-button" type="button" role="tab" aria-selected="false" aria-controls="tab-history" data-tab="history" tabindex="-1">
+        <svg class="ui-icon icon-outline" aria-hidden="true"><use href="#icon-clock"/></svg>
+        <span>消息历史</span>
+      </button>
+      <button id="tab-trigger-docs" class="tab-button" type="button" role="tab" aria-selected="false" aria-controls="tab-docs" data-tab="docs" tabindex="-1">
+        <svg class="ui-icon icon-outline" aria-hidden="true"><use href="#icon-book"/></svg>
+        <span>API 文档</span>
+      </button>
+    </nav>
+
+    <section id="tab-debug" class="tab-panel" role="tabpanel" aria-labelledby="tab-trigger-debug" data-tab-panel="debug">
+      <div class="workspace">
+      <section class="panel request-panel" aria-labelledby="request-title">
+        <header class="panel-head">
+          <div class="panel-title">
+            <span class="panel-title-icon panel-title-icon--plain" aria-hidden="true"><svg class="ui-icon icon-fill"><use href="#icon-chat-dots"/></svg></span>
+            <div><strong id="request-title">给桌宠发送消息</strong><small>所有 HTTP 业务请求统一使用 POST</small></div>
+          </div>
+          <span id="request-state" class="request-state" data-state="idle"><i aria-hidden="true"></i><span>待发送</span></span>
+        </header>
+        <div class="panel-body">
+          <div class="connection-grid">
+            <label class="field">
+              <span class="field-label"><svg class="ui-icon icon-outline" aria-hidden="true"><use href="#icon-link"/></svg>服务地址</span>
+              <input id="base-url" type="url" spellcheck="false" aria-label="服务地址">
+            </label>
+            <button id="check-service" class="button button-with-icon" type="button"><svg class="ui-icon icon-outline" aria-hidden="true"><use href="#icon-link"/></svg><span>检查连接</span></button>
+          </div>
+
+          <div class="field">
+            <span class="group-label"><svg class="ui-icon icon-outline" aria-hidden="true"><use href="#icon-cube"/></svg>消息模式</span>
+            <div id="message-type" class="segmented" role="group" aria-label="消息模式">
+              <button type="button" data-value="direct" aria-pressed="true"><svg class="ui-icon icon-fill" aria-hidden="true"><use href="#icon-plane"/></svg><span>直连消息</span></button>
+              <button type="button" data-value="relay" aria-pressed="false"><svg class="ui-icon icon-fill" aria-hidden="true"><use href="#icon-sparkles"/></svg><span>AI问答</span></button>
+            </div>
+          </div>
+
+          <label class="field message-field">
+            <span class="field-label"><svg class="ui-icon icon-fill" aria-hidden="true"><use href="#icon-message-box"/></svg>消息内容</span>
+            <textarea id="message-content" maxlength="2000" placeholder="输入要发送给桌宠的外部消息…">您的会议将在十分钟后开始。</textarea>
+            <span id="content-count" class="content-count" aria-hidden="true">15/2000</span>
+          </label>
+
+          <div class="two-fields">
+            <label class="field">
+              <span class="field-label"><svg class="ui-icon icon-fill" aria-hidden="true"><use href="#icon-user"/></svg>发送方标识</span>
+              <input id="message-sender" maxlength="60" value="联调测试台" placeholder="例如：日程系统">
+            </label>
+            <label class="field">
+              <span class="field-label"><svg class="ui-icon icon-outline" aria-hidden="true"><use href="#icon-hash"/></svg>请求 ID</span>
+              <input id="request-id" maxlength="120" spellcheck="false">
+            </label>
+          </div>
+
+          <label class="option-row">
+            <svg class="option-icon ui-icon icon-outline" aria-hidden="true"><use href="#icon-mic"/></svg>
+            <span><strong>语音播报</strong><small>对直连文本或 AI问答结果执行 TTS</small></span>
+            <span class="switch"><input id="message-speak" type="checkbox"><span aria-hidden="true"></span></span>
+          </label>
+
+          <div id="ai-message-options" class="option-grid" hidden>
+            <label class="option-row">
+              <span><strong>使用当前角色设定</strong><small>AI问答时注入当前角色昵称与人设</small></span>
+              <span class="switch"><input id="use-character-profile" type="checkbox" checked><span aria-hidden="true"></span></span>
+            </label>
+            <label class="option-row">
+              <span><strong>使用外部上下文</strong><small>仅沿用外部消息的独立问答历史</small></span>
+              <span class="switch"><input id="use-external-context" type="checkbox" checked><span aria-hidden="true"></span></span>
+            </label>
+          </div>
+
+          <div class="actions">
+            <button id="send-http" class="button primary" type="button">
+              <svg class="ui-icon icon-fill" aria-hidden="true"><use href="#icon-plane"/></svg>
+              <span>HTTP 发送</span>
+            </button>
+            <button id="send-websocket" class="button" type="button">
+              <svg class="ui-icon icon-outline" aria-hidden="true"><use href="#icon-wifi"/></svg>
+              <span>WebSocket 发送</span>
+            </button>
+          </div>
+          <p class="shortcut-note">
+            <span>Ctrl + Enter 快速执行 HTTP 请求</span>
+            <span>Alt + Enter 快速执行 WebSocket 请求</span>
+          </p>
+          <div class="request-decoration" aria-hidden="true">
+            <span>和桌宠，一起更有温度</span>
+            <i>♡</i>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel log-panel" aria-labelledby="events-title">
+        <header class="panel-head">
+          <div class="panel-title">
+            <span class="panel-title-icon panel-title-icon--plain" aria-hidden="true"><svg class="ui-icon icon-fill"><use href="#icon-paw"/></svg></span>
+            <div><strong id="events-title">实时事件</strong><small><span id="websocket-status">WebSocket 未连接</span> · 最新优先</small></div>
+          </div>
+          <div class="log-tools">
+            <button id="toggle-websocket" class="button button-with-icon" type="button"><svg class="ui-icon icon-outline" aria-hidden="true"><use href="#icon-link"/></svg><span class="button-label">连接 WebSocket</span></button>
+            <button id="clear-events" class="icon-button" type="button" aria-label="清空事件" title="清空事件">
+              <svg class="ui-icon icon-outline" aria-hidden="true"><use href="#icon-trash"/></svg>
+            </button>
+          </div>
+        </header>
+        <div id="event-log" class="event-log" role="log" aria-live="polite">
+          <div id="event-empty" class="event-empty"><p><strong>等待外部消息事件</strong><span>连接 WebSocket 后可观察接收、完成与失败状态。</span></p></div>
+        </div>
+        <div class="event-decoration" aria-hidden="true">
+          <svg class="decor-paw decor-paw--a"><use href="#icon-paw"/></svg>
+          <svg class="decor-paw decor-paw--b"><use href="#icon-paw"/></svg>
+          <div class="event-handwriting"><span>实时陪伴</span><span>看见每一次回应</span><i>♡</i></div>
+          <svg class="decor-cat"><use href="#icon-cat"/></svg>
+        </div>
+        </section>
+      </div>
+    </section>
+
+    <section id="tab-docs" class="tab-panel" role="tabpanel" aria-labelledby="tab-trigger-docs" data-tab-panel="docs" hidden>
+      <section class="guide" aria-labelledby="guide-title">
+        <header class="guide-heading">
+          <span class="panel-title-icon panel-title-icon--disc" aria-hidden="true"><svg class="ui-icon icon-fill"><use href="#icon-tools"/></svg></span>
+          <div><h2 id="guide-title">API 文档</h2><p>仅监听本机 127.0.0.1 · HTTP 业务接口统一使用 POST</p></div>
+          <div class="guide-handwriting" aria-hidden="true">连接创意，扩展更多可能 <i>♡</i></div>
+          <svg class="guide-cat" aria-hidden="true"><use href="#icon-cat"/></svg>
+        </header>
+        <div class="guide-grid">
+          <article data-step="01">
+            <span class="guide-step-number">01</span>
+            <span class="guide-step-icon"><svg class="ui-icon icon-fill" aria-hidden="true"><use href="#icon-play"/></svg></span>
+            <div><b>01 · 开启服务</b><span>在 App 的“系统”页面开启“允许外部消息接入”，确认状态显示为运行中。</span></div>
+          </article>
+          <article data-step="02">
+            <span class="guide-step-number">02</span>
+            <span class="guide-step-icon"><svg class="ui-icon icon-outline" aria-hidden="true"><use href="#icon-link"/></svg></span>
+            <div><b>02 · 验证直连消息</b><span>选择“直连消息”，确认内容只显示在角色上方的“外部”气泡中，不会打开、关闭或写入底部聊天框。</span></div>
+          </article>
+          <article data-step="03">
+            <span class="guide-step-number">03</span>
+            <span class="guide-step-icon"><svg class="ui-icon icon-fill" aria-hidden="true"><use href="#icon-shield"/></svg></span>
+            <div><b><svg class="guide-title-shield ui-icon icon-fill" aria-hidden="true"><use href="#icon-shield"/></svg>03 · 验证问答与隔离</b><span>选择“AI问答”并切换角色设定、外部上下文或语音；确认 App 聊天与消息历史始终彼此独立。</span></div>
+          </article>
+        </div>
+      </section>
+
+      <section class="panel" aria-labelledby="api-reference-title">
+        <header class="panel-head">
+          <div><strong id="api-reference-title">API 接入说明</strong><small>仅监听本机 127.0.0.1 · HTTP 业务接口统一使用 POST</small></div>
+        </header>
+        <div class="panel-body reference-body">
+          <section class="reference-section" data-reference="endpoints">
+            <h3><svg class="ui-icon icon-outline" aria-hidden="true"><use href="#icon-link"/></svg>协议与地址</h3>
+            <div class="endpoint-list">
+              <div class="endpoint"><b>消息 POST</b><code>/api/v1/messages</code><button class="endpoint-copy" type="button" aria-label="复制消息接口" data-copy="/api/v1/messages"><svg class="ui-icon icon-outline"><use href="#icon-copy"/></svg></button></div>
+              <div class="endpoint"><b>服务状态</b><code>/api/v1/health</code><button class="endpoint-copy" type="button" aria-label="复制服务状态接口" data-copy="/api/v1/health"><svg class="ui-icon icon-outline"><use href="#icon-copy"/></svg></button></div>
+              <div class="endpoint"><b>能力发现</b><code>/api/v1/session</code><button class="endpoint-copy" type="button" aria-label="复制能力发现接口" data-copy="/api/v1/session"><svg class="ui-icon icon-outline"><use href="#icon-copy"/></svg></button></div>
+              <div class="endpoint"><b>消息历史</b><code>/api/v1/history</code><button class="endpoint-copy" type="button" aria-label="复制消息历史接口" data-copy="/api/v1/history"><svg class="ui-icon icon-outline"><use href="#icon-copy"/></svg></button></div>
+              <div class="endpoint"><b>清空历史</b><code>/api/v1/history/clear</code><button class="endpoint-copy" type="button" aria-label="复制清空历史接口" data-copy="/api/v1/history/clear"><svg class="ui-icon icon-outline"><use href="#icon-copy"/></svg></button></div>
+              <div class="endpoint"><b>语音试听</b><code>/api/v1/history/audio/{messageId}</code><button class="endpoint-copy" type="button" aria-label="复制语音试听接口" data-copy="/api/v1/history/audio/{messageId}"><svg class="ui-icon icon-outline"><use href="#icon-copy"/></svg></button></div>
+              <div class="endpoint"><b>WebSocket</b><code>/api/v1/events</code><button class="endpoint-copy" type="button" aria-label="复制 WebSocket 接口" data-copy="/api/v1/events"><svg class="ui-icon icon-outline"><use href="#icon-copy"/></svg></button></div>
+            </div>
+          </section>
+          <section class="reference-section" data-reference="parameters">
+            <h3><svg class="ui-icon icon-outline" aria-hidden="true"><use href="#icon-cube"/></svg>消息参数</h3>
+            <table class="api-table">
+              <thead><tr><th>字段</th><th>类型 / 默认值</th><th>说明</th></tr></thead>
+              <tbody>
+                <tr><td>type</td><td>direct | relay，必填</td><td>direct 原样展示，不调用 AI；relay 发起 AI问答并返回 AI 回复。</td></tr>
+                <tr><td>content</td><td>string，必填</td><td>消息正文，去除首尾空白后 1–2,000 个字符。</td></tr>
+                <tr><td>speak</td><td>boolean，false</td><td>是否对最终展示文本执行语音合成与播报。</td></tr>
+                <tr><td>sender</td><td>string，“外部系统”</td><td>外部来源名称，最多 60 个字符。</td></tr>
+                <tr><td>requestId</td><td>string，自动生成</td><td>幂等键，10 分钟内重复 ID 返回同一处理结果，最多 120 个字符。</td></tr>
+                <tr><td>useCurrentCharacterProfile</td><td>boolean，true</td><td>relay 是否使用当前角色昵称与人设；false 时使用中性问答助手。</td></tr>
+                <tr><td>useExternalContext</td><td>boolean，true</td><td>relay 是否读取并写入独立的外部上下文；false 时本次请求无历史、也不留 AI 上下文。</td></tr>
+              </tbody>
+            </table>
+          </section>
+          <section class="reference-section" data-reference="sample">
+            <div class="sample-heading">
+              <h3><svg class="ui-icon icon-fill" aria-hidden="true"><use href="#icon-document"/></svg><span>POST /api/v1/messages<small>Content-Type: application/json</small></span></h3>
+              <button id="copy-api-sample" class="copy-sample button-with-icon" type="button"><svg class="ui-icon icon-outline" aria-hidden="true"><use href="#icon-copy"/></svg><span class="button-label">复制示例</span></button>
+            </div>
+            <pre id="api-code-sample" class="code-sample"><code><span class="code-line">{</span><span class="code-line">  <span class="code-key">"type"</span>: <span class="code-string">"relay"</span>,</span><span class="code-line">  <span class="code-key">"content"</span>: <span class="code-string">"提醒用户十分钟后参加项目例会"</span>,</span><span class="code-line">  <span class="code-key">"speak"</span>: <span class="code-boolean">true</span>,</span><span class="code-line">  <span class="code-key">"sender"</span>: <span class="code-string">"日程系统"</span>,</span><span class="code-line">  <span class="code-key">"requestId"</span>: <span class="code-string">"calendar-20260914-001"</span>,</span><span class="code-line">  <span class="code-key">"useCurrentCharacterProfile"</span>: <span class="code-boolean">true</span>,</span><span class="code-line">  <span class="code-key">"useExternalContext"</span>: <span class="code-boolean">true</span></span><span class="code-line">}</span></code></pre>
+          </section>
+          <section class="reference-section" data-reference="websocket">
+            <h3><svg class="ui-icon icon-outline" aria-hidden="true"><use href="#icon-broadcast"/></svg>WebSocket 发送与事件</h3>
+            <p>连接 <code>/api/v1/events</code> 后以 <code>message.post</code> 发送。服务返回 ready / result / error，并广播 received / progress / completed / failed；progress 仅为不入历史的临时状态。</p>
+          </section>
+          <section class="reference-section" data-reference="history">
+            <h3><svg class="ui-icon icon-fill" aria-hidden="true"><use href="#icon-document"/></svg>历史与语音试听</h3>
+            <p>消息历史保留完整请求、完整响应与最终对话，不保存“思考中”或“语音合成中”。语音合成后先归档到本地，再由历史中的 <code>audioUrl</code> 读取并试听；<code>speech.cached</code> 表示是否命中外部语音缓存。Qwen-TTS 按文本、模型和音色缓存，GLM-TTS 还包含语速与音量。除历史语音试听外，HTTP 业务接口统一使用 POST。</p>
+          </section>
+          <div class="behavior-note"><svg class="ui-icon icon-fill" aria-hidden="true"><use href="#icon-info"/></svg><span><b>隔离说明：</b>外部消息优先占用角色上方气泡，但绝不打开、关闭、折叠、锁定或写入 App 底部聊天框；App 历史只保存 App 消息。AI问答使用独立上下文与独立请求通道，不会取消正在进行的 App 对话。</span></div>
+          <div class="docs-footer-decoration" aria-hidden="true"><span>和桌宠，一起更有温度</span><i>♡</i></div>
+        </div>
+      </section>
+    </section>
+
+    <section id="tab-history" class="tab-panel" role="tabpanel" aria-labelledby="tab-trigger-history" data-tab-panel="history" hidden>
+      <section class="panel" aria-labelledby="history-title">
+        <header class="panel-head">
+          <div class="panel-title">
+            <span class="panel-title-icon panel-title-icon--plain" aria-hidden="true"><svg class="ui-icon icon-outline"><use href="#icon-book"/></svg></span>
+            <div><strong id="history-title">消息历史</strong><small id="history-status">正在读取…</small></div>
+          </div>
+          <div class="log-tools">
+            <button id="refresh-history" class="button button-with-icon" type="button"><svg class="ui-icon icon-outline" aria-hidden="true"><use href="#icon-refresh"/></svg><span>刷新</span></button>
+            <button id="clear-history" class="button button-with-icon" type="button"><svg class="ui-icon icon-outline" aria-hidden="true"><use href="#icon-trash"/></svg><span>清空</span></button>
+          </div>
+        </header>
+        <div class="history-toolbar">
+          <div id="history-tabs" class="history-tabs" role="tablist" aria-label="消息历史类型">
+            <button id="history-tab-direct" type="button" role="tab" aria-selected="true" aria-controls="history-list" data-history-type="direct"><svg class="ui-icon icon-fill" aria-hidden="true"><use href="#icon-plane"/></svg><span>直连消息</span></button>
+            <button id="history-tab-relay" type="button" role="tab" aria-selected="false" aria-controls="history-list" data-history-type="relay" tabindex="-1"><svg class="ui-icon icon-fill" aria-hidden="true"><use href="#icon-sparkles"/></svg><span>AI问答</span></button>
+          </div>
+          <label class="history-search">
+            <svg class="ui-icon icon-outline" aria-hidden="true"><use href="#icon-search"/></svg>
+            <input id="history-search" type="search" autocomplete="off" placeholder="搜索内容、发送方或请求 ID" aria-label="搜索消息历史">
+            <button id="clear-history-search" type="button" aria-label="清空搜索" title="清空搜索" hidden><svg class="ui-icon icon-outline" viewBox="0 0 24 24" aria-hidden="true"><path d="m6.5 6.5 11 11m0-11-11 11" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="2.2"/></svg></button>
+          </label>
+        </div>
+        <div id="history-list" class="history-list" aria-live="polite">
+          <div class="history-empty">正在读取消息历史…</div>
+        </div>
+        <nav id="history-pagination" class="history-pagination" aria-label="消息历史分页" hidden>
+          <span id="history-page-summary" class="pagination-summary">第 0–0 条，共 0 条</span>
+          <div class="pagination-controls">
+            <label class="pagination-size">每页
+              <span class="select-wrap"><select id="history-page-size" aria-label="每页显示的消息数量">
+                  <option value="5">5 条</option>
+                  <option value="10">10 条</option>
+                  <option value="20">20 条</option>
+                </select><svg class="ui-icon icon-outline" aria-hidden="true"><use href="#icon-chevron-down"/></svg></span>
+            </label>
+            <button id="history-page-previous" class="pagination-button" type="button" aria-label="上一页">上一页</button>
+            <span id="history-pages" class="pagination-pages" aria-label="页码"></span>
+            <button id="history-page-next" class="pagination-button" type="button" aria-label="下一页">下一页</button>
+          </div>
+        </nav>
+        <div class="history-footer-decoration" aria-hidden="true">
+          <span>和桌宠，一起更有温度</span><i>♡</i>
+          <svg><use href="#icon-cat"/></svg>
+        </div>
+      </section>
+    </section>
+  </main>
+
+  <script>
+    (() => {
+      const defaultBaseUrl = location.protocol === 'http:' || location.protocol === 'https:'
+        ? location.origin
+        : 'http://127.0.0.1:17373'
+      const elements = {
+        appBar: document.querySelector('.app-bar'),
+        baseUrl: document.getElementById('base-url'),
+        checkService: document.getElementById('check-service'),
+        servicePill: document.getElementById('service-pill'),
+        serviceStatus: document.getElementById('service-status'),
+        messageType: document.getElementById('message-type'),
+        aiMessageOptions: document.getElementById('ai-message-options'),
+        content: document.getElementById('message-content'),
+        contentCount: document.getElementById('content-count'),
+        sender: document.getElementById('message-sender'),
+        requestId: document.getElementById('request-id'),
+        speak: document.getElementById('message-speak'),
+        useCharacterProfile: document.getElementById('use-character-profile'),
+        useExternalContext: document.getElementById('use-external-context'),
+        sendHttp: document.getElementById('send-http'),
+        sendWebSocket: document.getElementById('send-websocket'),
+        requestState: document.getElementById('request-state'),
+        websocketStatus: document.getElementById('websocket-status'),
+        toggleWebSocket: document.getElementById('toggle-websocket'),
+        eventLog: document.getElementById('event-log'),
+        eventEmpty: document.getElementById('event-empty'),
+        clearEvents: document.getElementById('clear-events'),
+        historyStatus: document.getElementById('history-status'),
+        historyList: document.getElementById('history-list'),
+        historyTabs: [...document.querySelectorAll('[data-history-type]')],
+        historySearch: document.getElementById('history-search'),
+        clearHistorySearch: document.getElementById('clear-history-search'),
+        refreshHistory: document.getElementById('refresh-history'),
+        clearHistory: document.getElementById('clear-history'),
+        historyPagination: document.getElementById('history-pagination'),
+        historyPageSummary: document.getElementById('history-page-summary'),
+        historyPageSize: document.getElementById('history-page-size'),
+        historyPagePrevious: document.getElementById('history-page-previous'),
+        historyPages: document.getElementById('history-pages'),
+        historyPageNext: document.getElementById('history-page-next'),
+        windowActions: document.getElementById('window-actions'),
+        minimizeWindow: document.getElementById('minimize-window'),
+        closeWindow: document.getElementById('close-window'),
+        copyApiSample: document.getElementById('copy-api-sample'),
+        apiCodeSample: document.getElementById('api-code-sample'),
+        tabs: [...document.querySelectorAll('[role="tab"][data-tab]')],
+        tabPanels: [...document.querySelectorAll('[role="tabpanel"][data-tab-panel]')],
+      }
+
+      const windowAPI = window.externalTesterAPI
+      const isElectronWindow = Boolean(windowAPI && windowAPI.isElectron)
+      document.documentElement.dataset.windowMode = isElectronWindow ? 'electron' : 'browser'
+
+      function bindManualWindowDrag(region, dragAPI) {
+        if (
+          !region || !dragAPI ||
+          typeof dragAPI.startWindowDrag !== 'function' ||
+          typeof dragAPI.moveWindowDrag !== 'function' ||
+          typeof dragAPI.endWindowDrag !== 'function'
+        ) return
+
+        let activePointerId = null
+        const interactiveSelector = 'button, a, input, textarea, select, [contenteditable="true"], [role="button"]'
+        const finishDrag = event => {
+          if (activePointerId === null) return
+          if (event && Number.isInteger(event.pointerId) && event.pointerId !== activePointerId) return
+          const pointerId = activePointerId
+          activePointerId = null
+          region.classList.remove('is-window-dragging')
+          try {
+            if (region.hasPointerCapture(pointerId)) region.releasePointerCapture(pointerId)
+          } catch (error) {}
+          dragAPI.endWindowDrag()
+        }
+
+        region.addEventListener('pointerdown', event => {
+          if (activePointerId !== null || event.isPrimary === false || event.button !== 0) return
+          if (event.target.closest(interactiveSelector)) return
+          event.preventDefault()
+          activePointerId = event.pointerId
+          region.classList.add('is-window-dragging')
+          try { region.setPointerCapture(event.pointerId) } catch (error) {}
+          dragAPI.startWindowDrag(event.screenX, event.screenY)
+        })
+        window.addEventListener('pointermove', event => {
+          if (event.pointerId !== activePointerId) return
+          if (event.pointerType === 'mouse' && (event.buttons & 1) === 0) {
+            finishDrag(event)
+            return
+          }
+          event.preventDefault()
+          dragAPI.moveWindowDrag(event.screenX, event.screenY)
+        }, { passive: false })
+        window.addEventListener('pointerup', finishDrag)
+        window.addEventListener('pointercancel', finishDrag)
+        window.addEventListener('blur', () => finishDrag())
+      }
+
+      if (isElectronWindow) {
+        elements.windowActions.hidden = false
+        elements.minimizeWindow.addEventListener('click', windowAPI.minimizeWindow)
+        elements.closeWindow.addEventListener('click', windowAPI.closeWindow)
+        bindManualWindowDrag(elements.appBar, windowAPI)
+      }
+
+      let selectedType = 'direct'
+      let selectedHistoryType = 'direct'
+      let historyItems = []
+      let historyPage = 1
+      let historyPageSize = Number(loadPreference('historyPageSize', '5'))
+      if (![5, 10, 20].includes(historyPageSize)) historyPageSize = 5
+      let socket = null
+      let requestBusy = false
+      let eventSequence = 0
+      let eventGroupSequence = 0
+      let historyOverflowFrame = null
+      const eventGroups = new Map()
+      const requestTransports = new Map()
+
+      function createIcon(name, className = '') {
+        const namespace = 'http://www.w3.org/2000/svg'
+        const svg = document.createElementNS(namespace, 'svg')
+        svg.classList.add('ui-icon')
+        if (className) svg.classList.add(...className.split(/\s+/).filter(Boolean))
+        svg.setAttribute('aria-hidden', 'true')
+        const use = document.createElementNS(namespace, 'use')
+        use.setAttribute('href', `#icon-${name}`)
+        svg.appendChild(use)
+        return svg
+      }
+
+      function setButtonIcon(button, name) {
+        const use = button.querySelector('svg use')
+        if (use) use.setAttribute('href', `#icon-${name}`)
+      }
+
+      function createRequestId() {
+        const stamp = new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 14)
+        const suffix = Math.random().toString(36).slice(2, 8)
+        return `tester-${stamp}-${suffix}`
+      }
+
+      function normalizedBaseUrl() {
+        return elements.baseUrl.value.trim().replace(/\/+$/, '') || defaultBaseUrl
+      }
+
+      function requestPayload() {
+        return {
+          type: selectedType,
+          content: elements.content.value.trim(),
+          speak: elements.speak.checked,
+          useCurrentCharacterProfile: elements.useCharacterProfile.checked,
+          useExternalContext: elements.useExternalContext.checked,
+          sender: elements.sender.value.trim() || '联调测试台',
+          requestId: elements.requestId.value.trim() || createRequestId(),
+        }
+      }
+
+      function setServiceState(state, text) {
+        elements.servicePill.dataset.state = state
+        elements.servicePill.setAttribute('aria-label', text)
+        elements.serviceStatus.textContent = text
+        elements.serviceStatus.title = text
+      }
+
+      function setRequestState(state, text) {
+        elements.requestState.dataset.state = state
+        const label = elements.requestState.querySelector('span')
+        if (label) label.textContent = text
+      }
+
+      function updateContentCount() {
+        elements.contentCount.textContent = `${elements.content.value.length}/2000`
+      }
+
+      async function copyApiSample() {
+        const value = elements.apiCodeSample.textContent
+        const label = elements.copyApiSample.querySelector('.button-label')
+        try {
+          await navigator.clipboard.writeText(value)
+          if (label) label.textContent = '已复制'
+        } catch (error) {
+          const selection = window.getSelection()
+          const range = document.createRange()
+          range.selectNodeContents(elements.apiCodeSample)
+          selection.removeAllRanges()
+          selection.addRange(range)
+          if (label) label.textContent = '已选中'
+        }
+        setTimeout(() => { if (label) label.textContent = '复制示例' }, 1500)
+      }
+
+      async function copyEndpoint(button) {
+        const value = button.dataset.copy || ''
+        if (!value) return
+        try {
+          await navigator.clipboard.writeText(value)
+          button.dataset.copied = 'true'
+        } catch (error) {
+          button.dataset.copied = 'failed'
+        }
+        setTimeout(() => { delete button.dataset.copied }, 1200)
+      }
+
+      function eventRequestId(data) {
+        const candidates = [
+          data && data.requestId,
+          data && data.message && data.message.requestId,
+          data && data.result && data.result.requestId,
+        ]
+        const value = candidates.find(candidate => typeof candidate === 'string' && candidate.trim())
+        return value ? value.trim() : ''
+      }
+
+      function eventGroupTransportLabel(transport) {
+        return transport === 'http' ? 'HTTP' : transport === 'websocket' ? 'WebSocket' : '系统'
+      }
+
+      function applyEventGroupTransport(group, transport) {
+        const selected = ['http', 'websocket', 'system'].includes(transport) ? transport : 'websocket'
+        group.element.dataset.transport = selected
+        group.protocol.textContent = eventGroupTransportLabel(selected)
+        group.protocol.setAttribute('aria-label', `${group.protocol.textContent} 协议`)
+      }
+
+      function eventGroupFor(requestId, transport) {
+        const key = requestId ? `request:${requestId}` : 'system'
+        if (!eventGroups.has(key)) {
+          const sequence = requestId ? ++eventGroupSequence : 0
+          const group = document.createElement('details')
+          group.className = 'event-group-card'
+          group.open = true
+          group.dataset.groupKey = key
+          group.dataset.requestId = requestId
+          group.dataset.groupSlot = requestId ? String((sequence - 1) % 4) : 'system'
+
+          const header = document.createElement('summary')
+          header.className = 'event-group-header'
+          if (requestId) header.title = `请求 ID：${requestId}`
+
+          const name = document.createElement('strong')
+          name.className = 'event-group-name'
+          name.textContent = requestId ? `消息组 ${String(sequence).padStart(2, '0')}` : '系统事件'
+
+          const protocol = document.createElement('span')
+          protocol.className = 'event-group-protocol'
+
+          const count = document.createElement('span')
+          count.className = 'event-group-count'
+          count.textContent = '0 条'
+
+          const toggle = document.createElement('span')
+          toggle.className = 'event-group-toggle'
+          const toggleIcon = createIcon('chevron-down', 'icon-outline')
+          const toggleLabel = document.createElement('span')
+          toggleLabel.textContent = '收起'
+          toggle.append(toggleIcon, toggleLabel)
+
+          const events = document.createElement('div')
+          events.className = 'event-group-events'
+          header.append(protocol, name, count, toggle)
+          group.append(header, events)
+          group.addEventListener('toggle', () => {
+            toggleLabel.textContent = group.open ? '收起' : '展开'
+            header.setAttribute('aria-label', `${name.textContent}，${count.textContent}，${toggleLabel.textContent}`)
+          })
+          elements.eventLog.appendChild(group)
+          const state = { key, requestId, label: name.textContent, element: group, events, count, header, protocol }
+          applyEventGroupTransport(state, requestId ? transport : 'system')
+          eventGroups.set(key, state)
+        }
+        const group = eventGroups.get(key)
+        if (requestId && transport) {
+          applyEventGroupTransport(group, transport)
+          requestTransports.delete(requestId)
+        }
+        return group
+      }
+
+      function updateEventGroup(group) {
+        const events = [...group.events.querySelectorAll('.event')]
+        group.count.textContent = `${events.length} 条`
+        group.header.setAttribute('aria-label', `${group.label}，${group.count.textContent}，${group.element.open ? '收起' : '展开'}`)
+        const latest = events[0]
+        group.element.dataset.timestamp = latest ? latest.dataset.timestamp : '0'
+        group.element.dataset.sequence = latest ? latest.dataset.sequence : '0'
+      }
+
+      function positionEventGroup(group) {
+        const timestamp = Number(group.element.dataset.timestamp) || 0
+        const sequence = Number(group.element.dataset.sequence) || 0
+        const groups = [...elements.eventLog.children].filter(element => element.classList.contains('event-group-card'))
+        const insertionTarget = groups.find(existing => {
+          if (existing === group.element) return false
+          const existingTimestamp = Number(existing.dataset.timestamp) || 0
+          const existingSequence = Number(existing.dataset.sequence) || 0
+          return timestamp > existingTimestamp
+            || (timestamp === existingTimestamp && sequence > existingSequence)
+        })
+        elements.eventLog.insertBefore(group.element, insertionTarget || null)
+      }
+
+      function pruneEventLog() {
+        while (elements.eventLog.querySelectorAll('.event').length > 100) {
+          const events = [...elements.eventLog.querySelectorAll('.event')]
+          const oldest = events.reduce((candidate, event) => {
+            if (!candidate) return event
+            const eventTimestamp = Number(event.dataset.timestamp) || 0
+            const candidateTimestamp = Number(candidate.dataset.timestamp) || 0
+            const eventSequence = Number(event.dataset.sequence) || 0
+            const candidateSequence = Number(candidate.dataset.sequence) || 0
+            return eventTimestamp < candidateTimestamp
+              || (eventTimestamp === candidateTimestamp && eventSequence < candidateSequence)
+              ? event
+              : candidate
+          }, null)
+          const groupElement = oldest && oldest.closest('.event-group-card')
+          const group = groupElement && eventGroups.get(groupElement.dataset.groupKey)
+          oldest?.remove()
+          if (!group) continue
+          if (!group.events.querySelector('.event')) {
+            group.element.remove()
+            eventGroups.delete(group.key)
+          } else {
+            updateEventGroup(group)
+            positionEventGroup(group)
+          }
+        }
+      }
+
+      function logEvent(label, summary, data, level = 'info') {
+        if (elements.eventEmpty) {
+          elements.eventEmpty.remove()
+          elements.eventEmpty = null
+        }
+        const item = document.createElement('article')
+        item.className = 'event'
+        item.dataset.level = level
+        const eventTimestamp = Date.now()
+        const sequence = ++eventSequence
+        item.dataset.timestamp = String(eventTimestamp)
+        item.dataset.sequence = String(sequence)
+        const requestId = eventRequestId(data)
+        const transport = requestId
+          ? data && data.message && data.message.transport
+            ? data.message.transport
+            : data && data.transport
+              ? data.transport
+              : requestTransports.get(requestId) || (String(label).startsWith('WS') ? 'websocket' : '')
+          : 'system'
+        const group = eventGroupFor(requestId, transport)
+        if (requestId) {
+          item.dataset.groupId = requestId
+          item.dataset.groupLabel = group.label
+        }
+        const badge = document.createElement('span')
+        badge.className = 'event-badge'
+        badge.textContent = label
+        const main = document.createElement('div')
+        main.className = 'event-main'
+        const title = document.createElement('strong')
+        title.textContent = summary
+        const description = document.createElement('p')
+        description.textContent = data && data.message && data.message.sender
+          ? `${data.message.sender} · ${data.message.type === 'relay' ? 'AI问答' : '直连消息'}`
+          : '外部消息服务'
+        main.append(title, description)
+        const time = document.createElement('time')
+        const eventDate = new Date(eventTimestamp)
+        time.dateTime = eventDate.toISOString()
+        time.textContent = eventDate.toLocaleTimeString('zh-CN', { hour12: false })
+        item.append(badge, main, time)
+        if (data) {
+          const detail = document.createElement('details')
+          detail.className = 'event-detail'
+          const summary = document.createElement('summary')
+          summary.append(createIcon('chevron-right', 'icon-outline'), document.createTextNode('查看事件数据'))
+          const payload = document.createElement('pre')
+          payload.textContent = JSON.stringify(data, null, 2)
+          payload.tabIndex = 0
+          payload.setAttribute('aria-label', '完整事件数据')
+          detail.append(summary, payload)
+          detail.addEventListener('toggle', () => {
+            if (!detail.open) return
+            payload.scrollTop = 0
+            const revealEventDetail = () => {
+              if (!detail.open) return
+              const logRect = elements.eventLog.getBoundingClientRect()
+              const groupHeader = group.header
+              const headerRect = groupHeader.getBoundingClientRect()
+              const targetTop = elements.eventLog.scrollTop + headerRect.top - logRect.top - 6
+              const maximumTop = Math.max(0, elements.eventLog.scrollHeight - elements.eventLog.clientHeight)
+              elements.eventLog.scrollTop = Math.max(0, Math.min(maximumTop, targetTop))
+              const detailRect = detail.getBoundingClientRect()
+              if (detailRect.bottom > logRect.bottom - 6) {
+                elements.eventLog.scrollTop = Math.min(
+                  maximumTop,
+                  elements.eventLog.scrollTop + detailRect.bottom - logRect.bottom + 6
+                )
+              }
+            }
+            requestAnimationFrame(() => requestAnimationFrame(revealEventDetail))
+            setTimeout(revealEventDetail, 60)
+          })
+          item.appendChild(detail)
+        }
+        const insertionTarget = [...group.events.querySelectorAll('.event')].find(existing => {
+          const existingTimestamp = Number(existing.dataset.timestamp) || 0
+          const existingSequence = Number(existing.dataset.sequence) || 0
+          return eventTimestamp > existingTimestamp
+            || (eventTimestamp === existingTimestamp && sequence > existingSequence)
+        })
+        group.events.insertBefore(item, insertionTarget || null)
+        updateEventGroup(group)
+        positionEventGroup(group)
+        pruneEventLog()
+        elements.eventLog.scrollTop = 0
+      }
+
+      async function post(path, payload = {}) {
+        const response = await fetch(`${normalizedBaseUrl()}${path}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        })
+        let result
+        try { result = await response.json() } catch (error) { throw new Error(`服务返回了无法解析的数据（HTTP ${response.status}）`) }
+        if (!response.ok) {
+          const failure = new Error(result.error || `请求失败（HTTP ${response.status}）`)
+          failure.payload = result
+          throw failure
+        }
+        return result
+      }
+
+      async function checkService() {
+        setServiceState('checking', '检查服务中')
+        try {
+          const result = await post('/api/v1/health')
+          const service = result.service || {}
+          setServiceState(service.running ? 'online' : 'offline', service.running ? `服务运行中 · 队列 ${service.queueDepth || 0}` : '服务未运行')
+          return Boolean(service.running)
+        } catch (error) {
+          setServiceState('offline', '无法连接服务')
+          return false
+        }
+      }
+
+      function historyTime(value) {
+        const date = new Date(value)
+        return Number.isNaN(date.getTime()) ? '时间未知' : date.toLocaleString('zh-CN', { hour12: false })
+      }
+
+      function historyRequest(item) {
+        if (item.request && typeof item.request === 'object') return item.request
+        return {
+          messageId: item.messageId,
+          requestId: item.requestId,
+          source: item.source || 'external',
+          sourceLabel: item.sourceLabel || '外部',
+          sender: item.sender,
+          type: item.type,
+          content: item.content,
+          speak: Boolean(item.speak),
+          useCurrentCharacterProfile: Boolean(item.useCurrentCharacterProfile),
+          useExternalContext: Boolean(item.useExternalContext),
+          receivedAt: item.receivedAt,
+        }
+      }
+
+      function historyResponse(item) {
+        if (item.response && typeof item.response === 'object') return item.response
+        if (item.status === 'failed') {
+          return {
+            ok: false,
+            requestId: item.requestId,
+            messageId: item.messageId,
+            error: item.error || '消息处理失败',
+            failedAt: item.failedAt,
+          }
+        }
+        return {
+          ok: item.status === 'completed',
+          requestId: item.requestId,
+          messageId: item.messageId,
+          source: item.source || 'external',
+          sourceLabel: item.sourceLabel || '外部',
+          sender: item.sender,
+          type: item.type,
+          result: item.result || null,
+          receivedAt: item.receivedAt,
+          completedAt: item.completedAt,
+        }
+      }
+
+      function historySearchText(item) {
+        const result = item.result || {}
+        return [
+          item.sender,
+          item.content,
+          item.requestId,
+          item.messageId,
+          item.error,
+          result.text,
+          item.type === 'relay' ? 'AI问答' : '直连消息',
+          JSON.stringify(historyRequest(item)),
+          JSON.stringify(historyResponse(item)),
+        ].filter(Boolean).join('\n').toLocaleLowerCase('zh-CN')
+      }
+
+      function appendHistoryData(container, label, data) {
+        const details = document.createElement('details')
+        const summary = document.createElement('summary')
+        summary.append(createIcon('plus', 'icon-outline'), document.createTextNode(label))
+        const payload = document.createElement('pre')
+        payload.textContent = JSON.stringify(data, null, 2)
+        details.addEventListener('toggle', () => setButtonIcon(summary, details.open ? 'minus' : 'plus'))
+        details.append(summary, payload)
+        container.appendChild(details)
+      }
+
+      function historyPageTokens(currentPage, totalPages) {
+        if (totalPages <= 5) return Array.from({ length: totalPages }, (_value, index) => index + 1)
+        const tokens = [1]
+        const start = Math.max(2, currentPage - 1)
+        const end = Math.min(totalPages - 1, currentPage + 1)
+        if (start > 2) tokens.push('start-ellipsis')
+        for (let page = start; page <= end; page += 1) tokens.push(page)
+        if (end < totalPages - 1) tokens.push('end-ellipsis')
+        tokens.push(totalPages)
+        return tokens
+      }
+
+      function renderHistoryPagination(totalItems, totalPages, pageStart, pageEnd) {
+        elements.historyPagination.hidden = totalItems <= historyPageSize
+        elements.historyPageSummary.textContent = `第 ${pageStart}–${pageEnd} 条，共 ${totalItems} 条`
+        elements.historyPagePrevious.disabled = historyPage <= 1
+        elements.historyPageNext.disabled = historyPage >= totalPages
+        elements.historyPages.replaceChildren()
+        for (const token of historyPageTokens(historyPage, totalPages)) {
+          if (typeof token !== 'number') {
+            const ellipsis = document.createElement('span')
+            ellipsis.className = 'pagination-ellipsis'
+            ellipsis.textContent = '…'
+            ellipsis.setAttribute('aria-hidden', 'true')
+            elements.historyPages.appendChild(ellipsis)
+            continue
+          }
+          const button = document.createElement('button')
+          button.className = 'pagination-page'
+          button.type = 'button'
+          button.textContent = String(token)
+          button.setAttribute('aria-label', `第 ${token} 页`)
+          if (token === historyPage) button.setAttribute('aria-current', 'page')
+          button.addEventListener('click', () => {
+            if (historyPage === token) return
+            historyPage = token
+            renderHistory()
+          })
+          elements.historyPages.appendChild(button)
+        }
+      }
+
+      function scheduleHistoryMessageOverflowCheck() {
+        if (historyOverflowFrame !== null) return
+        historyOverflowFrame = requestAnimationFrame(() => {
+          historyOverflowFrame = null
+          const rows = [...elements.historyList.querySelectorAll('.history-message[data-role="external"]')]
+          for (const row of rows) {
+            if (row.dataset.expanded === 'true') continue
+            const content = row.querySelector('.history-message-content p')
+            const toggle = row.querySelector('.history-message-toggle')
+            if (!content || !toggle) continue
+            toggle.hidden = true
+          }
+          requestAnimationFrame(() => {
+            for (const row of rows) {
+              if (!row.isConnected || row.dataset.expanded === 'true') continue
+              const content = row.querySelector('.history-message-content p')
+              const toggle = row.querySelector('.history-message-toggle')
+              if (!content || !toggle) continue
+              toggle.hidden = content.scrollWidth <= content.clientWidth + 1
+            }
+          })
+        })
+      }
+
+      function createExternalHistoryContent(row, text) {
+        const body = document.createElement('div')
+        body.className = 'history-message-content'
+        const content = document.createElement('p')
+        content.textContent = text
+        content.title = text
+        const toggle = document.createElement('button')
+        toggle.className = 'history-message-toggle'
+        toggle.type = 'button'
+        toggle.hidden = true
+        toggle.textContent = '展开'
+        toggle.setAttribute('aria-expanded', 'false')
+        toggle.setAttribute('aria-label', '展开完整外部消息')
+        toggle.addEventListener('click', () => {
+          const expanded = row.dataset.expanded !== 'true'
+          row.dataset.expanded = String(expanded)
+          toggle.textContent = expanded ? '收起' : '展开'
+          toggle.setAttribute('aria-expanded', String(expanded))
+          toggle.setAttribute('aria-label', expanded ? '收起完整外部消息' : '展开完整外部消息')
+          if (!expanded) scheduleHistoryMessageOverflowCheck()
+        })
+        body.append(content, toggle)
+        return body
+      }
+
+      function renderHistory() {
+        const typeItems = historyItems.filter(item => item.type === selectedHistoryType)
+        const query = elements.historySearch.value.trim().toLocaleLowerCase('zh-CN')
+        const filteredItems = query ? typeItems.filter(item => historySearchText(item).includes(query)) : typeItems
+        const totalPages = Math.max(1, Math.ceil(filteredItems.length / historyPageSize))
+        historyPage = Math.max(1, Math.min(historyPage, totalPages))
+        const pageStartIndex = (historyPage - 1) * historyPageSize
+        const items = filteredItems.slice(pageStartIndex, pageStartIndex + historyPageSize)
+        elements.historyList.replaceChildren()
+        elements.historyList.scrollTop = 0
+        elements.clearHistorySearch.hidden = !query
+        if (!items.length) {
+          elements.historyPagination.hidden = true
+          const empty = document.createElement('div')
+          empty.className = 'history-empty'
+          empty.textContent = query
+            ? `没有找到包含“${elements.historySearch.value.trim()}”的${selectedHistoryType === 'relay' ? 'AI问答' : '直连消息'}。`
+            : `暂无${selectedHistoryType === 'relay' ? 'AI问答' : '直连消息'}记录。发送一条测试消息后会记录在这里。`
+          elements.historyList.appendChild(empty)
+          elements.historyStatus.textContent = query ? `0 / ${typeItems.length} 条记录` : '0 条记录'
+          return
+        }
+        for (const item of items) {
+          const article = document.createElement('article')
+          article.className = 'history-item'
+          const header = document.createElement('header')
+          const heading = document.createElement('div')
+          const badge = document.createElement('span')
+          badge.className = 'event-badge'
+          badge.dataset.status = item.status || 'completed'
+          const badgeIcon = createIcon(item.status === 'failed' ? 'info' : item.status === 'processing' ? 'clock' : 'check-circle', item.status === 'processing' ? 'icon-outline' : 'icon-fill')
+          const badgeLabel = document.createElement('span')
+          badgeLabel.textContent = item.status === 'failed' ? '失败' : item.status === 'processing' ? '处理中' : '完成'
+          badge.append(badgeIcon, badgeLabel)
+          const sender = document.createElement('strong')
+          sender.textContent = `${item.sender || '外部系统'} · ${item.type === 'relay' ? 'AI问答' : '直连消息'}`
+          heading.append(badge, sender)
+          const time = document.createElement('time')
+          time.dateTime = item.receivedAt || ''
+          time.textContent = historyTime(item.receivedAt)
+          header.append(heading, time)
+          article.appendChild(header)
+
+          const conversation = document.createElement('div')
+          conversation.className = 'history-conversation'
+          const messages = Array.isArray(item.conversation) && item.conversation.length
+            ? item.conversation
+            : [
+                { role: 'external', label: '外部消息', content: item.content || '' },
+                ...(item.type === 'relay' && item.result && item.result.text
+                  ? [{ role: 'assistant', label: 'AI 回复', content: item.result.text }]
+                  : []),
+              ]
+          for (const message of messages) {
+            const row = document.createElement('div')
+            row.className = 'history-message'
+            row.dataset.role = message.role || 'external'
+            const label = document.createElement('b')
+            label.append(
+              createIcon(message.role === 'assistant' ? 'sparkles' : 'chat-dots', 'icon-fill'),
+              document.createTextNode(message.label || (message.role === 'assistant' ? 'AI 回复' : '外部消息'))
+            )
+            const content = document.createElement('p')
+            const contentText = message.content || ''
+            if (row.dataset.role === 'external') {
+              row.append(label, createExternalHistoryContent(row, contentText))
+            } else {
+              content.textContent = contentText
+              row.append(label, content)
+            }
+            conversation.appendChild(row)
+          }
+          if (item.error) {
+            const row = document.createElement('div')
+            row.className = 'history-message'
+            row.dataset.role = 'error'
+            const label = document.createElement('b')
+            label.append(createIcon('info', 'icon-fill'), document.createTextNode('处理错误'))
+            const content = document.createElement('p')
+            content.textContent = item.error
+            row.append(label, content)
+            conversation.appendChild(row)
+          }
+          article.appendChild(conversation)
+
+          const speech = item.result && item.result.speech
+          if (item.speak || (speech && speech.requested)) {
+            const audioRow = document.createElement('div')
+            audioRow.className = 'history-audio'
+            const audioLabel = document.createElement('b')
+            audioLabel.append(createIcon('mic', 'icon-outline'), document.createTextNode('语音消息'))
+            audioRow.appendChild(audioLabel)
+            if (speech && speech.status === 'ready' && speech.audioUrl) {
+              const audio = document.createElement('audio')
+              audio.controls = true
+              audio.preload = 'metadata'
+              audio.src = new URL(speech.audioUrl, `${normalizedBaseUrl()}/`).href
+              audio.setAttribute('aria-label', `试听 ${item.sender || '外部系统'} 的语音消息`)
+              audioRow.appendChild(audio)
+            } else {
+              const state = document.createElement('span')
+              state.textContent = speech && speech.error
+                ? `不可播放：${speech.error}`
+                : '语音文件尚未就绪或已被清理'
+              audioRow.appendChild(state)
+            }
+            article.appendChild(audioRow)
+          }
+
+          const meta = document.createElement('div')
+          meta.className = 'history-meta'
+          const values = [
+            `ID ${item.requestId || '—'}`,
+            item.speak ? '语音：是' : '语音：否',
+            ...(speech && speech.status === 'ready'
+              ? [speech.cached ? '语音缓存：已命中' : '语音缓存：新生成']
+              : []),
+            item.useCurrentCharacterProfile ? '角色设定：是' : '角色设定：否',
+            item.useExternalContext ? '外部上下文：是' : '外部上下文：否',
+          ]
+          values.forEach((value, index) => {
+            const tag = document.createElement('span')
+            if (index === 0) {
+              const idMark = document.createElement('i')
+              idMark.textContent = 'ID'
+              tag.append(idMark, document.createTextNode(value.replace(/^ID\s*/, '')))
+            } else {
+              tag.textContent = value
+            }
+            meta.appendChild(tag)
+          })
+          article.appendChild(meta)
+
+          const data = document.createElement('div')
+          data.className = 'history-data'
+          appendHistoryData(data, '完整请求', historyRequest(item))
+          appendHistoryData(data, '完整响应', historyResponse(item))
+          article.appendChild(data)
+          const pawDecoration = document.createElement('div')
+          pawDecoration.className = 'history-paws'
+          pawDecoration.append(createIcon('paw', 'icon-fill'), createIcon('paw', 'icon-fill'))
+          article.appendChild(pawDecoration)
+          elements.historyList.appendChild(article)
+        }
+        scheduleHistoryMessageOverflowCheck()
+        const pageStart = pageStartIndex + 1
+        const pageEnd = pageStartIndex + items.length
+        renderHistoryPagination(filteredItems.length, totalPages, pageStart, pageEnd)
+        elements.historyStatus.textContent = query
+          ? `${filteredItems.length} / ${typeItems.length} 条记录 · 第 ${historyPage}/${totalPages} 页`
+          : `${filteredItems.length} 条记录 · 第 ${historyPage}/${totalPages} 页 · 最新在前`
+      }
+
+      async function refreshHistory() {
+        elements.refreshHistory.disabled = true
+        try {
+          const result = await post('/api/v1/history', { limit: 200 })
+          historyItems = Array.isArray(result.items) ? result.items : []
+          renderHistory()
+        } catch (error) {
+          elements.historyStatus.textContent = '读取失败'
+          elements.historyList.replaceChildren()
+          const empty = document.createElement('div')
+          empty.className = 'history-empty'
+          empty.textContent = error.message || '消息历史读取失败'
+          elements.historyList.appendChild(empty)
+        } finally {
+          elements.refreshHistory.disabled = false
+        }
+      }
+
+      async function clearHistory() {
+        elements.clearHistory.disabled = true
+        try {
+          const result = await post('/api/v1/history/clear', {})
+          historyItems = Array.isArray(result.items) ? result.items : []
+          historyPage = 1
+          renderHistory()
+        } catch (error) {
+          elements.historyStatus.textContent = error.message || '清空失败'
+        } finally {
+          elements.clearHistory.disabled = false
+        }
+      }
+
+      function setBusy(value) {
+        requestBusy = Boolean(value)
+        elements.sendHttp.disabled = requestBusy
+        elements.sendWebSocket.disabled = requestBusy
+        elements.checkService.disabled = requestBusy
+      }
+
+      async function sendHTTP() {
+        const payload = requestPayload()
+        if (!payload.content) {
+          setRequestState('error', '内容为空')
+          elements.content.focus()
+          return
+        }
+        elements.requestId.value = payload.requestId
+        requestTransports.set(payload.requestId, 'http')
+        setBusy(true)
+        setRequestState('loading', '发送中')
+        try {
+          const result = await post('/api/v1/messages', payload)
+          setRequestState('success', '已完成')
+          logEvent('POST', result.result && result.result.text ? result.result.text : '请求已完成', result, 'success')
+          elements.requestId.value = createRequestId()
+        } catch (error) {
+          setRequestState('error', '请求失败')
+          const result = error.payload || { ok: false, error: error.message }
+          logEvent('错误', error.message, result, 'error')
+        } finally {
+          requestTransports.delete(payload.requestId)
+          setBusy(false)
+          checkService()
+          refreshHistory()
+        }
+      }
+
+      function websocketUrl() {
+        const base = new URL(normalizedBaseUrl())
+        base.protocol = base.protocol === 'https:' ? 'wss:' : 'ws:'
+        base.pathname = '/api/v1/events'
+        base.search = ''
+        base.hash = ''
+        return base.href
+      }
+
+      function updateWebSocketState(state, text) {
+        elements.websocketStatus.textContent = text
+        const label = elements.toggleWebSocket.querySelector('.button-label')
+        if (label) label.textContent = state === 'open' ? '断开 WebSocket' : state === 'connecting' ? '正在连接…' : '连接 WebSocket'
+        setButtonIcon(elements.toggleWebSocket, state === 'open' ? 'link-off' : 'link')
+        elements.toggleWebSocket.disabled = state === 'connecting'
+      }
+
+      function connectWebSocket() {
+        if (socket && socket.readyState === WebSocket.OPEN) {
+          socket.close(1000, 'Tester disconnected')
+          return
+        }
+        updateWebSocketState('connecting', 'WebSocket 连接中')
+        try { socket = new WebSocket(websocketUrl()) } catch (error) {
+          updateWebSocketState('closed', 'WebSocket 地址无效')
+          return
+        }
+        socket.addEventListener('open', () => {
+          updateWebSocketState('open', 'WebSocket 已连接')
+          logEvent('WS', '实时事件通道已连接', null, 'success')
+        })
+        socket.addEventListener('message', event => {
+          let frame
+          try { frame = JSON.parse(event.data) } catch (error) { frame = { action: 'invalid.frame', raw: String(event.data) } }
+          const source = frame.event || frame.result || (frame.error
+            ? { ...frame.error, requestId: frame.requestId || frame.error.requestId }
+            : frame)
+          const phase = frame.event && frame.event.phase
+          const label = phase === 'received'
+            ? '接收'
+            : phase === 'progress' ? '处理' : phase === 'completed' ? '完成' : phase === 'failed' ? '失败' : 'WS'
+          const summary = frame.event && frame.event.progressText
+            ? frame.event.progressText
+            : frame.event && frame.event.result && frame.event.result.text
+            ? frame.event.result.text
+            : frame.event && frame.event.message && frame.event.message.content
+              ? frame.event.message.content
+              : frame.action || 'WebSocket 事件'
+          logEvent(label, summary, source, phase === 'failed' || frame.action === 'message.error' ? 'error' : phase === 'completed' ? 'success' : 'info')
+          if (phase === 'completed' || phase === 'failed') refreshHistory()
+        })
+        socket.addEventListener('close', () => {
+          updateWebSocketState('closed', 'WebSocket 未连接')
+          socket = null
+        })
+        socket.addEventListener('error', () => {
+          updateWebSocketState('closed', 'WebSocket 连接失败')
+        })
+      }
+
+      function sendWebSocket() {
+        const payload = requestPayload()
+        if (!payload.content) {
+          setRequestState('error', '内容为空')
+          elements.content.focus()
+          return
+        }
+        if (!socket || socket.readyState !== WebSocket.OPEN) {
+          setRequestState('error', 'WS 未连接')
+          connectWebSocket()
+          return
+        }
+        elements.requestId.value = payload.requestId
+        requestTransports.set(payload.requestId, 'websocket')
+        socket.send(JSON.stringify({ action: 'message.post', payload }))
+        setRequestState('loading', 'WS 已发送')
+        logEvent('WS 发送', payload.content, { message: payload })
+        elements.requestId.value = createRequestId()
+      }
+
+      function loadPreference(key, fallback) {
+        try { return localStorage.getItem(`external-tester:${key}`) || fallback } catch (error) { return fallback }
+      }
+
+      function selectTab(name, focus = false) {
+        const selected = elements.tabs.find(tab => tab.dataset.tab === name) || elements.tabs[0]
+        for (const tab of elements.tabs) {
+          const active = tab === selected
+          tab.setAttribute('aria-selected', String(active))
+          tab.tabIndex = active ? 0 : -1
+        }
+        for (const panel of elements.tabPanels) panel.hidden = panel.dataset.tabPanel !== selected.dataset.tab
+        if (focus) selected.focus()
+        if (selected.dataset.tab === 'history') refreshHistory()
+      }
+
+      function selectHistoryType(type, focus = false) {
+        selectedHistoryType = type === 'relay' ? 'relay' : 'direct'
+        historyPage = 1
+        for (const tab of elements.historyTabs) {
+          const active = tab.dataset.historyType === selectedHistoryType
+          tab.setAttribute('aria-selected', String(active))
+          tab.tabIndex = active ? 0 : -1
+          if (active && focus) tab.focus()
+        }
+        renderHistory()
+      }
+
+      function selectMessageType(type) {
+        selectedType = type === 'relay' ? 'relay' : 'direct'
+        elements.messageType.querySelectorAll('button').forEach(option => {
+          option.setAttribute('aria-pressed', String(option.dataset.value === selectedType))
+        })
+        elements.aiMessageOptions.hidden = selectedType !== 'relay'
+      }
+
+      elements.baseUrl.value = loadPreference('baseUrl', defaultBaseUrl)
+      elements.requestId.value = createRequestId()
+      elements.historyPageSize.value = String(historyPageSize)
+
+      for (const tab of elements.tabs) {
+        tab.addEventListener('click', () => selectTab(tab.dataset.tab))
+        tab.addEventListener('keydown', event => {
+          const index = elements.tabs.indexOf(tab)
+          let nextIndex = null
+          if (event.key === 'ArrowRight') nextIndex = (index + 1) % elements.tabs.length
+          else if (event.key === 'ArrowLeft') nextIndex = (index - 1 + elements.tabs.length) % elements.tabs.length
+          else if (event.key === 'Home') nextIndex = 0
+          else if (event.key === 'End') nextIndex = elements.tabs.length - 1
+          if (nextIndex === null) return
+          event.preventDefault()
+          selectTab(elements.tabs[nextIndex].dataset.tab, true)
+        })
+      }
+
+      for (const tab of elements.historyTabs) {
+        tab.addEventListener('click', () => selectHistoryType(tab.dataset.historyType))
+        tab.addEventListener('keydown', event => {
+          const index = elements.historyTabs.indexOf(tab)
+          if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
+          event.preventDefault()
+          const nextIndex = event.key === 'Home'
+            ? 0
+            : event.key === 'End'
+              ? elements.historyTabs.length - 1
+              : event.key === 'ArrowRight'
+                ? (index + 1) % elements.historyTabs.length
+                : (index - 1 + elements.historyTabs.length) % elements.historyTabs.length
+          selectHistoryType(elements.historyTabs[nextIndex].dataset.historyType, true)
+        })
+      }
+
+      elements.messageType.addEventListener('click', event => {
+        const button = event.target.closest('[data-value]')
+        if (!button) return
+        selectMessageType(button.dataset.value)
+      })
+      elements.checkService.addEventListener('click', checkService)
+      elements.content.addEventListener('input', updateContentCount)
+      elements.copyApiSample.addEventListener('click', copyApiSample)
+      for (const button of document.querySelectorAll('.endpoint-copy')) {
+        button.addEventListener('click', () => copyEndpoint(button))
+      }
+      elements.sendHttp.addEventListener('click', sendHTTP)
+      elements.sendWebSocket.addEventListener('click', sendWebSocket)
+      elements.toggleWebSocket.addEventListener('click', connectWebSocket)
+      elements.refreshHistory.addEventListener('click', refreshHistory)
+      elements.clearHistory.addEventListener('click', clearHistory)
+      elements.historySearch.addEventListener('input', () => {
+        historyPage = 1
+        renderHistory()
+      })
+      elements.clearHistorySearch.addEventListener('click', () => {
+        elements.historySearch.value = ''
+        historyPage = 1
+        renderHistory()
+        elements.historySearch.focus()
+      })
+      elements.historyPagePrevious.addEventListener('click', () => {
+        if (historyPage <= 1) return
+        historyPage -= 1
+        renderHistory()
+      })
+      elements.historyPageNext.addEventListener('click', () => {
+        historyPage += 1
+        renderHistory()
+      })
+      elements.historyPageSize.addEventListener('change', () => {
+        const nextSize = Number(elements.historyPageSize.value)
+        historyPageSize = [5, 10, 20].includes(nextSize) ? nextSize : 5
+        historyPage = 1
+        try { localStorage.setItem('external-tester:historyPageSize', String(historyPageSize)) } catch (error) {}
+        renderHistory()
+      })
+      elements.clearEvents.addEventListener('click', () => {
+        elements.eventLog.replaceChildren()
+        eventSequence = 0
+        eventGroupSequence = 0
+        eventGroups.clear()
+        requestTransports.clear()
+        const empty = document.createElement('div')
+        empty.id = 'event-empty'
+        empty.className = 'event-empty'
+        empty.innerHTML = '<p><strong>事件记录已清空</strong><span>新的 WebSocket 事件会继续显示在这里。</span></p>'
+        elements.eventLog.appendChild(empty)
+        elements.eventEmpty = empty
+      })
+      elements.baseUrl.addEventListener('change', () => {
+        try { localStorage.setItem('external-tester:baseUrl', normalizedBaseUrl()) } catch (error) {}
+        if (socket) socket.close(1000, 'Endpoint changed')
+        checkService()
+      })
+      window.addEventListener('resize', scheduleHistoryMessageOverflowCheck)
+      document.addEventListener('keydown', event => {
+        if (event.key !== 'Enter' || requestBusy) return
+        if (event.altKey && !event.ctrlKey && !event.metaKey) {
+          event.preventDefault()
+          sendWebSocket()
+          return
+        }
+        if (event.ctrlKey && !event.altKey && !event.metaKey) {
+          event.preventDefault()
+          sendHTTP()
+        }
+      })
+
+      updateContentCount()
+      checkService().then(online => { if (online) { connectWebSocket(); refreshHistory() } })
+      setInterval(checkService, 5000)
+    })()
+  </script>
+</body>
+</html>

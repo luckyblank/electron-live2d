@@ -40,7 +40,7 @@
 | ID | 用户需求 / 期望结果 | 主要实现位置 | 自动化或人工验收 | 当前文档状态 |
 |---|---|---|---|---|
 | BUBBLE-01 | 同时只允许一个顶部气泡；当前气泡未消失时，后来消息直接丢弃，不覆盖、不排队 | `renderer/app.js` 的 `showBubble()`、`dismissBubble()` 和 lease 状态 | `qa/chat-acceptance.cjs`：`runBubbleLifecycle()` 的单实例断言 | **自动化通过** |
-| BUBBLE-02 | AI 语音回复严格经历“思考中 → 语言组织中 → 最终语音”；最终气泡持续到音频播放 Promise 结束，交互消息不能覆盖它 | `renderer/app.js` 的 `playGeneratedSpeech()`、`stopCurrentSpeech()` 和聊天阶段状态 | 同脚本：阶段顺序、等待边界、语音存续、结束时机和竞争消息共 15 项断言 | **自动化通过** |
+| BUBBLE-02 | AI 语音回复严格经历“思考中 → 语音合成中 → 最终语音”；两个过程气泡都保持到对应请求完成，最终气泡持续到音频播放 Promise 结束 | `renderer/app.js` 的 `submitChat()`、`playGeneratedSpeech()` 和气泡 lease 状态 | `qa/chat-acceptance.cjs`：阶段顺序、AI/TTS 完成边界、语音存续与竞争消息断言 | **自动化通过** |
 | BUBBLE-03 | 模型加载完成前不显示欢迎语或其他顶部气泡 | `renderer/app.js` 的模型 ready 状态、`ensureChatGreeting()` 和待显示气泡触发点 | QA 主动阻塞模型加载：加载期气泡隐藏；`phase=ready` 且角色命中边界出现后才显示欢迎气泡，7 项断言 | **自动化通过** |
 | CHAT-04 | 聊天滚动条停在最底部时，最后一条消息、滚动位置和面板本身不持续抖动 | `renderer/app.js` 的消息滚动逻辑；`renderer/styles.css` 的消息布局/动画 | `qa/chat-acceptance.cjs`：glass/healing 的思考中与长回复共 4 个阶段持续采样，全部 spread 为 0px | **自动化通过** |
 
@@ -197,7 +197,7 @@ npm run qa:directory
 | 动态背景 QA | 2026-09-11 16:33 | **通过** | 10/10；frameCount=16；nullFrameCount=0 | `%TEMP%\live2d-settings-background-qa\results.json` |
 | 目录模型 QA | 2026-09-11 最终回归 | **通过** | `phase=ready`；可见边界 `x=68,y=40,w=264,h=496` | `%TEMP%\live2d-directory-model-qa\results.json` |
 
-聊天气泡阶段实测为：思考中约 6ms 出现、语言组织中约 412ms 出现、最终语音约 872ms 出现；最终气泡可见约 925ms，并在播放结束后消失。模型加载门槛 7/7 通过：加载阻塞期间聊天内已有欢迎文案，但顶部气泡不可见且无角色命中边界，模型 ready 后才显示顶部欢迎气泡。
+聊天气泡阶段实测为：思考中约 6ms 出现、语音合成中约 412ms 出现、最终语音约 872ms 出现；最终气泡可见约 925ms，并在播放结束后消失。模型加载门槛 7/7 通过：加载阻塞期间聊天内已有欢迎文案，但顶部气泡不可见且无角色命中边界，模型 ready 后才显示顶部欢迎气泡。
 
 ## 8. 人工签字区
 

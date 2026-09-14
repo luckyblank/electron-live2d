@@ -152,8 +152,12 @@ textarea:focus-visible {
   border-bottom: 1px solid var(--line);
   background: rgba(255, 253, 249, 0.82);
   flex: 0 0 58px;
-  -webkit-app-region: drag;
+  -webkit-app-region: no-drag;
+  cursor: grab;
+  touch-action: none;
 }
+
+.titlebar.is-window-dragging { cursor: grabbing; }
 
 :root[data-settings-theme="glass"] .titlebar,
 :root[data-settings-theme="glass"] .app-footer {
@@ -209,6 +213,7 @@ textarea:focus-visible {
   width: 46px;
   border: 0;
   background: transparent;
+  cursor: pointer;
   place-items: center;
   transition: background 140ms ease;
 }

@@ -5,6 +5,7 @@ const path = require('path')
 const { pathToFileURL } = require('url')
 const Store = require('electron-store')
 const { createAIPluginManager } = require('./ai/plugin-manager')
+const { createExternalMessageServer, ExternalMessageError } = require('./external-message-server')
 const {
   CURRENT_SCHEMA_VERSION,
   INITIAL_USER_DEFAULTS,
@@ -14,9 +15,27 @@ const {
 const { BUBBLE_THEME_DEFINITIONS, normalizeBubbleStyles } = require('./config/bubble-styles')
 const { inspectModelArchive, inspectModelDirectory } = require('./model-inspector')
 const { captureSettingsPanel, normalizedSection } = require('./settings-screenshot')
+const { buildConditionalTrayItems } = require('./tray-menu')
 
 const PET_WIDTH = 400
 const PET_HEIGHT = 600
+const LONG_MESSAGE_READER_WIDTH = 380
+const LONG_MESSAGE_READER_MIN_WIDTH = 280
+const LONG_MESSAGE_READER_MAX_WIDTH = 420
+const LONG_MESSAGE_READER_GAP = 14
+const LONG_MESSAGE_READER_EDGE_MARGIN = 18
+const LONG_MESSAGE_OVERLAY_MARGIN = 12
+const LONG_MESSAGE_READER_TOP = 40
+const LONG_MESSAGE_READER_HEIGHT = 520
+// On the platforms where Electron supports shaped windows, reserve the maximum
+// reader width on both sides from the moment the (still transparent) pet host is
+// created. Opening and closing the reader then changes only the visible shape;
+// the native BrowserWindow surface and the 400x600 WebGL stage never resize or
+// change their local origin. This avoids Windows briefly compositing the model
+// against the full expanded surface before Chromium applies the stage offset.
+const USE_STABLE_LONG_MESSAGE_HOST = ['win32', 'linux'].includes(process.platform)
+const LONG_MESSAGE_HOST_GUTTER = LONG_MESSAGE_READER_GAP + LONG_MESSAGE_READER_MAX_WIDTH + LONG_MESSAGE_READER_EDGE_MARGIN
+const PET_HOST_WIDTH = PET_WIDTH + LONG_MESSAGE_HOST_GUTTER * 2
 const SETTINGS_WIDTH = 470
 const SETTINGS_HEIGHT = 760
 const COVER_CACHE_SUFFIX = '.centered-v4.png'
@@ -24,6 +43,8 @@ const POSITION_SAVE_DELAY = 180
 const CURSOR_NEAR_DISTANCE = 220
 const PET_VISIBLE_MARGIN = 80
 const CHAT_GREETING_MAX_LENGTH = 200
+const CLIPBOARD_TEXT_MAX_LENGTH = 200000
+const EXTERNAL_MESSAGE_HISTORY_LIMIT = 200
 const MODEL_PROFILE_LIMITS = Object.freeze({
   species: 40,
   age: 40,
@@ -83,7 +104,10 @@ const store = new Store({
 
 let petWindow = null
 let settingsWindow = null
+let settingsWindowReadyToShow = false
+let settingsWindowActivationPending = false
 let settingsCaptureWindow = null
+let externalMessageTesterWindow = null
 let tray = null
 let modelsCache = null
 let coversCache = null
@@ -97,6 +121,7 @@ let dragActive = false
 let dragTimer = null
 let dragOutsideSince = null // 拖拽中光标离开窗口的起始时刻（失联看门狗）
 const DRAG_OUTSIDE_TIMEOUT_MS = 150
+let toolWindowDrag = null
 let appIsQuitting = false
 let animationPaused = false
 let runtimeStatus = { phase: 'starting', modelId: '', message: '正在启动' }
@@ -108,7 +133,31 @@ let petLastPosition = null
 let petChatOpen = false
 let speechBubbleBounds = null
 let statusToastBounds = null
+let longMessageReaderBounds = null
+let longMessageLayoutOpen = false
+let longMessageReaderWidth = LONG_MESSAGE_READER_WIDTH
+let petLayoutTransitionActive = false
+let petWindowLayout = {
+  expanded: false,
+  side: 'none',
+  mode: 'collapsed',
+  readerWidth: 0,
+  gap: LONG_MESSAGE_READER_GAP,
+  stageOffsetX: USE_STABLE_LONG_MESSAGE_HOST ? LONG_MESSAGE_HOST_GUTTER : 0,
+  readerOffsetX: 0,
+  outerWidth: USE_STABLE_LONG_MESSAGE_HOST ? PET_HOST_WIDTH : PET_WIDTH,
+  outerHeight: PET_HEIGHT,
+  windowBounds: {
+    x: USE_STABLE_LONG_MESSAGE_HOST ? -LONG_MESSAGE_HOST_GUTTER : 0,
+    y: 0,
+    width: USE_STABLE_LONG_MESSAGE_HOST ? PET_HOST_WIDTH : PET_WIDTH,
+    height: PET_HEIGHT,
+  },
+  readerSlotBounds: null,
+  revision: 0,
+}
 let aiPluginManager = null
+let externalMessageServer = null
 const UPDATE_MANIFEST_URL = 'https://qny.luckyblank.cn/live2d-pet/latest.yml'
 let lastUpdateCheck = null
 let lastDownloadedPath = null
@@ -639,6 +688,8 @@ function getPreferences() {
     onboardingSeen: store.get('onboardingSeen') === true,
     backgroundDetection: store.get('backgroundDetection') === true,
     settingsPetBackground: store.get('settingsPetBackground') !== false,
+    appLongScreenshotEnabled: store.get('appLongScreenshotEnabled') === true,
+    externalMessagesEnabled: store.get('externalMessagesEnabled') === true,
     settingsTheme: ['glass', 'healing'].includes(store.get('settingsTheme'))
       ? store.get('settingsTheme')
       : preferenceDefaults.settingsTheme,
@@ -670,6 +721,22 @@ function getSnapshot() {
           readyByCapability: { chat: false, tts: false },
           ready: false,
           ttsDirectory: userTtsDir(),
+        },
+    externalMessages: externalMessageServer
+      ? externalMessageServer.getSnapshot()
+      : {
+          enabled: false,
+          status: 'stopped',
+          running: false,
+          host: '127.0.0.1',
+          port: 17373,
+          httpBaseUrl: 'http://127.0.0.1:17373',
+          messageUrl: 'http://127.0.0.1:17373/api/v1/messages',
+          websocketUrl: 'ws://127.0.0.1:17373/api/v1/events',
+          testerUrl: 'http://127.0.0.1:17373/external-message-tester.html',
+          queueDepth: 0,
+          websocketClients: 0,
+          error: '',
         },
     runtime: {
       ...runtimeStatus,
@@ -721,6 +788,253 @@ const POSITION_PRESETS = ['top-left', 'top-right', 'bottom-left', 'bottom-right'
 const CORNER_ANCHOR_MARGIN = 24
 // 角色在窗口内的包围盒（局部 DIP），由渲染进程按渲染蒙版上报
 let characterBounds = null
+// Windows 的原生窗口 shape 会在设置时按当前显示器 DPI 转换成物理像素，
+// 但窗口跨到另一缩放比例的显示器时不会自动重建。记录 shape 所属显示器，
+// 在跨屏的那一帧重新应用，避免 100% -> 125% 后只剩 80% 区域可绘制。
+let petShapeDisplaySignature = ''
+let petShapeRefreshTimer = null
+let petShapeRegionSignature = ''
+
+function currentPetDisplaySignature() {
+  if (!petWindow || petWindow.isDestroyed()) return ''
+  // The stable long-message host extends far beyond the visible 400x600 stage.
+  // Match the display from the character itself, not from the transparent host
+  // rectangle, which may overlap a neighbouring monitor more than the stage.
+  const stage = currentPetStageBounds()
+  const display = screen.getDisplayNearestPoint({
+    x: stage.x + Math.round(PET_WIDTH / 2),
+    y: stage.y + Math.round(PET_HEIGHT / 2),
+  })
+  return display ? `${display.id}:${display.scaleFactor}` : ''
+}
+
+function refreshPetShapeForCurrentDisplay() {
+  if (process.platform !== 'win32' || !petWindow || petWindow.isDestroyed()) return
+  const displaySignature = currentPetDisplaySignature()
+  if (displaySignature && displaySignature !== petShapeDisplaySignature) {
+    applyPetInteractionRegion()
+  }
+}
+
+// Pure geometry resolver for the long-message surface. `stageBounds` always
+// describes the fixed 400x600 Live2D viewport in screen DIP coordinates. On
+// Windows/Linux the transparent host permanently reserves both reader gutters,
+// so expanded/collapsed layouts share identical native bounds and stage origin.
+// Keeping this function independent from Electron makes the side/overlay matrix
+// straightforward to exercise in QA.
+function resolveLongMessageWindowLayout({
+  stageBounds,
+  workArea,
+  expanded = true,
+  readerWidth = LONG_MESSAGE_READER_WIDTH,
+  gap = LONG_MESSAGE_READER_GAP,
+} = {}) {
+  const stageX = Math.round(Number(stageBounds && stageBounds.x) || 0)
+  const stageY = Math.round(Number(stageBounds && stageBounds.y) || 0)
+  const desiredReaderWidth = Math.round(Math.min(
+    LONG_MESSAGE_READER_MAX_WIDTH,
+    Math.max(LONG_MESSAGE_READER_MIN_WIDTH, Number(readerWidth) || LONG_MESSAGE_READER_WIDTH)
+  ))
+  const desiredGap = Math.max(0, Math.round(Number(gap) || 0))
+  const area = workArea && [workArea.x, workArea.y, workArea.width, workArea.height].every(Number.isFinite)
+    ? workArea
+    : { x: stageX, y: stageY, width: PET_WIDTH, height: PET_HEIGHT }
+  const stage = { x: stageX, y: stageY, width: PET_WIDTH, height: PET_HEIGHT }
+  const stableWindowBounds = {
+    x: stageX - LONG_MESSAGE_HOST_GUTTER,
+    y: stageY,
+    width: PET_HOST_WIDTH,
+    height: PET_HEIGHT,
+  }
+  const collapsedStageOffsetX = USE_STABLE_LONG_MESSAGE_HOST ? LONG_MESSAGE_HOST_GUTTER : 0
+  const collapsedOuterWidth = USE_STABLE_LONG_MESSAGE_HOST ? PET_HOST_WIDTH : PET_WIDTH
+  const collapsedWindowBounds = USE_STABLE_LONG_MESSAGE_HOST ? stableWindowBounds : { ...stage }
+
+  if (!expanded) {
+    return {
+      expanded: false,
+      side: 'none',
+      mode: 'collapsed',
+      readerWidth: 0,
+      gap: desiredGap,
+      stageOffsetX: collapsedStageOffsetX,
+      readerOffsetX: 0,
+      outerWidth: collapsedOuterWidth,
+      outerHeight: PET_HEIGHT,
+      stageBounds: stage,
+      windowBounds: collapsedWindowBounds,
+      readerSlotBounds: null,
+    }
+  }
+
+  // Leave transparent room beyond a side reader for its rounded edge, petal
+  // and glass shadow. Without this margin the card ends exactly at the native
+  // BrowserWindow boundary and its right/left glow is visibly guillotined.
+  const requiredExtension = desiredGap + desiredReaderWidth + LONG_MESSAGE_READER_EDGE_MARGIN
+  const workRight = area.x + area.width
+  const stageRight = stageX + PET_WIDTH
+  const rightRoom = workRight - stageRight
+  const leftRoom = stageX - area.x
+
+  if (rightRoom >= requiredExtension) {
+    const stageOffsetX = USE_STABLE_LONG_MESSAGE_HOST ? LONG_MESSAGE_HOST_GUTTER : 0
+    const readerOffsetX = stageOffsetX + PET_WIDTH + desiredGap
+    return {
+      expanded: true,
+      side: 'right',
+      mode: 'right',
+      readerWidth: desiredReaderWidth,
+      gap: desiredGap,
+      stageOffsetX,
+      readerOffsetX,
+      outerWidth: USE_STABLE_LONG_MESSAGE_HOST ? PET_HOST_WIDTH : PET_WIDTH + requiredExtension,
+      outerHeight: PET_HEIGHT,
+      stageBounds: stage,
+      windowBounds: USE_STABLE_LONG_MESSAGE_HOST ? stableWindowBounds : {
+        x: stageX,
+        y: stageY,
+        width: PET_WIDTH + requiredExtension,
+        height: PET_HEIGHT,
+      },
+      readerSlotBounds: {
+        x: readerOffsetX,
+        y: LONG_MESSAGE_READER_TOP,
+        width: desiredReaderWidth,
+        height: LONG_MESSAGE_READER_HEIGHT,
+      },
+    }
+  }
+
+  if (leftRoom >= requiredExtension) {
+    const stageOffsetX = USE_STABLE_LONG_MESSAGE_HOST ? LONG_MESSAGE_HOST_GUTTER : requiredExtension
+    const readerOffsetX = USE_STABLE_LONG_MESSAGE_HOST
+      ? stageOffsetX - desiredGap - desiredReaderWidth
+      : LONG_MESSAGE_READER_EDGE_MARGIN
+    return {
+      expanded: true,
+      side: 'left',
+      mode: 'left',
+      readerWidth: desiredReaderWidth,
+      gap: desiredGap,
+      stageOffsetX,
+      readerOffsetX,
+      outerWidth: USE_STABLE_LONG_MESSAGE_HOST ? PET_HOST_WIDTH : PET_WIDTH + requiredExtension,
+      outerHeight: PET_HEIGHT,
+      stageBounds: stage,
+      windowBounds: USE_STABLE_LONG_MESSAGE_HOST ? stableWindowBounds : {
+        x: stageX - requiredExtension,
+        y: stageY,
+        width: PET_WIDTH + requiredExtension,
+        height: PET_HEIGHT,
+      },
+      readerSlotBounds: {
+        x: readerOffsetX,
+        y: LONG_MESSAGE_READER_TOP,
+        width: desiredReaderWidth,
+        height: LONG_MESSAGE_READER_HEIGHT,
+      },
+    }
+  }
+
+  const overlayWidth = Math.min(desiredReaderWidth, PET_WIDTH - LONG_MESSAGE_OVERLAY_MARGIN * 2)
+  const overlayStageOffsetX = USE_STABLE_LONG_MESSAGE_HOST ? LONG_MESSAGE_HOST_GUTTER : 0
+  const readerOffsetX = overlayStageOffsetX + Math.round((PET_WIDTH - overlayWidth) / 2)
+  return {
+    expanded: true,
+    side: 'overlay',
+    mode: 'overlay',
+    readerWidth: overlayWidth,
+    gap: 0,
+    stageOffsetX: overlayStageOffsetX,
+    readerOffsetX,
+    outerWidth: USE_STABLE_LONG_MESSAGE_HOST ? PET_HOST_WIDTH : PET_WIDTH,
+    outerHeight: PET_HEIGHT,
+    stageBounds: stage,
+    windowBounds: USE_STABLE_LONG_MESSAGE_HOST ? stableWindowBounds : { ...stage },
+    readerSlotBounds: {
+      x: readerOffsetX,
+      y: LONG_MESSAGE_READER_TOP,
+      width: overlayWidth,
+      height: LONG_MESSAGE_READER_HEIGHT,
+    },
+  }
+}
+
+function petWindowLayoutPayload(layout = petWindowLayout) {
+  return {
+    expanded: Boolean(layout.expanded),
+    side: layout.side,
+    mode: layout.mode,
+    readerWidth: layout.readerWidth,
+    gap: layout.gap,
+    stageOffsetX: layout.stageOffsetX,
+    readerOffsetX: layout.readerOffsetX,
+    outerWidth: layout.outerWidth,
+    outerHeight: layout.outerHeight,
+    stageWidth: PET_WIDTH,
+    stageHeight: PET_HEIGHT,
+    revision: layout.revision,
+  }
+}
+
+function samePetWindowLayoutGeometry(left, right) {
+  return Boolean(left && right) && [
+    'expanded', 'side', 'mode', 'readerWidth', 'gap', 'stageOffsetX',
+    'readerOffsetX', 'outerWidth', 'outerHeight',
+  ].every(key => left[key] === right[key])
+}
+
+function currentPetStageBounds() {
+  if (!petWindow || petWindow.isDestroyed()) {
+    return petWindowLayout.stageBounds || { x: 0, y: 0, width: PET_WIDTH, height: PET_HEIGHT }
+  }
+  const outer = petWindow.getBounds()
+  return {
+    x: outer.x + petWindowLayout.stageOffsetX,
+    y: outer.y,
+    width: PET_WIDTH,
+    height: PET_HEIGHT,
+  }
+}
+
+function workAreaForPetStage(stageBounds) {
+  const display = screen.getDisplayNearestPoint({
+    x: stageBounds.x + Math.round(PET_WIDTH / 2),
+    y: stageBounds.y + Math.round(PET_HEIGHT / 2),
+  })
+  return display.workArea
+}
+
+function resolveCurrentPetWindowLayout(stageBounds) {
+  return resolveLongMessageWindowLayout({
+    stageBounds,
+    workArea: workAreaForPetStage(stageBounds),
+    expanded: longMessageLayoutOpen,
+    readerWidth: longMessageReaderWidth,
+    gap: LONG_MESSAGE_READER_GAP,
+  })
+}
+
+function sendPetWindowLayout() {
+  sendToWindow(petWindow, 'pet:window-layout-changed', petWindowLayoutPayload())
+}
+
+function schedulePetShapeRefresh() {
+  if (appIsQuitting) return
+  if (petShapeRefreshTimer) clearTimeout(petShapeRefreshTimer)
+  // 显示器插拔/缩放变化会经过 Windows 与 Chromium 两层通知；下一轮
+  // 事件循环再读取窗口所属显示器，避免拿到变更前的旧 scaleFactor。
+  petShapeRefreshTimer = setTimeout(() => {
+    petShapeRefreshTimer = null
+    if (!petWindow || petWindow.isDestroyed()) return
+    const stage = currentPetStageBounds()
+    const position = dragActive ? stage : safePetPosition(stage.x, stage.y)
+    // Re-evaluate the preferred side as work areas change or a monitor is
+    // removed. placePetWindow also refreshes the Windows shape immediately if
+    // the HWND crosses to a different DPI.
+    placePetWindow(position.x, position.y)
+  }, 0)
+}
 
 function interactionRegionFromBounds(bounds = characterBounds) {
   const fallback = { x: 24, y: 0, width: PET_WIDTH - 48, height: PET_HEIGHT }
@@ -743,33 +1057,87 @@ function interactionRegionFromBounds(bounds = characterBounds) {
   }
 }
 
+function translateStageRegion(region) {
+  if (!region) return null
+  return {
+    x: region.x + petWindowLayout.stageOffsetX,
+    y: region.y,
+    width: region.width,
+    height: region.height,
+  }
+}
+
+function clampPetWindowRegion(region, padding = 0) {
+  if (
+    !region || !Number.isFinite(region.x) || !Number.isFinite(region.y) ||
+    !Number.isFinite(region.width) || !Number.isFinite(region.height) ||
+    region.width <= 0 || region.height <= 0
+  ) return null
+
+  const left = Math.max(0, Math.floor(region.x - padding))
+  const top = Math.max(0, Math.floor(region.y - padding))
+  const right = Math.min(petWindowLayout.outerWidth, Math.ceil(region.x + region.width + padding))
+  const bottom = Math.min(PET_HEIGHT, Math.ceil(region.y + region.height + padding))
+  if (right <= left || bottom <= top) return null
+  return { x: left, y: top, width: right - left, height: bottom - top }
+}
+
 function applyPetInteractionRegion() {
   if (!petWindow || petWindow.isDestroyed()) return
-  if (petChatOpen) {
-    petWindow.setIgnoreMouseEvents(false)
-    if (['win32', 'linux'].includes(process.platform)) {
-      try {
-        petWindow.setShape([{ x: 0, y: 0, width: PET_WIDTH, height: PET_HEIGHT }])
-      } catch (error) {
-        console.warn('Failed to expand pet interaction region:', error.message)
-      }
-    }
+  const preferences = getPreferences()
+  // Like the chat surface, an already-open long-message reader remains
+  // operable so its Copy/Collapse controls cannot strand the user.
+  const locked = !petChatOpen && !longMessageLayoutOpen && preferences.interactionMode === 'locked'
+  petWindow.setIgnoreMouseEvents(locked)
+  if (!['win32', 'linux'].includes(process.platform)) {
+    petShapeDisplaySignature = ''
+    petShapeRegionSignature = ''
     return
   }
-  const preferences = getPreferences()
-  const locked = preferences.interactionMode === 'locked'
-  petWindow.setIgnoreMouseEvents(locked)
-  if (locked || !['win32', 'linux'].includes(process.platform)) return
 
   try {
-    // 背景检测开启时，整个透明窗口都是可抓取范围；关闭时恢复角色
-    // 包围盒裁剪，让远离角色的透明背景继续穿透到桌面。
-    const regions = [preferences.backgroundDetection
-      ? { x: 0, y: 0, width: PET_WIDTH, height: PET_HEIGHT }
-      : interactionRegionFromBounds()]
-    if (speechBubbleBounds) regions.push(speechBubbleBounds)
-    if (statusToastBounds) regions.push(statusToastBounds)
+    const fullStage = {
+      x: petWindowLayout.stageOffsetX,
+      y: 0,
+      width: PET_WIDTH,
+      height: PET_HEIGHT,
+    }
+    // 聊天框、背景检测或锁定模式需要完整绘制区域。锁定模式虽然全局
+    // 穿透鼠标，但仍须重建完整 shape，否则旧 DPI 的原生裁剪区会继续
+    // 截断角色。扩展后的透明外窗不能整个参与命中：只加入平移后的
+    // 400x600 舞台与阅读卡视觉区域，空白仍然穿透到桌面。
+    const useFullStage = petChatOpen || locked || preferences.backgroundDetection
+    const regions = [useFullStage ? fullStage : translateStageRegion(interactionRegionFromBounds())]
+    // Unsupported legacy hosts can still use the dynamic left-side hand-off.
+    // During it expose only the pet stage. Stable shaped hosts never enter this
+    // branch because their stage offset and native bounds are invariant.
+    if (!petLayoutTransitionActive && !longMessageLayoutOpen && !useFullStage && speechBubbleBounds) {
+      regions.push(translateStageRegion(speechBubbleBounds))
+    }
+    if (!petLayoutTransitionActive && !useFullStage && statusToastBounds) {
+      regions.push(translateStageRegion(statusToastBounds))
+    }
+    if (!petLayoutTransitionActive && longMessageLayoutOpen) {
+      // The reader uses fixed top/height geometry. Its provisional slot already
+      // matches the measured card, including the 18px visual padding, so the
+      // later bounds report does not force Windows to rebuild an identical
+      // native shape on the next frame.
+      const measuredReader = longMessageReaderBounds &&
+        longMessageReaderBounds.revision === petWindowLayout.revision
+        ? longMessageReaderBounds
+        : petWindowLayout.readerSlotBounds
+      const readerRegion = clampPetWindowRegion(measuredReader, 18)
+      if (readerRegion) regions.push(readerRegion)
+    }
+    const displaySignature = currentPetDisplaySignature()
+    const regionSignature = JSON.stringify(regions)
+    if (
+      displaySignature === petShapeDisplaySignature &&
+      regionSignature === petShapeRegionSignature
+    ) return
     petWindow.setShape(regions)
+    petShapeDisplaySignature = displaySignature
+    petShapeRegionSignature = regionSignature
   } catch (error) {
     console.warn('Failed to apply pet interaction region:', error.message)
   }
@@ -777,8 +1145,11 @@ function applyPetInteractionRegion() {
 
 function movePetToPreset(preset) {
   if (!petWindow || petWindow.isDestroyed()) return false
-  const current = petWindow.getPosition()
-  const display = screen.getDisplayNearestPoint({ x: current[0], y: current[1] })
+  const current = currentPetStageBounds()
+  const display = screen.getDisplayNearestPoint({
+    x: current.x + Math.round(PET_WIDTH / 2),
+    y: current.y + Math.round(PET_HEIGHT / 2),
+  })
   const area = display.workArea
   const m = CORNER_ANCHOR_MARGIN
   // 角色包围盒（窗口局部 DIP）；尚未上报时用窗口中心近似
@@ -812,34 +1183,61 @@ function safePetPosition(savedX, savedY) {
     x: Number.isFinite(savedX) ? savedX : fallback.x,
     y: Number.isFinite(savedY) ? savedY : fallback.y,
   }
-  const display = screen.getDisplayNearestPoint(point)
+  const display = screen.getDisplayNearestPoint({
+    x: point.x + Math.round(PET_WIDTH / 2),
+    y: point.y + Math.round(PET_HEIGHT / 2),
+  })
   const area = display.workArea
   // 允许窗口伸出屏幕边缘（角色贴角摆放），但保证至少 80px 可见可抓
   return {
-    x: Math.min(Math.max(point.x, area.x - PET_WIDTH + PET_VISIBLE_MARGIN), area.x + area.width + PET_WIDTH - PET_VISIBLE_MARGIN),
-    y: Math.min(Math.max(point.y, area.y - PET_HEIGHT + PET_VISIBLE_MARGIN), area.y + area.height + PET_HEIGHT - PET_VISIBLE_MARGIN),
+    x: Math.min(Math.max(point.x, area.x - PET_WIDTH + PET_VISIBLE_MARGIN), area.x + area.width - PET_VISIBLE_MARGIN),
+    y: Math.min(Math.max(point.y, area.y - PET_HEIGHT + PET_VISIBLE_MARGIN), area.y + area.height - PET_VISIBLE_MARGIN),
   }
 }
 
 function persistPetPosition() {
   if (!petWindow || petWindow.isDestroyed()) return
-  const [windowX, windowY] = petWindow.getPosition()
-  store.set({ windowX, windowY })
+  const stage = currentPetStageBounds()
+  store.set({ windowX: stage.x, windowY: stage.y })
 }
 
 function placePetWindow(x, y) {
   if (!petWindow || petWindow.isDestroyed()) return
+  const stageBounds = {
+    x: Math.round(x),
+    y: Math.round(y),
+    width: PET_WIDTH,
+    height: PET_HEIGHT,
+  }
+  const resolvedLayout = resolveCurrentPetWindowLayout(stageBounds)
+  const layoutChanged = !samePetWindowLayoutGeometry(petWindowLayout, resolvedLayout)
+  const previousRevision = Number.isInteger(petWindowLayout.revision) ? petWindowLayout.revision : 0
+  petWindowLayout = {
+    ...resolvedLayout,
+    revision: layoutChanged ? previousRevision + 1 : previousRevision,
+  }
+  if (layoutChanged) longMessageReaderBounds = null
+
   // Windows 分数 DPI 缩放（125%/150%）下，对透明无边框窗口反复调用
   // setPosition 会让系统读回的窗口尺寸每次 +1 DIP 不断累积（实测 125%
   // 缩放连调 30 次 setPosition，窗口宽从 401 涨到 429），拖动中视口持续
   // 变大，表现为"宠物越拖越偏"。setBounds 写入完整绝对几何，读回误差
   // 有界（≤1 DIP 常量），不再累积。
-  petWindow.setBounds({
-    x: Math.round(x),
-    y: Math.round(y),
-    width: PET_WIDTH,
-    height: PET_HEIGHT,
-  }, false)
+  const currentBounds = petWindow.getBounds()
+  const targetBounds = petWindowLayout.windowBounds
+  const nativeBoundsChanged = ['x', 'y', 'width', 'height'].some(key => currentBounds[key] !== targetBounds[key])
+  if (nativeBoundsChanged) petWindow.setBounds({ ...targetBounds }, false)
+  // setShape 在 Windows 上保存的是按调用时 DPI 换算后的原生区域。
+  // setBounds 让窗口跨屏后立刻重建一次 shape，不能等鼠标松开或下一次
+  // 命中蒙版上报，否则拖动途中模型会按旧显示器比例被裁掉。
+  if (layoutChanged) {
+    // Reader visibility/side changes alter the shaped native region even when
+    // the stable host bounds and DPI stay identical.
+    applyPetInteractionRegion()
+    sendPetWindowLayout()
+  } else {
+    refreshPetShapeForCurrentDisplay()
+  }
 }
 
 function schedulePositionSave() {
@@ -856,15 +1254,183 @@ function secureLocalWindow(target) {
   target.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
 }
 
+function settingsWindowHeight() {
+  const { workArea } = screen.getPrimaryDisplay()
+  const availableHeight = Math.max(0, workArea.height - 32)
+  const preferredHeight = Math.round(workArea.height * 0.9)
+  return Math.min(SETTINGS_HEIGHT, availableHeight, Math.max(640, preferredHeight))
+}
+
+function activateToolWindow(targetWindow) {
+  if (!targetWindow || targetWindow.isDestroyed()) return false
+  if (targetWindow.isMinimized()) targetWindow.restore()
+  targetWindow.show()
+  // 设置页和测试台都是普通窗口，Windows 会自然地把获得焦点的那个
+  // 排到另一个上方。宠物只有在用户开启“始终置顶”时才进入 topmost
+  // Z 带，因此无需在每次工具窗口激活时来回移动三个原生窗口。
+  syncWindowLevels()
+  targetWindow.focus()
+  return true
+}
+
+function toolWindowForSender(event) {
+  const senderId = event && event.sender && event.sender.id
+  if (!Number.isInteger(senderId)) return null
+  return [settingsWindow, externalMessageTesterWindow].find(targetWindow => (
+    targetWindow && !targetWindow.isDestroyed() && targetWindow.webContents.id === senderId
+  )) || null
+}
+
+function startToolWindowDrag(event, point) {
+  const targetWindow = toolWindowForSender(event)
+  const cursor = normalizedDragPoint(point)
+  if (!targetWindow || !cursor || !targetWindow.isVisible() || targetWindow.isMinimized()) return
+  syncWindowLevels()
+  targetWindow.focus()
+  toolWindowDrag = {
+    targetWindow,
+    senderId: event.sender.id,
+    bounds: targetWindow.getBounds(),
+    cursor,
+  }
+}
+
+function moveToolWindowDrag(event, point) {
+  const activeDrag = toolWindowDrag
+  const targetWindow = toolWindowForSender(event)
+  const cursor = normalizedDragPoint(point)
+  if (
+    !activeDrag || !targetWindow || !cursor ||
+    activeDrag.targetWindow !== targetWindow || activeDrag.senderId !== event.sender.id
+  ) return
+  if (!targetWindow.isVisible() || targetWindow.isMinimized()) {
+    toolWindowDrag = null
+    return
+  }
+
+  // 直接写入绝对坐标，不套用 workArea/safe-position 限制。这样窗口可以
+  // 越过屏幕上沿或跨显示器移动，也不会触发 Windows 原生标题栏的回弹。
+  targetWindow.setBounds({
+    x: Math.round(activeDrag.bounds.x + cursor.x - activeDrag.cursor.x),
+    y: Math.round(activeDrag.bounds.y + cursor.y - activeDrag.cursor.y),
+    width: activeDrag.bounds.width,
+    height: activeDrag.bounds.height,
+  }, false)
+}
+
+function endToolWindowDrag(event) {
+  if (!toolWindowDrag) return
+  if (event && event.sender && toolWindowDrag.senderId !== event.sender.id) return
+  toolWindowDrag = null
+}
+
+function createExternalMessageTesterWindow() {
+  const service = externalMessageServer && externalMessageServer.getSnapshot()
+  if (!service || !service.running) return false
+  if (externalMessageTesterWindow && !externalMessageTesterWindow.isDestroyed()) {
+    return activateToolWindow(externalMessageTesterWindow)
+  }
+
+  const allowedOrigin = new URL(service.testerUrl).origin
+  const testerHeight = settingsWindowHeight()
+  const testerWindow = new BrowserWindow({
+    width: 860,
+    height: testerHeight,
+    minWidth: 640,
+    minHeight: testerHeight,
+    maxHeight: testerHeight,
+    center: true,
+    show: false,
+    frame: false,
+    maximizable: false,
+    movable: true,
+    alwaysOnTop: false,
+    transparent: true,
+    hasShadow: false,
+    backgroundColor: '#00000000',
+    title: '外部消息测试台',
+    icon: path.join(__dirname, 'resources', 'icon.png'),
+    webPreferences: {
+      preload: path.join(__dirname, 'external-message-tester-preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      webSecurity: true,
+    },
+  })
+  externalMessageTesterWindow = testerWindow
+  testerWindow.setMenu(null)
+  testerWindow.setTitle('外部消息测试台')
+  testerWindow.webContents.on('page-title-updated', event => {
+    event.preventDefault()
+    if (!testerWindow.isDestroyed()) testerWindow.setTitle('外部消息测试台')
+  })
+  testerWindow.webContents.on('will-navigate', (event, targetUrl) => {
+    try {
+      if (new URL(targetUrl).origin !== allowedOrigin) event.preventDefault()
+    } catch (error) {
+      event.preventDefault()
+    }
+  })
+  testerWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+  testerWindow.once('ready-to-show', () => {
+    if (testerWindow.isDestroyed()) return
+    activateToolWindow(testerWindow)
+  })
+  testerWindow.on('show', syncWindowLevels)
+  testerWindow.on('hide', syncWindowLevels)
+  testerWindow.on('minimize', syncWindowLevels)
+  testerWindow.on('restore', () => {
+    syncWindowLevels()
+  })
+  testerWindow.on('closed', () => {
+    if (toolWindowDrag && toolWindowDrag.targetWindow === testerWindow) toolWindowDrag = null
+    if (externalMessageTesterWindow === testerWindow) externalMessageTesterWindow = null
+    syncWindowLevels()
+  })
+  testerWindow.loadURL(service.testerUrl).catch(error => {
+    if (!testerWindow.isDestroyed()) console.warn('External message tester failed to load:', error.message)
+  })
+  return true
+}
+
+async function openExternalMessageTester(target = 'app') {
+  if (!getPreferences().externalMessagesEnabled) return false
+  const service = externalMessageServer && externalMessageServer.getSnapshot()
+  if (!service || !service.running) return false
+  if (target !== 'browser') return createExternalMessageTesterWindow()
+  try {
+    await shell.openExternal(service.testerUrl)
+    return true
+  } catch (error) {
+    console.warn('External message tester failed to open in browser:', error.message)
+    return false
+  }
+}
+
 function createPetWindow() {
   const position = safePetPosition(store.get('windowX'), store.get('windowY'))
   const preferences = getPreferences()
+  longMessageLayoutOpen = false
+  longMessageReaderBounds = null
+  petLayoutTransitionActive = false
+  const initialStageBounds = { ...position, width: PET_WIDTH, height: PET_HEIGHT }
+  petWindowLayout = {
+    ...resolveLongMessageWindowLayout({
+      stageBounds: initialStageBounds,
+      workArea: workAreaForPetStage(initialStageBounds),
+      expanded: false,
+      readerWidth: longMessageReaderWidth,
+      gap: LONG_MESSAGE_READER_GAP,
+    }),
+    revision: (Number.isInteger(petWindowLayout.revision) ? petWindowLayout.revision : 0) + 1,
+  }
 
   petWindow = new BrowserWindow({
-    width: PET_WIDTH,
-    height: PET_HEIGHT,
-    x: position.x,
-    y: position.y,
+    width: petWindowLayout.outerWidth,
+    height: petWindowLayout.outerHeight,
+    x: petWindowLayout.windowBounds.x,
+    y: petWindowLayout.windowBounds.y,
     show: false,
     transparent: true,
     backgroundColor: '#00000000',
@@ -895,7 +1461,11 @@ function createPetWindow() {
   petWindow.setBackgroundColor('#00000000')
   petWindow.webContents.on('page-title-updated', event => event.preventDefault())
   petWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'))
-  petWindow.webContents.on('did-finish-load', syncSettingsPetBackgroundCapture)
+  petWindow.webContents.on('did-finish-load', () => {
+    if (petLayoutTransitionActive) setPetLayoutTransitionActive(false)
+    syncSettingsPetBackgroundCapture()
+    sendPetWindowLayout()
+  })
   applyPetInteractionRegion()
 
   petWindow.once('ready-to-show', () => {
@@ -928,16 +1498,22 @@ function createPetWindow() {
   petWindow.on('closed', () => {
     stopCursorTracking()
     petWindow = null
+    longMessageLayoutOpen = false
+    longMessageReaderBounds = null
+    petLayoutTransitionActive = false
+    petShapeDisplaySignature = ''
+    petShapeRegionSignature = ''
+    if (petShapeRefreshTimer) clearTimeout(petShapeRefreshTimer)
+    petShapeRefreshTimer = null
   })
 }
 
 function createSettingsWindow() {
-  const { workArea } = screen.getPrimaryDisplay()
   // 在高 DPI 或较矮屏幕上为桌面和任务栏留出呼吸空间，避免设置页
   // 贴着屏幕上下边缘；内容区本身保持可滚动，不通过拉满窗口解决布局。
-  const availableHeight = Math.max(0, workArea.height - 32)
-  const preferredHeight = Math.round(workArea.height * 0.9)
-  const settingsHeight = Math.min(SETTINGS_HEIGHT, availableHeight, Math.max(640, preferredHeight))
+  const settingsHeight = settingsWindowHeight()
+  settingsWindowReadyToShow = false
+  settingsWindowActivationPending = false
   settingsWindow = new BrowserWindow({
     width: SETTINGS_WIDTH,
     height: settingsHeight,
@@ -952,9 +1528,11 @@ function createSettingsWindow() {
     backgroundColor: '#00000000',
     resizable: false,
     maximizable: false,
+    movable: true,
     hasShadow: false,
     alwaysOnTop: false,
     skipTaskbar: false,
+    title: '桌面伙伴',
     icon: path.join(__dirname, 'resources', 'icon.png'),
     webPreferences: {
       preload: path.join(__dirname, 'settings-preload.js'),
@@ -966,6 +1544,11 @@ function createSettingsWindow() {
   })
 
   secureLocalWindow(settingsWindow)
+  settingsWindow.setTitle('桌面伙伴')
+  settingsWindow.webContents.on('page-title-updated', event => {
+    event.preventDefault()
+    if (!settingsWindow.isDestroyed()) settingsWindow.setTitle('桌面伙伴')
+  })
   settingsWindow.loadFile(path.join(__dirname, 'renderer', 'settings.html'))
   settingsWindow.webContents.on('did-finish-load', syncSettingsPetBackgroundCapture)
   settingsWindow.webContents.on('console-message', details => {
@@ -985,11 +1568,15 @@ function createSettingsWindow() {
     updateTrayMenu()
     syncSettingsPetBackgroundCapture()
   })
-  // Windows 拖动活动窗口后可能调整同一 topmost Z 带内的顺序。
-  // 只在焦点变化和拖动完成时恢复一次宠物层级，避免移动过程中反复
-  // 操作透明 WebGL 窗口，触发 DWM 重新合成和画面闪烁。
-  settingsWindow.on('focus', raisePinnedPet)
-  settingsWindow.on('moved', raisePinnedPet)
+
+  const targetWindow = settingsWindow
+  targetWindow.once('ready-to-show', () => {
+    if (targetWindow.isDestroyed() || settingsWindow !== targetWindow) return
+    settingsWindowReadyToShow = true
+    if (!settingsWindowActivationPending) return
+    settingsWindowActivationPending = false
+    activateToolWindow(targetWindow)
+  })
   settingsWindow.on('minimize', () => {
     syncWindowLevels()
     updateTrayMenu()
@@ -998,11 +1585,13 @@ function createSettingsWindow() {
   settingsWindow.on('restore', () => {
     syncWindowLevels()
     updateTrayMenu()
-    raisePinnedPet()
     syncSettingsPetBackgroundCapture()
   })
   settingsWindow.on('closed', () => {
+    if (toolWindowDrag && toolWindowDrag.targetWindow === settingsWindow) toolWindowDrag = null
     settingsWindow = null
+    settingsWindowReadyToShow = false
+    settingsWindowActivationPending = false
     syncWindowLevels()
     updateTrayMenu()
     syncSettingsPetBackgroundCapture()
@@ -1013,10 +1602,15 @@ function openSettings(section, notice) {
   const requestedSection = ['characters', 'behavior', 'ai', 'system'].includes(section) ? section : null
   const created = !settingsWindow || settingsWindow.isDestroyed()
   if (created) createSettingsWindow()
-  if (settingsWindow.isMinimized()) settingsWindow.restore()
-  settingsWindow.show()
-  settingsWindow.focus()
-  syncWindowLevels({ raisePet: true })
+  // 第一次创建时等 Chromium 完成首帧再显示。透明无边框窗口如果在
+  // ready-to-show 之前调用 show()，Windows 会短暂合成一个未完成页面，
+  // 表现为设置页先闪一下、随后才稳定。重复打开已就绪窗口仍立即响应。
+  if (settingsWindowReadyToShow && !settingsWindow.webContents.isLoadingMainFrame()) {
+    settingsWindowActivationPending = false
+    activateToolWindow(settingsWindow)
+  } else {
+    settingsWindowActivationPending = true
+  }
   // “打开设置”只负责恢复已有窗口，保留用户正在查看的页签。只有带有
   // 明确目标的入口（例如“安装 AI 插件”）才导航；新窗口未加载完成时
   // 延迟到 did-finish-load，避免首个导航消息丢失。
@@ -1084,15 +1678,21 @@ async function currentSettingsCaptureState(targetWindow, requestedSection) {
 
 async function settingsBackgroundFrame(targetWindow) {
   if (!targetWindow || targetWindow.isDestroyed()) return null
-  const dataUrl = await targetWindow.webContents.executeJavaScript(`(() => {
+  const result = await targetWindow.webContents.executeJavaScript(`(() => {
     const root = document.getElementById('settings-pet-background')
     const canvas = document.getElementById('settings-pet-background-canvas')
     return root && root.classList.contains('is-ready') && canvas
-      ? canvas.toDataURL('image/webp', .9)
-      : ''
-  })()`, true).catch(() => '')
-  const match = /^data:image\/webp;base64,(.+)$/.exec(dataUrl || '')
-  return match ? Buffer.from(match[1], 'base64') : null
+      ? {
+          dataUrl: canvas.toDataURL('image/webp', .9),
+          modelId: root.dataset.modelId || '',
+          format: root.dataset.modelFormat || '',
+        }
+      : null
+  })()`, true).catch(() => null)
+  const match = result && /^data:image\/webp;base64,(.+)$/.exec(result.dataUrl || '')
+  return match && result.modelId
+    ? { modelId: result.modelId, format: result.format, frame: Buffer.from(match[1], 'base64') }
+    : null
 }
 
 async function waitForScreenshotRenderer(targetWindow) {
@@ -1164,6 +1764,9 @@ async function captureSettingsPanelInBackground(sourceWindow, captureState, outp
 
 async function saveSettingsLongScreenshot(targetWindow, requestedSection) {
   if (!targetWindow || targetWindow.isDestroyed()) return { ok: false, error: '设置面板暂不可用' }
+  if (!getPreferences().appLongScreenshotEnabled) {
+    return { ok: false, error: '请先在系统页开启 APP 长截图' }
+  }
   if (settingsScreenshotBusy) return { ok: false, error: 'APP 长截图正在保存，请稍候' }
   settingsScreenshotBusy = true
 
@@ -1227,8 +1830,10 @@ function togglePetVisibility() {
   // 移到极远坐标又会触发 Chromium 遮挡优化，导致 WebGL 画布恢复后透明。
   // 窗口留在原位，仅切换透明度与鼠标命中，可同时保住输入和渲染上下文。
   if (!petOffScreen) {
+    const stage = currentPetStageBounds()
     setPetChatOpen(false)
-    petLastPosition = petWindow.getPosition()
+    setPetLongMessageLayout(false)
+    petLastPosition = [stage.x, stage.y]
     petOffScreen = true
     stopCursorTracking()
     petWindow.setIgnoreMouseEvents(true)
@@ -1254,6 +1859,72 @@ function setPetChatOpen(open) {
   applyPetInteractionRegion()
   sendToWindow(petWindow, 'ai:chat-visibility', next)
   updateTrayMenu()
+}
+
+function normalizedLongMessageReaderWidth(value) {
+  const parsedWidth = Number(value)
+  if (!Number.isFinite(parsedWidth)) return longMessageReaderWidth
+  return Math.round(Math.min(
+    LONG_MESSAGE_READER_MAX_WIDTH,
+    Math.max(LONG_MESSAGE_READER_MIN_WIDTH, parsedWidth)
+  ))
+}
+
+function previewPetLongMessageLayout(open, preferredWidth = longMessageReaderWidth) {
+  if (!petWindow || petWindow.isDestroyed()) return petWindowLayoutPayload()
+  const stage = currentPetStageBounds()
+  const resolvedLayout = resolveLongMessageWindowLayout({
+    stageBounds: stage,
+    workArea: workAreaForPetStage(stage),
+    expanded: Boolean(open),
+    readerWidth: normalizedLongMessageReaderWidth(preferredWidth),
+    gap: LONG_MESSAGE_READER_GAP,
+  })
+  const layoutChanged = !samePetWindowLayoutGeometry(petWindowLayout, resolvedLayout)
+  return petWindowLayoutPayload({
+    ...resolvedLayout,
+    revision: layoutChanged ? petWindowLayout.revision + 1 : petWindowLayout.revision,
+  })
+}
+
+function setPetLongMessageLayout(open, preferredWidth = longMessageReaderWidth) {
+  if (!petWindow || petWindow.isDestroyed()) return petWindowLayoutPayload()
+  longMessageReaderWidth = normalizedLongMessageReaderWidth(preferredWidth)
+  const stage = currentPetStageBounds()
+  longMessageLayoutOpen = Boolean(open)
+  if (!longMessageLayoutOpen) longMessageReaderBounds = null
+  placePetWindow(stage.x, stage.y)
+  // placePetWindow sends an asynchronous notification whenever native geometry
+  // changed; invoke callers also receive the authoritative layout immediately.
+  return petWindowLayoutPayload()
+}
+
+function setPetLayoutTransitionActive(active) {
+  const next = Boolean(active)
+  if (petLayoutTransitionActive === next) return next
+  petLayoutTransitionActive = next
+  // The region list deliberately differs while the hand-off is active. Clear
+  // the signature so Windows always receives the matching stage-only shape.
+  petShapeRegionSignature = ''
+  applyPetInteractionRegion()
+  return next
+}
+
+async function capturePetStageTransitionFrame() {
+  if (!petWindow || petWindow.isDestroyed()) return ''
+  const stageOffsetX = Math.max(0, Math.round(Number(petWindowLayout.stageOffsetX) || 0))
+  try {
+    const image = await petWindow.capturePage({
+      x: stageOffsetX,
+      y: 0,
+      width: PET_WIDTH,
+      height: PET_HEIGHT,
+    })
+    return image && !image.isEmpty() ? image.toDataURL() : ''
+  } catch (error) {
+    console.warn('Pet stage transition capture failed:', error.message)
+    return ''
+  }
 }
 
 function aiCapabilityAvailability(capability) {
@@ -1290,6 +1961,327 @@ function openAIChat() {
   petWindow.show()
   petWindow.focus()
   petWindow.moveTop()
+}
+
+function emitExternalMessageEvent(event, publicEvent = event) {
+  sendToWindow(petWindow, 'external-message:event', event)
+  if (externalMessageServer) externalMessageServer.broadcast(publicEvent)
+}
+
+function externalMessageHistory() {
+  const stored = store.get('externalMessageHistory')
+  if (!Array.isArray(stored)) return []
+  return stored
+    .filter(item => item && typeof item === 'object' && typeof item.messageId === 'string')
+    .slice(-EXTERNAL_MESSAGE_HISTORY_LIMIT)
+}
+
+function externalMessageHistoryItems({ limit = 100 } = {}) {
+  const safeLimit = Math.min(EXTERNAL_MESSAGE_HISTORY_LIMIT, Math.max(1, Number(limit) || 100))
+  return externalMessageHistory().slice(-safeLimit).reverse().map(publicExternalMessageHistoryItem)
+}
+
+function storedExternalMessageHistoryAudio(item) {
+  if (!item || typeof item.audioArchivePath !== 'string' || !item.audioArchivePath) return null
+  try {
+    const root = fs.realpathSync.native(userTtsDir())
+    const filePath = fs.realpathSync.native(item.audioArchivePath)
+    const relative = path.relative(root, filePath)
+    if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) return null
+    const stats = fs.statSync(filePath)
+    if (!stats.isFile()) return null
+    return {
+      filePath,
+      mimeType: item.result && item.result.speech && item.result.speech.mimeType
+        ? item.result.speech.mimeType
+        : 'audio/wav',
+    }
+  } catch (error) {
+    return null
+  }
+}
+
+function externalMessageHistoryAudio(messageId) {
+  if (typeof messageId !== 'string' || !messageId) return null
+  return storedExternalMessageHistoryAudio(externalMessageHistory().find(item => item.messageId === messageId))
+}
+
+function publicHistorySpeech(speech, messageId, audioAvailable) {
+  if (!speech || typeof speech !== 'object') return speech
+  const clean = { ...speech }
+  delete clean.audioBase64
+  delete clean.archivePath
+  if (audioAvailable) clean.audioUrl = `/api/v1/history/audio/${encodeURIComponent(messageId)}`
+  else delete clean.audioUrl
+  return clean
+}
+
+function publicExternalMessageHistoryItem(item) {
+  const audioAvailable = Boolean(storedExternalMessageHistoryAudio(item))
+  const publicItem = { ...item, audioAvailable }
+  delete publicItem.audioArchivePath
+  if (item.request && typeof item.request === 'object') publicItem.request = { ...item.request }
+  if (item.result && typeof item.result === 'object') {
+    publicItem.result = {
+      ...item.result,
+      speech: publicHistorySpeech(item.result.speech, item.messageId, audioAvailable),
+    }
+  }
+  if (item.response && typeof item.response === 'object') {
+    publicItem.response = { ...item.response }
+    if (item.response.result && typeof item.response.result === 'object') {
+      publicItem.response.result = {
+        ...item.response.result,
+        speech: publicHistorySpeech(item.response.result.speech, item.messageId, audioAvailable),
+      }
+    }
+  }
+  if (Array.isArray(item.conversation)) publicItem.conversation = item.conversation.map(message => ({ ...message }))
+  return publicItem
+}
+
+function clearExternalMessageHistory() {
+  store.set('externalMessageHistory', [])
+  return []
+}
+
+function updateExternalMessageHistory(message, patch) {
+  const history = externalMessageHistory()
+  const index = history.findIndex(item => item.messageId === message.id)
+  const record = {
+    messageId: message.id,
+    requestId: message.requestId,
+    sender: message.sender,
+    transport: message.transport,
+    source: 'external',
+    sourceLabel: '外部',
+    type: message.type,
+    content: message.content,
+    speak: message.speak,
+    useCurrentCharacterProfile: message.useCurrentCharacterProfile,
+    useExternalContext: message.useExternalContext,
+    receivedAt: message.receivedAt,
+    ...(index >= 0 ? history[index] : {}),
+    ...patch,
+  }
+  if (index >= 0) history[index] = record
+  else history.push(record)
+  store.set('externalMessageHistory', history.slice(-EXTERNAL_MESSAGE_HISTORY_LIMIT))
+  return record
+}
+
+function publicExternalMessageRequest(message) {
+  return {
+    messageId: message.id,
+    requestId: message.requestId,
+    source: message.source,
+    sourceLabel: message.sourceLabel,
+    sender: message.sender,
+    transport: message.transport,
+    type: message.type,
+    content: message.content,
+    speak: message.speak,
+    useCurrentCharacterProfile: message.useCurrentCharacterProfile,
+    useExternalContext: message.useExternalContext,
+    receivedAt: message.receivedAt,
+  }
+}
+
+function externalMessageConversation(message, replyText, completedAt) {
+  const conversation = [{
+    role: 'external',
+    label: '外部消息',
+    content: message.content,
+    at: message.receivedAt,
+  }]
+  if (message.type === 'relay' && replyText) {
+    conversation.push({ role: 'assistant', label: 'AI 回复', content: replyText, at: completedAt })
+  }
+  return conversation
+}
+
+async function waitForPetMessageSurface() {
+  if (!petWindow || petWindow.isDestroyed()) throw new ExternalMessageError('桌宠窗口暂不可用', 503, 'PET_UNAVAILABLE')
+  if (!petWindow.webContents.isLoadingMainFrame()) return
+  await new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      cleanup()
+      reject(new ExternalMessageError('桌宠窗口加载超时', 503, 'PET_NOT_READY'))
+    }, 10000)
+    const cleanup = () => {
+      clearTimeout(timeout)
+      petWindow.webContents.removeListener('did-finish-load', handleReady)
+      petWindow.removeListener('closed', handleClosed)
+    }
+    const handleReady = () => {
+      cleanup()
+      resolve()
+    }
+    const handleClosed = () => {
+      cleanup()
+      reject(new ExternalMessageError('桌宠窗口已关闭', 503, 'PET_UNAVAILABLE'))
+    }
+    petWindow.webContents.once('did-finish-load', handleReady)
+    petWindow.once('closed', handleClosed)
+  })
+}
+
+async function showExternalMessageSurface() {
+  if (petOffScreen) togglePetVisibility()
+  await waitForPetMessageSurface()
+  // 外部消息只使用角色上方的气泡，不触碰底部聊天框的显隐、输入、
+  // 折叠或忙碌状态，也不抢走用户当前正在输入时的键盘焦点。
+  petWindow.showInactive()
+  petWindow.moveTop()
+}
+
+function publicSpeechResult(speech, requested) {
+  if (!requested) return { requested: false, status: 'disabled' }
+  if (!speech || speech.skipped) {
+    return { requested: true, status: 'skipped', error: speech && speech.error ? speech.error : '未启用语音模型' }
+  }
+  if (!speech.ok) return { requested: true, status: 'failed', error: speech.error || '语音合成失败' }
+  return {
+    requested: true,
+    status: 'ready',
+    pluginId: speech.pluginId,
+    model: speech.model,
+    voice: speech.voice,
+    format: speech.format,
+    mimeType: speech.mimeType,
+    cached: speech.cached === true,
+  }
+}
+
+async function processExternalMessage(message) {
+  const request = publicExternalMessageRequest(message)
+  updateExternalMessageHistory(message, { status: 'processing', request })
+  let text = message.content
+  let emotion = ''
+  let aiGenerated = false
+  try {
+    await showExternalMessageSurface()
+    const initialStage = message.type === 'relay'
+      ? 'thinking'
+      : message.speak ? 'speech' : 'display'
+    emitExternalMessageEvent({
+      phase: 'received',
+      stage: initialStage,
+      progressText: initialStage === 'thinking'
+        ? '思考中…'
+        : initialStage === 'speech' ? '语音合成中…' : '',
+      transient: initialStage !== 'display',
+      message,
+    })
+    const current = selectedModel()
+    if (message.type === 'relay') {
+      const chatResult = await aiPluginManager.chat({
+        text: message.content,
+        modelId: current ? current.id : '',
+        companionName: current ? modelDisplayName(current) : '伙伴',
+        companionBaseName: current ? current.name : '',
+        companionProfile: modelProfilePrompt(current),
+        source: 'external',
+        sourceLabel: message.sourceLabel,
+        sender: message.sender,
+        requestId: message.requestId,
+        useCurrentCharacterProfile: message.useCurrentCharacterProfile,
+        useExternalContext: message.useExternalContext,
+      })
+      text = chatResult.text
+      emotion = chatResult.emotion || ''
+      aiGenerated = true
+      if (message.speak) {
+        // 该事件只用于当前气泡的过程提示，不新增或改写
+        // externalMessageHistory 中的对话消息。
+        emitExternalMessageEvent({
+          phase: 'progress',
+          stage: 'speech',
+          progressText: '语音合成中…',
+          transient: true,
+          message,
+        })
+      }
+    }
+
+    let speech = null
+    if (message.speak) {
+      try {
+        speech = await aiPluginManager.synthesize({ text, source: 'external' })
+      } catch (error) {
+        speech = { ok: false, error: error.message }
+      }
+    }
+    const speechSummary = publicSpeechResult(speech, message.speak)
+    if (speechSummary.status === 'ready' && speech && speech.archivePath) {
+      speechSummary.audioUrl = `/api/v1/history/audio/${encodeURIComponent(message.id)}`
+    }
+    const completedAt = new Date().toISOString()
+    const response = {
+      ok: true,
+      requestId: message.requestId,
+      messageId: message.id,
+      source: message.source,
+      sourceLabel: message.sourceLabel,
+      sender: message.sender,
+      type: message.type,
+      result: { text, emotion, aiGenerated, speech: speechSummary },
+      receivedAt: message.receivedAt,
+      completedAt,
+    }
+    updateExternalMessageHistory(message, {
+      status: 'completed',
+      request,
+      response,
+      result: response.result,
+      conversation: externalMessageConversation(message, text, completedAt),
+      audioArchivePath: speech && typeof speech.archivePath === 'string' ? speech.archivePath : '',
+      completedAt,
+    })
+    const completedEvent = {
+      phase: 'completed',
+      message,
+      result: {
+        text,
+        emotion,
+        aiGenerated,
+        speech: speech ? { ...speech, ...speechSummary } : speechSummary,
+        completedAt,
+      },
+    }
+    emitExternalMessageEvent(completedEvent, {
+      ...completedEvent,
+      result: { ...completedEvent.result, speech: speechSummary },
+    })
+    return response
+  } catch (error) {
+    const failedAt = new Date().toISOString()
+    const errorMessage = String(error && error.message ? error.message : '外部消息处理失败').slice(0, 240)
+    emitExternalMessageEvent({
+      phase: 'failed',
+      message,
+      error: errorMessage,
+      failedAt,
+    })
+    updateExternalMessageHistory(message, {
+      status: 'failed',
+      request,
+      response: {
+        ok: false,
+        requestId: message.requestId,
+        messageId: message.id,
+        code: error && error.code ? error.code : 'MESSAGE_PROCESSING_FAILED',
+        error: errorMessage,
+        receivedAt: message.receivedAt,
+        failedAt,
+      },
+      conversation: externalMessageConversation(message),
+      error: errorMessage,
+      failedAt,
+    })
+    if (error instanceof ExternalMessageError) throw error
+    throw new ExternalMessageError(error.message || '外部消息处理失败', 503, 'MESSAGE_PROCESSING_FAILED')
+  }
 }
 
 function selectModel(modelId) {
@@ -1377,6 +2369,14 @@ function applyPreferences() {
   }
   syncWindowLevels()
   applyLoginPreference(preferences.launchAtLogin)
+  if (!preferences.externalMessagesEnabled && externalMessageTesterWindow && !externalMessageTesterWindow.isDestroyed()) {
+    externalMessageTesterWindow.close()
+  }
+  if (externalMessageServer) {
+    externalMessageServer.setEnabled(preferences.externalMessagesEnabled).catch(error => {
+      console.warn('External message service toggle failed:', error.message)
+    })
+  }
   syncSettingsPetBackgroundCapture()
   if (petWindow && !petWindow.isDestroyed() && petWindow.isVisible()) {
     // 光标轮询还承担窗口矩形命中检测（交互引导），光标跟随关闭时也要继续
@@ -1403,28 +2403,16 @@ function applyAlwaysOnTop(targetWindow, enabled, level) {
   return true
 }
 
-function raisePinnedPet() {
-  if (appIsQuitting || !getPreferences().alwaysOnTop) return
-  if (!petWindow || petWindow.isDestroyed() || petOffScreen) return
-  petWindow.moveTop()
-}
-
-function syncWindowLevels({ raisePet = false } = {}) {
-  const settingsVisible = Boolean(
-    settingsWindow && !settingsWindow.isDestroyed() &&
-    settingsWindow.isVisible() && !settingsWindow.isMinimized()
-  )
+function syncWindowLevels() {
   const alwaysOnTop = getPreferences().alwaysOnTop
   // setAlwaysOnTop 会改变原生窗口样式。状态未变化时跳过调用，避免透明
   // WebGL 表面被无意义地移出并重新加入 DWM 合成树。
-  const petLevelChanged = applyAlwaysOnTop(petWindow, alwaysOnTop, 'screen-saver')
-  const settingsLevelChanged = applyAlwaysOnTop(settingsWindow, settingsVisible, 'floating')
-
-  // 设置页刚加入 topmost 层级时，把已置顶宠物恢复到其上方。moveTop()
-  // 不改变焦点，也不会像重复 setAlwaysOnTop() 那样重建窗口样式。
-  if (alwaysOnTop && settingsVisible && (raisePet || petLevelChanged || settingsLevelChanged)) {
-    raisePinnedPet()
-  }
+  applyAlwaysOnTop(petWindow, alwaysOnTop, 'screen-saver')
+  // 两个工具窗口保持 normal：它们之间由系统焦点自然排序；置顶宠物
+  // 则位于独立的 topmost Z 带。这样点击标题栏不会先遮住宠物、再把
+  // 宠物抬回来，也就不会触发透明 WebGL 窗口的闪烁和抖动。
+  applyAlwaysOnTop(settingsWindow, false, 'normal')
+  applyAlwaysOnTop(externalMessageTesterWindow, false, 'normal')
 }
 
 function updatePreferences(patch) {
@@ -1443,6 +2431,8 @@ function updatePreferences(patch) {
     onboardingSeen: value => Boolean(value),
     backgroundDetection: value => Boolean(value),
     settingsPetBackground: value => Boolean(value),
+    appLongScreenshotEnabled: value => Boolean(value),
+    externalMessagesEnabled: value => Boolean(value),
     settingsTheme: value => ['glass', 'healing'].includes(value) ? value : currentPreferences.settingsTheme,
     bubbleStyles: value => normalizeBubbleStyles(value),
     chatGreeting: value => typeof value === 'string'
@@ -1598,6 +2588,11 @@ function updateTrayMenu() {
     settingsWindow && !settingsWindow.isDestroyed() &&
     settingsWindow.isVisible() && !settingsWindow.isMinimized()
   )
+  const externalMessageService = externalMessageServer && externalMessageServer.getSnapshot()
+  const externalMessageTesterReady = Boolean(
+    preferences.externalMessagesEnabled &&
+    externalMessageService && externalMessageService.running
+  )
   tray.setContextMenu(Menu.buildFromTemplate([
     {
       label: petOffScreen ? '显示宠物' : '隐藏宠物',
@@ -1634,7 +2629,14 @@ function updateTrayMenu() {
         requestMissingCovers()
       },
     },
-    ...(settingsPanelVisible ? [{ label: 'APP长截图', click: captureSettingsFromTray }] : []),
+    ...buildConditionalTrayItems({
+      appLongScreenshotEnabled: preferences.appLongScreenshotEnabled,
+      settingsPanelVisible,
+      externalMessagesEnabled: preferences.externalMessagesEnabled,
+      externalMessageTesterReady,
+      captureSettingsFromTray,
+      openExternalMessageTester,
+    }),
     { label: '退出', click: () => app.quit() },
   ]))
 }
@@ -1652,12 +2654,15 @@ function cursorTick() {
   const preferences = getPreferences()
   try {
     const point = screen.getCursorScreenPoint()
-    const bounds = petWindow.getBounds()
-    const near = distanceToBounds(point, bounds) <= CURSOR_NEAR_DISTANCE
+    // The transparent host is wider than the visible character surface so it
+    // can reserve both reader sides. Cursor-follow and character interaction
+    // remain relative to the invariant 400x600 stage.
+    const stageBounds = currentPetStageBounds()
+    const near = distanceToBounds(point, stageBounds) <= CURSOR_NEAR_DISTANCE
     const moved = !lastCursor || Math.abs(point.x - lastCursor.x) >= 3 || Math.abs(point.y - lastCursor.y) >= 3
 
-    const inside = point.x >= bounds.x && point.x < bounds.x + bounds.width &&
-      point.y >= bounds.y && point.y < bounds.y + bounds.height
+    const inside = point.x >= stageBounds.x && point.x < stageBounds.x + stageBounds.width &&
+      point.y >= stageBounds.y && point.y < stageBounds.y + stageBounds.height
 
     // 光标位置经本轮询通道送渲染进程，供视线跟随使用。
     const sendFollow = preferences.cursorFollow === 'near' && (moved || near !== lastCursorNear)
@@ -1665,8 +2670,8 @@ function cursorTick() {
       lastCursor = point
       lastCursorNear = near
       sendToWindow(petWindow, 'cursor:move', {
-        clientX: point.x - bounds.x,
-        clientY: point.y - bounds.y,
+        clientX: point.x - stageBounds.x,
+        clientY: point.y - stageBounds.y,
         near,
         inside,
       })
@@ -1716,7 +2721,7 @@ function movePetDrag() {
   // 宠物会追着真实光标漂移（用户常描述为"自己往一边飘"）。真正按住拖
   // 动时窗口跟随光标，光标应始终落在窗口内：光标离开窗口超过阈值即认
   // 为已经松手，主动结束拖拽，避免追光标。
-  const bounds = petWindow.getBounds()
+  const bounds = currentPetStageBounds()
   const cursorInside = cursor.x >= bounds.x && cursor.x < bounds.x + bounds.width &&
     cursor.y >= bounds.y && cursor.y < bounds.y + bounds.height
   if (!cursorInside) {
@@ -1731,8 +2736,8 @@ function movePetDrag() {
 
   const targetX = Math.round(dragCandidate.bounds.x + cursor.x - dragCandidate.cursor.x)
   const targetY = Math.round(dragCandidate.bounds.y + cursor.y - dragCandidate.cursor.y)
-  const [currentX, currentY] = petWindow.getPosition()
-  if (currentX !== targetX || currentY !== targetY) {
+  const current = currentPetStageBounds()
+  if (current.x !== targetX || current.y !== targetY) {
     // 必须走 placePetWindow（setBounds 钉住尺寸）：分数 DPI 下纯
     // setPosition 会让窗口尺寸每帧 +1 DIP 累积，越拖越偏。
     placePetWindow(targetX, targetY)
@@ -1759,7 +2764,9 @@ function primePetDrag(_event, point) {
   const nativeCursor = screen.getCursorScreenPoint()
   const reportedCursor = normalizedDragPoint(point)
   dragCandidate = {
-    bounds: petWindow.getBounds(),
+    // Store the stage origin, never the transparent outer-window origin. This
+    // keeps the cursor-to-character offset independent from reader placement.
+    bounds: currentPetStageBounds(),
     cursor: reportedCursor || nativeCursor,
     reportedCursor,
     reportedAt: reportedCursor ? Date.now() : 0,
@@ -1817,8 +2824,8 @@ function endPetDrag() {
   if (!petWindow || petWindow.isDestroyed()) return
 
   if (wasActive) {
-    const [windowX, windowY] = petWindow.getPosition()
-    const position = safePetPosition(windowX, windowY)
+    const stage = currentPetStageBounds()
+    const position = safePetPosition(stage.x, stage.y)
     placePetWindow(position.x, position.y)
     persistPetPosition()
     // 看门狗等场景下鼠标弹起事件丢失，渲染进程可能还停留在"拖动中"
@@ -1831,6 +2838,13 @@ function endPetDrag() {
 
 function resetPetPosition() {
   return movePetToPreset(INITIAL_USER_DEFAULTS.characters.windowPosition)
+}
+
+function isPetWindowSender(event) {
+  return Boolean(
+    event && event.sender && petWindow && !petWindow.isDestroyed() &&
+    !petWindow.webContents.isDestroyed() && event.sender.id === petWindow.webContents.id
+  )
 }
 
 function setupIPC() {
@@ -2093,6 +3107,9 @@ function setupIPC() {
   ))
   ipcMain.handle('window:open-models-folder', () => shell.openPath(userModelsDir()).then(() => true).catch(() => false))
   ipcMain.handle('window:open-plugins-folder', () => shell.openPath(userPluginsDir()).then(() => true).catch(() => false))
+  ipcMain.handle('external-message:open-tester', (_event, target = 'app') => (
+    openExternalMessageTester(target === 'browser' ? 'browser' : 'app')
+  ))
   ipcMain.handle('window:open-external', (_event, url) => {
     if (typeof url !== 'string' || /[\r\n]/.test(url)) return false
     try {
@@ -2105,9 +3122,48 @@ function setupIPC() {
     }
   })
   ipcMain.handle('clipboard:write-text', (_event, value) => {
-    if (typeof value !== 'string' || !value || value.length > 5000) return false
+    // Copy the complete assistant response, never the clamped bubble preview.
+    // The generous guard only protects the main process from accidental
+    // unbounded payloads; current chat and external-message contracts are 2k.
+    if (typeof value !== 'string' || !value || value.length > CLIPBOARD_TEXT_MAX_LENGTH) return false
     clipboard.writeText(value)
     return true
+  })
+  ipcMain.handle('pet:long-message-layout', (event, payload = {}) => {
+    if (!isPetWindowSender(event)) throw new Error('Unauthorized pet window sender')
+    const request = payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : {}
+    return setPetLongMessageLayout(Boolean(request.open), request.preferredWidth)
+  })
+  // renderer 先同步取得目标布局。右侧展开可直接提交；左侧展开还会在
+  // 提交前后使用舞台快照和 stage-only shape 完成跨进程画面交接，避免
+  // 原生窗口原点变化时暴露 Chromium 的旧表面。异步 handler 保留作
+  // 兼容后备。
+  ipcMain.on('pet:long-message-layout-preview', (event, payload = {}) => {
+    if (!isPetWindowSender(event)) {
+      event.returnValue = null
+      return
+    }
+    const request = payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : {}
+    event.returnValue = previewPetLongMessageLayout(Boolean(request.open), request.preferredWidth)
+  })
+  ipcMain.on('pet:long-message-layout-commit', (event, payload = {}) => {
+    if (!isPetWindowSender(event)) {
+      event.returnValue = null
+      return
+    }
+    const request = payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : {}
+    event.returnValue = setPetLongMessageLayout(Boolean(request.open), request.preferredWidth)
+  })
+  ipcMain.handle('pet:long-message-transition-frame', event => {
+    if (!isPetWindowSender(event)) throw new Error('Unauthorized pet window sender')
+    return capturePetStageTransitionFrame()
+  })
+  ipcMain.on('pet:long-message-transition-state', (event, active) => {
+    if (!isPetWindowSender(event)) {
+      event.returnValue = false
+      return
+    }
+    event.returnValue = setPetLayoutTransitionActive(active)
   })
 
   ipcMain.on('window:open-settings', (_event, section) => openSettings(section))
@@ -2118,21 +3174,47 @@ function setupIPC() {
   ipcMain.on('window:open-ai-chat', openAIChat)
   ipcMain.on('window:settings-close', () => settingsWindow && settingsWindow.close())
   ipcMain.on('window:settings-minimize', () => settingsWindow && settingsWindow.minimize())
+  ipcMain.on('window:tool-drag-start', startToolWindowDrag)
+  ipcMain.on('window:tool-drag-move', moveToolWindowDrag)
+  ipcMain.on('window:tool-drag-end', endToolWindowDrag)
+  ipcMain.on('external-message:tester-close', event => {
+    if (
+      externalMessageTesterWindow && !externalMessageTesterWindow.isDestroyed()
+      && event.sender.id === externalMessageTesterWindow.webContents.id
+    ) externalMessageTesterWindow.close()
+  })
+  ipcMain.on('external-message:tester-minimize', event => {
+    if (
+      externalMessageTesterWindow && !externalMessageTesterWindow.isDestroyed()
+      && event.sender.id === externalMessageTesterWindow.webContents.id
+    ) externalMessageTesterWindow.minimize()
+  })
   ipcMain.on('app:quit', () => app.quit())
-  ipcMain.on('pet:show-context-menu', showPetContextMenu)
-  ipcMain.on('ai:chat-panel-state', (_event, open) => setPetChatOpen(open))
-  ipcMain.on('settings:pet-background-frame', (event, frame) => {
+  ipcMain.on('pet:show-context-menu', event => {
+    if (isPetWindowSender(event)) showPetContextMenu()
+  })
+  ipcMain.on('ai:chat-panel-state', (event, open) => {
+    if (isPetWindowSender(event)) setPetChatOpen(open)
+  })
+  ipcMain.on('settings:pet-background-frame', (event, payload) => {
     if (!petWindow || petWindow.isDestroyed() || event.sender.id !== petWindow.webContents.id) return
     if (!shouldCaptureSettingsPetBackground()) return
-    if (frame === null) {
+    if (payload === null) {
       sendToWindow(settingsWindow, 'settings:pet-background-frame', null)
       return
     }
+    const current = selectedModel()
+    if (
+      !payload || typeof payload !== 'object' || !current ||
+      payload.modelId !== current.id || payload.format !== current.format
+    ) return
+    const frame = payload.frame
     const byteLength = frame && Number(frame.byteLength)
     if (!Number.isFinite(byteLength) || byteLength <= 0 || byteLength > 512 * 1024) return
-    sendToWindow(settingsWindow, 'settings:pet-background-frame', frame)
+    sendToWindow(settingsWindow, 'settings:pet-background-frame', payload)
   })
-  ipcMain.on('pet:bubble-bounds', (_event, bounds) => {
+  ipcMain.on('pet:bubble-bounds', (event, bounds) => {
+    if (!isPetWindowSender(event)) return
     if (
       bounds && Number.isFinite(bounds.x) && Number.isFinite(bounds.y) &&
       Number.isFinite(bounds.width) && Number.isFinite(bounds.height) &&
@@ -2149,7 +3231,8 @@ function setupIPC() {
     applyPetInteractionRegion()
   })
 
-  ipcMain.on('pet:status-bounds', (_event, bounds) => {
+  ipcMain.on('pet:status-bounds', (event, bounds) => {
+    if (!isPetWindowSender(event)) return
     if (
       bounds && Number.isFinite(bounds.x) && Number.isFinite(bounds.y) &&
       Number.isFinite(bounds.width) && Number.isFinite(bounds.height) &&
@@ -2166,12 +3249,38 @@ function setupIPC() {
     applyPetInteractionRegion()
   })
 
-  ipcMain.on('pet:drag-prime', primePetDrag)
-  ipcMain.on('pet:drag-start', startPetDrag)
-  ipcMain.on('pet:drag-move', updatePetDrag)
-  ipcMain.on('pet:drag-end', endPetDrag)
+  ipcMain.on('pet:long-message-bounds', (event, bounds) => {
+    if (!isPetWindowSender(event)) return
+    if (bounds === null) {
+      longMessageReaderBounds = null
+      applyPetInteractionRegion()
+      return
+    }
+    if (
+      !longMessageLayoutOpen || !bounds || typeof bounds !== 'object' ||
+      !Number.isInteger(bounds.revision) || bounds.revision !== petWindowLayout.revision
+    ) return
+    const normalized = clampPetWindowRegion(bounds)
+    if (!normalized) return
+    longMessageReaderBounds = { ...normalized, revision: bounds.revision }
+    applyPetInteractionRegion()
+  })
 
-  ipcMain.on('pet:hit-bounds', (_event, bounds) => {
+  ipcMain.on('pet:drag-prime', (event, point) => {
+    if (isPetWindowSender(event)) primePetDrag(event, point)
+  })
+  ipcMain.on('pet:drag-start', (event, point) => {
+    if (isPetWindowSender(event)) startPetDrag(event, point)
+  })
+  ipcMain.on('pet:drag-move', (event, point) => {
+    if (isPetWindowSender(event)) updatePetDrag(event, point)
+  })
+  ipcMain.on('pet:drag-end', event => {
+    if (isPetWindowSender(event)) endPetDrag()
+  })
+
+  ipcMain.on('pet:hit-bounds', (event, bounds) => {
+    if (!isPetWindowSender(event)) return
     if (
       bounds && Number.isFinite(bounds.x) && Number.isFinite(bounds.y) &&
       Number.isFinite(bounds.width) && Number.isFinite(bounds.height) &&
@@ -2270,8 +3379,24 @@ app.whenReady().then(() => {
     safeStorage,
     ttsDirectory: userTtsDir(),
   })
+  externalMessageServer = createExternalMessageServer({
+    testerPath: path.join(__dirname, 'renderer', 'external-message-tester.html'),
+    handleMessage: processExternalMessage,
+    getHistory: externalMessageHistoryItems,
+    getHistoryAudio: externalMessageHistoryAudio,
+    clearHistory: clearExternalMessageHistory,
+    onStatusChanged: () => {
+      updateTrayMenu()
+      if (petWindow || settingsWindow) broadcastState('external-message-service')
+    },
+  })
   setupIPC()
   createPetWindow()
+  // 分发后的机器可能有任意数量、排列和缩放比例的显示器，也可能在
+  // 程序运行期间插拔屏幕或修改缩放。统一重新确认当前 shape 所属 DPI。
+  screen.on('display-added', schedulePetShapeRefresh)
+  screen.on('display-removed', schedulePetShapeRefresh)
+  screen.on('display-metrics-changed', schedulePetShapeRefresh)
   createTray()
   applyPreferences()
   startCursorTracking()
@@ -2283,8 +3408,11 @@ app.on('second-instance', () => openSettings())
 app.on('before-quit', () => {
   appIsQuitting = true
   if (aiPluginManager) aiPluginManager.dispose()
+  if (externalMessageServer) externalMessageServer.dispose().catch(() => {})
   endPetDrag()
   stopCursorTracking()
+  if (petShapeRefreshTimer) clearTimeout(petShapeRefreshTimer)
+  petShapeRefreshTimer = null
   if (positionSaveTimer) clearTimeout(positionSaveTimer)
   persistPetPosition()
 })

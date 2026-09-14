@@ -2,6 +2,7 @@ const crypto = require('crypto')
 const fs = require('fs')
 const path = require('path')
 const { INITIAL_USER_DEFAULTS } = require('../config/defaults')
+const { createTTSCache } = require('./tts-cache')
 
 const DEFAULT_PERSONA = INITIAL_USER_DEFAULTS.ai.persona
 const DEFAULT_HISTORY_MESSAGES = INITIAL_USER_DEFAULTS.ai.historyLimit
@@ -14,6 +15,7 @@ const DEFAULT_TTS_VOLUME = INITIAL_USER_DEFAULTS.ai.volume
 const REQUEST_TIMEOUT_MS = 45000
 const TTS_REQUEST_TIMEOUT_MS = 60000
 const SUPPORTED_CAPABILITIES = ['chat', 'tts']
+const DEFAULT_TTS_CACHE_KEY_FIELDS = ['model', 'voice', 'speed', 'volume']
 const MAX_PERSISTED_MESSAGE_CHARACTERS = 2000
 const PREVIEW_AUDIO_URL_PATTERNS = [
   /^https:\/\/docs\.bigmodel\.cn\/resource\/audio\/[a-z0-9_-]+\.wav$/i,
@@ -80,58 +82,117 @@ function maskSecret(value) {
   return `${secret.slice(0, 6)}${'•'.repeat(Math.min(12, secret.length - 10))}${secret.slice(-4)}`
 }
 
+function normalizeTTSCacheKeyFields(value) {
+  const fields = Array.isArray(value)
+    ? [...new Set(value.filter(field => typeof field === 'string' && /^[a-z][a-zA-Z0-9]{0,39}$/.test(field)))]
+    : []
+  return fields.length ? fields : [...DEFAULT_TTS_CACHE_KEY_FIELDS]
+}
+
 function createAIPluginManager({ pluginsDirectories, store, safeStorage, ttsDirectory }) {
   let registry = null
   const loadedPlugins = new Map()
-  // 会话严格按宠物角色隔离，并持久化到 electron-store。切换文字插件、
-  // 停用插件或重启应用都继续使用同一角色的上下文。
-  const conversations = new Map()
+  // APP 对话和外部转述各自拥有独立的持久化空间。两条通道即使使用
+  // 同一个角色、同一个文字插件，也绝不会读到或写入对方的上下文。
+  const conversationCaches = {
+    app: new Map(),
+    external: new Map(),
+  }
   const activeRequests = new Map()
+  const externalSpeechRequests = new Map()
+  const ttsCache = createTTSCache({
+    directory: typeof ttsDirectory === 'string' && ttsDirectory ? path.join(ttsDirectory, 'cache-v1') : '',
+  })
 
   function conversationKeyFor(modelId) {
     return typeof modelId === 'string' ? modelId.trim() : ''
   }
 
-  function normalizedConversationMessages(value) {
+  function normalizedConversationMessages(value, scope = 'app') {
+    const messageSource = scope === 'external' ? 'external' : 'app'
     if (!Array.isArray(value)) return []
     return value
-      .filter(message => message && ['user', 'assistant'].includes(message.role) && typeof message.content === 'string')
+      .filter(message => (
+        message && ['user', 'assistant'].includes(message.role) && typeof message.content === 'string' &&
+        !(messageSource === 'app' && message.source === 'external')
+      ))
       .map(message => ({
         role: message.role,
         content: Array.from(message.content.trim()).slice(0, MAX_PERSISTED_MESSAGE_CHARACTERS).join(''),
+        source: messageSource,
+        sourceLabel: messageSource === 'external' ? '外部' : 'APP',
+        ...(messageSource === 'external' && typeof message.sender === 'string' && message.sender.trim()
+          ? { sender: Array.from(message.sender.trim()).slice(0, 60).join('') }
+          : {}),
+        ...(messageSource === 'external' && typeof message.requestId === 'string' && message.requestId.trim()
+          ? { requestId: Array.from(message.requestId.trim()).slice(0, 120).join('') }
+          : {}),
       }))
       .filter(message => message.content)
       .slice(-MAX_HISTORY_MESSAGES)
   }
 
-  function readPersistedConversations() {
-    const value = store.get('aiConversations')
-    return value && typeof value === 'object' && !Array.isArray(value) ? { ...value } : {}
+  function conversationScope(value) {
+    return value === 'external' ? 'external' : 'app'
   }
 
-  function readConversation(modelId) {
+  function conversationStoreKey(scope) {
+    return conversationScope(scope) === 'external' ? 'aiExternalConversations' : 'aiConversations'
+  }
+
+  function readPersistedConversations(scope = 'app') {
+    const normalizedScope = conversationScope(scope)
+    const storeKey = conversationStoreKey(normalizedScope)
+    const value = store.get(storeKey)
+    const stored = value && typeof value === 'object' && !Array.isArray(value) ? { ...value } : {}
+    if (normalizedScope !== 'app') return stored
+
+    // v1.0.1 早期版本曾把外部转述写进 aiConversations。读取旧配置时
+    // 就地剥离这些条目，确保磁盘上的 APP 历史也不再残留外部消息。
+    let changed = false
+    for (const [key, entry] of Object.entries(stored)) {
+      const messages = entry && Array.isArray(entry.messages) ? entry.messages : entry
+      if (!Array.isArray(messages)) continue
+      const appMessages = messages.filter(message => !message || message.source !== 'external')
+      if (appMessages.length === messages.length) continue
+      changed = true
+      if (!appMessages.length) delete stored[key]
+      else stored[key] = Array.isArray(entry) ? appMessages : { ...entry, messages: appMessages }
+    }
+    if (changed) store.set(storeKey, stored)
+    return stored
+  }
+
+  function readConversation(modelId, scope = 'app') {
     const key = conversationKeyFor(modelId)
     if (!key) return []
-    if (conversations.has(key)) return conversations.get(key)
-    const stored = readPersistedConversations()[key]
-    const messages = normalizedConversationMessages(stored && Array.isArray(stored.messages) ? stored.messages : stored)
-    conversations.set(key, messages)
+    const normalizedScope = conversationScope(scope)
+    const cache = conversationCaches[normalizedScope]
+    if (cache.has(key)) return cache.get(key)
+    const stored = readPersistedConversations(normalizedScope)[key]
+    const messages = normalizedConversationMessages(
+      stored && Array.isArray(stored.messages) ? stored.messages : stored,
+      normalizedScope
+    )
+    cache.set(key, messages)
     return messages
   }
 
-  function conversationIdentity(modelId) {
+  function conversationIdentity(modelId, scope = 'app') {
     const key = conversationKeyFor(modelId)
     if (!key) return ''
-    const stored = readPersistedConversations()[key]
+    const stored = readPersistedConversations(scope)[key]
     const value = stored && !Array.isArray(stored) ? stored.companionName : ''
     return typeof value === 'string' ? Array.from(value.trim()).slice(0, 24).join('') : ''
   }
 
-  function persistConversation(modelId, messages, companionName = '') {
+  function persistConversation(modelId, messages, companionName = '', scope = 'app') {
     const key = conversationKeyFor(modelId)
     if (!key) return
-    const normalized = normalizedConversationMessages(messages)
-    const stored = readPersistedConversations()
+    const normalizedScope = conversationScope(scope)
+    const cache = conversationCaches[normalizedScope]
+    const normalized = normalizedConversationMessages(messages, normalizedScope)
+    const stored = readPersistedConversations(normalizedScope)
     if (normalized.length) {
       const identity = typeof companionName === 'string'
         ? Array.from(companionName.trim()).slice(0, 24).join('')
@@ -141,12 +202,12 @@ function createAIPluginManager({ pluginsDirectories, store, safeStorage, ttsDire
         ...(identity ? { companionName: identity } : {}),
         updatedAt: new Date().toISOString(),
       }
-      conversations.set(key, normalized)
+      cache.set(key, normalized)
     } else {
       delete stored[key]
-      conversations.delete(key)
+      cache.delete(key)
     }
-    store.set('aiConversations', stored)
+    store.set(conversationStoreKey(normalizedScope), stored)
   }
 
   function readState() {
@@ -230,6 +291,7 @@ function createAIPluginManager({ pluginsDirectories, store, safeStorage, ttsDire
               ? configuredDefaults.model
               : (models.includes(manifest.defaultModel) ? manifest.defaultModel : models[0]),
             ttsTuning: manifest.ttsTuning !== false,
+            ttsCacheKeyFields: normalizeTTSCacheKeyFields(manifest.ttsCacheKeyFields),
             voices,
             defaultVoice: voices.some(voice => voice.id === configuredDefaults.voice)
               ? configuredDefaults.voice
@@ -342,6 +404,7 @@ function createAIPluginManager({ pluginsDirectories, store, safeStorage, ttsDire
         models: plugin.models,
         defaultModel: plugin.defaultModel,
         ttsTuning: plugin.ttsTuning,
+        ttsCacheKeyFields: plugin.ttsCacheKeyFields,
         voices: plugin.voices,
         installed: state.installed.includes(plugin.id),
         activeCapabilities: plugin.capabilities.filter(capability => activeIds[capability] === plugin.id),
@@ -409,9 +472,11 @@ function createAIPluginManager({ pluginsDirectories, store, safeStorage, ttsDire
     const state = readState()
     if (!state.installed.includes(pluginId)) throw new Error('这个 AI 模型尚未安装')
     if (!supports(plugin, targetCapability)) throw new Error('这个模型不支持所选能力')
-    const activeRequest = activeRequests.get(pluginId)
-    if (activeRequest) activeRequest.abort()
-    activeRequests.delete(pluginId)
+    for (const [requestKey, request] of activeRequests) {
+      if (request.pluginId !== pluginId || request.capability !== targetCapability) continue
+      request.controller.abort()
+      activeRequests.delete(requestKey)
+    }
     if (state.activeIds[targetCapability] === pluginId) state.activeIds[targetCapability] = ''
     saveState(state)
     return getSnapshot()
@@ -489,11 +554,13 @@ function createAIPluginManager({ pluginsDirectories, store, safeStorage, ttsDire
     return adapter
   }
 
-  async function runRequest(pluginId, timeoutMs, callback) {
-    const previousRequest = activeRequests.get(pluginId)
-    if (previousRequest) previousRequest.abort()
+  async function runRequest(pluginId, capability, lane, timeoutMs, callback) {
+    const requestLane = typeof lane === 'string' && lane.trim() ? lane.trim() : 'app'
+    const requestKey = `${pluginId}:${capability}:${requestLane}`
+    const previousRequest = activeRequests.get(requestKey)
+    if (previousRequest) previousRequest.controller.abort()
     const controller = new AbortController()
-    activeRequests.set(pluginId, controller)
+    activeRequests.set(requestKey, { capability, controller, pluginId, lane: requestLane })
     const timeout = setTimeout(() => controller.abort(), timeoutMs)
     try {
       return await callback(controller.signal)
@@ -502,11 +569,12 @@ function createAIPluginManager({ pluginsDirectories, store, safeStorage, ttsDire
       throw error
     } finally {
       clearTimeout(timeout)
-      if (activeRequests.get(pluginId) === controller) activeRequests.delete(pluginId)
+      const active = activeRequests.get(requestKey)
+      if (active && active.controller === controller) activeRequests.delete(requestKey)
     }
   }
 
-  async function runChat(pluginId, messages) {
+  async function runChat(pluginId, messages, lane = 'app') {
     const plugin = pluginOrThrow(pluginId)
     const state = readState()
     if (!state.installed.includes(pluginId)) throw new Error('请先安装这个 AI 插件')
@@ -514,7 +582,7 @@ function createAIPluginManager({ pluginsDirectories, store, safeStorage, ttsDire
     const apiKey = decryptKey(state, plugin)
     const config = pluginConfig(state, plugin)
     const adapter = loadPlugin(pluginId, 'chat')
-    return runRequest(pluginId, REQUEST_TIMEOUT_MS, signal =>
+    return runRequest(pluginId, 'chat', lane, REQUEST_TIMEOUT_MS, signal =>
       adapter.chat({
         apiKey,
         model: config.model,
@@ -525,15 +593,20 @@ function createAIPluginManager({ pluginsDirectories, store, safeStorage, ttsDire
     )
   }
 
-  async function runSpeech(pluginId, input) {
+  function speechRuntime(pluginId) {
     const plugin = pluginOrThrow(pluginId)
     const state = readState()
     if (!state.installed.includes(pluginId)) throw new Error('请先安装这个语音插件')
     if (!supports(plugin, 'tts')) throw new Error('这个插件不支持语音合成')
+    return { plugin, state, config: pluginConfig(state, plugin) }
+  }
+
+  async function runSpeech(pluginId, input, lane = 'app', runtime = null) {
+    const context = runtime || speechRuntime(pluginId)
+    const { plugin, state, config } = context
     const apiKey = decryptKey(state, plugin)
-    const config = pluginConfig(state, plugin)
     const adapter = loadPlugin(pluginId, 'tts')
-    return runRequest(pluginId, TTS_REQUEST_TIMEOUT_MS, signal =>
+    return runRequest(pluginId, 'tts', lane, TTS_REQUEST_TIMEOUT_MS, signal =>
       adapter.synthesize({
         apiKey,
         model: config.model,
@@ -586,7 +659,20 @@ function createAIPluginManager({ pluginsDirectories, store, safeStorage, ttsDire
     throw new Error('这个插件没有可测试的能力')
   }
 
-  async function chat({ pluginId, text, companionName, companionBaseName, companionProfile, modelId }) {
+  async function chat({
+    pluginId,
+    text,
+    companionName,
+    companionBaseName,
+    companionProfile,
+    modelId,
+    source = 'app',
+    sourceLabel,
+    sender,
+    requestId,
+    useCurrentCharacterProfile = true,
+    useExternalContext = true,
+  }) {
     const state = readState()
     const selectedId = pluginId || activeIdFor(state, 'chat')
     if (!selectedId) throw new Error('请先安装并启用文字对话插件')
@@ -595,32 +681,54 @@ function createAIPluginManager({ pluginsDirectories, store, safeStorage, ttsDire
     const input = typeof text === 'string' ? text.trim().slice(0, 2000) : ''
     if (!input) throw new Error('请输入要说的话')
     const config = pluginConfig(state, plugin)
+    const messageSource = source === 'external' ? 'external' : 'app'
+    const contextScope = messageSource === 'external' ? 'external' : 'app'
+    const shouldUseCharacterProfile = messageSource !== 'external' || useCurrentCharacterProfile !== false
+    const shouldUseContext = messageSource !== 'external' || useExternalContext !== false
     const identity = typeof companionName === 'string' && companionName.trim()
       ? Array.from(companionName.trim()).slice(0, 24).join('')
       : '伙伴'
     const baseIdentity = typeof companionBaseName === 'string' && companionBaseName.trim()
       ? Array.from(companionBaseName.trim()).slice(0, 120).join('')
       : ''
-    const previousIdentity = conversationIdentity(modelId)
-    const history = readConversation(modelId)
+    const previousIdentity = shouldUseContext ? conversationIdentity(modelId, contextScope) : ''
+    const history = shouldUseContext ? readConversation(modelId, contextScope) : []
     const staleIdentities = [...new Set([previousIdentity, baseIdentity])]
       .filter(value => value && value !== identity)
     const identityCorrection = staleIdentities.length
       ? `历史对话中出现的${staleIdentities.map(value => JSON.stringify(value)).join('、')}都是旧称呼或模型文件名，不能再用作你的名字。`
       : '如果历史对话中出现其他名字，一律视为已经失效的旧称呼。'
+    const characterInstructions = shouldUseCharacterProfile
+      ? [
+          {
+            role: 'system',
+            content: typeof companionProfile === 'string' && companionProfile.trim()
+              ? companionProfile.trim().slice(0, 4000)
+              : DEFAULT_PERSONA,
+          },
+          {
+            // 兼容只读取开头 system 指令的服务端实现；历史之后还会再放一条
+            // 最新身份校正，用来覆盖旧对话里的过期自称。
+            role: 'system',
+            content: `你当前的名字是${JSON.stringify(identity)}。这是用户设置的固定昵称；当用户询问你的名字或身份时，请准确使用这个昵称回答。`,
+          },
+        ]
+      : [
+          {
+            role: 'system',
+            content: '你是外部系统消息转述助手。请根据外部系统提供的内容给出简洁、自然的回复；不要声称自己是当前桌宠角色，也不要使用桌宠的姓名或人格设定。',
+          },
+        ]
+    const identityCorrectionMessage = shouldUseCharacterProfile
+      ? [{
+          // 身份指令必须放在历史之后：改名以前的 assistant 消息可能仍在
+          // 上下文里自称旧昵称，最后再校正一次才能让当前昵称覆盖旧记忆。
+          role: 'system',
+          content: `最新身份信息：你当前且唯一的名字是${JSON.stringify(identity)}。${identityCorrection}从本轮开始，当用户询问你的名字、身份或要求自我介绍时，只能准确使用${JSON.stringify(identity)}回答。`,
+        }]
+      : []
     const messages = [
-      {
-        role: 'system',
-        content: typeof companionProfile === 'string' && companionProfile.trim()
-          ? companionProfile.trim().slice(0, 4000)
-          : DEFAULT_PERSONA,
-      },
-      {
-        // 兼容只读取开头 system 指令的服务端实现；历史之后还会再放一条
-        // 最新身份校正，用来覆盖旧对话里的过期自称。
-        role: 'system',
-        content: `你当前的名字是${JSON.stringify(identity)}。这是用户设置的固定昵称；当用户询问你的名字或身份时，请准确使用这个昵称回答。`,
-      },
+      ...characterInstructions,
       {
         role: 'system',
         content: `每次回复时，在正文最开头输出一个与回复语境最贴合的情绪标签，格式为[标签]，只能从${EMOTION_TAGS.map(tag => `[${tag}]`).join(' ')}中选择。标签后紧跟正文，正文里不要再使用方括号标签。`,
@@ -629,49 +737,96 @@ function createAIPluginManager({ pluginsDirectories, store, safeStorage, ttsDire
         role: 'system',
         content: `回复正文不得超过 ${config.maxResponseChars} 个字符。请优先完整表达最重要的信息，不要为了凑字数重复内容。`,
       },
-      ...(config.historyLimit > 0 ? history.slice(-config.historyLimit) : []),
-      {
-        // 身份指令必须放在历史之后：改名以前的 assistant 消息可能仍在
-        // 上下文里自称旧昵称，最后再校正一次才能让当前昵称覆盖旧记忆。
-        role: 'system',
-        content: `最新身份信息：你当前且唯一的名字是${JSON.stringify(identity)}。${identityCorrection}从本轮开始，当用户询问你的名字、身份或要求自我介绍时，只能准确使用${JSON.stringify(identity)}回答。`,
-      },
+      ...(shouldUseContext && config.historyLimit > 0
+        ? history.slice(-config.historyLimit).map(message => ({ role: message.role, content: message.content }))
+        : []),
+      ...identityCorrectionMessage,
       { role: 'user', content: input },
     ]
-    const result = await runChat(selectedId, messages)
+    const result = await runChat(selectedId, messages, messageSource)
     // 情绪标签只用于驱动宠物动作，展示文本、TTS 文本和对话记忆都用剥离后的正文
     const extracted = extractEmotion(result.text)
     const reply = truncateResponse(extracted.text, config.maxResponseChars)
     const emotion = extracted.emotion
-    if (config.historyLimit > 0) {
+    const persistedSource = {
+      source: messageSource,
+      sourceLabel: messageSource === 'external' ? '外部' : 'APP',
+      ...(messageSource === 'external' && typeof sender === 'string' ? { sender } : {}),
+      ...(messageSource === 'external' && typeof requestId === 'string' ? { requestId } : {}),
+    }
+    if (shouldUseContext && config.historyLimit > 0) {
       persistConversation(modelId, [
         ...history,
-        { role: 'user', content: input },
-        { role: 'assistant', content: reply },
-      ].slice(-config.historyLimit), identity)
-    } else {
-      persistConversation(modelId, [])
+        { role: 'user', content: input, ...persistedSource },
+        { role: 'assistant', content: reply, ...persistedSource },
+      ].slice(-config.historyLimit), shouldUseCharacterProfile ? identity : '', contextScope)
+    } else if (shouldUseContext) {
+      persistConversation(modelId, [], '', contextScope)
     }
-    return { ok: true, pluginId: plugin.id, text: reply, emotion, model: result.model, usage: result.usage }
+    return {
+      ok: true,
+      pluginId: plugin.id,
+      text: reply,
+      emotion,
+      model: result.model,
+      usage: result.usage,
+      source: messageSource,
+      sourceLabel: messageSource === 'external'
+        ? (typeof sourceLabel === 'string' && sourceLabel.trim() ? sourceLabel.trim().slice(0, 20) : '外部')
+        : 'APP',
+    }
   }
 
-  async function synthesize({ pluginId, text }) {
+  async function synthesize({ pluginId, text, source = 'app' }) {
     const state = readState()
     const selectedId = pluginId || activeIdFor(state, 'tts')
     if (!selectedId) return { ok: false, skipped: true, error: '未启用语音模型' }
-    const plugin = pluginOrThrow(selectedId)
+    const runtime = speechRuntime(selectedId)
+    const { plugin, config } = runtime
     const input = typeof text === 'string' ? text.trim().slice(0, 1024) : ''
     if (!input) throw new Error('没有可合成的文字')
-    const result = await runSpeech(selectedId, input)
+    const externalRequest = source === 'external'
+    let cached = false
+    let result = externalRequest ? ttsCache.read(plugin, input, config) : null
+    if (result) {
+      cached = true
+    } else if (externalRequest) {
+      const cacheKey = ttsCache.keyFor(plugin, input, config)
+      const pending = externalSpeechRequests.get(cacheKey)
+      if (pending) {
+        result = await pending
+        cached = true
+      } else {
+        const request = runSpeech(selectedId, input, 'external', runtime).then(generated => {
+          const normalized = {
+            ...generated,
+            model: generated.model || config.model,
+            voice: generated.voice || config.voice,
+          }
+          ttsCache.write(plugin, input, config, normalized)
+          return normalized
+        })
+        externalSpeechRequests.set(cacheKey, request)
+        try {
+          result = await request
+        } finally {
+          if (externalSpeechRequests.get(cacheKey) === request) externalSpeechRequests.delete(cacheKey)
+        }
+      }
+    } else {
+      result = await runSpeech(selectedId, input, 'app', runtime)
+    }
     const archivePath = archiveSpeech(plugin, result)
     return {
       ok: true,
       pluginId: plugin.id,
       model: result.model,
       voice: result.voice,
+      format: ['wav', 'pcm'].includes(result.format) ? result.format : 'wav',
       mimeType: result.mimeType || 'audio/wav',
       audioBase64: result.audio.toString('base64'),
       archivePath,
+      cached,
     }
   }
 
@@ -679,24 +834,39 @@ function createAIPluginManager({ pluginsDirectories, store, safeStorage, ttsDire
     return {
       ok: true,
       modelId: conversationKeyFor(modelId),
-      companionName: conversationIdentity(modelId),
-      messages: readConversation(modelId).map(message => ({ ...message })),
+      companionName: conversationIdentity(modelId, 'app'),
+      messages: readConversation(modelId, 'app').map(message => ({ ...message })),
     }
   }
 
   function clearConversation(_pluginId, modelId) {
-    persistConversation(modelId, [])
+    persistConversation(modelId, [], '', 'app')
     return { ok: true }
   }
 
+  function cancelActive(capability = '') {
+    const state = readState()
+    const targetId = SUPPORTED_CAPABILITIES.includes(capability) ? activeIdFor(state, capability) : ''
+    let cancelled = 0
+    for (const request of activeRequests.values()) {
+      if (targetId && request.pluginId !== targetId) continue
+      if (capability && request.capability !== capability) continue
+      request.controller.abort()
+      cancelled += 1
+    }
+    return cancelled
+  }
+
   function dispose() {
-    for (const controller of activeRequests.values()) controller.abort()
+    for (const request of activeRequests.values()) request.controller.abort()
     activeRequests.clear()
-    conversations.clear()
+    externalSpeechRequests.clear()
+    conversationCaches.app.clear()
+    conversationCaches.external.clear()
     loadedPlugins.clear()
   }
 
-  return { getSnapshot, refresh, install, activate, deactivate, configure, test, chat, synthesize, getConversation, clearConversation, dispose }
+  return { getSnapshot, refresh, install, activate, deactivate, configure, test, chat, synthesize, getConversation, clearConversation, cancelActive, dispose }
 }
 
 module.exports = { createAIPluginManager }

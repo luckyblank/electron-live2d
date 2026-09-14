@@ -5,13 +5,19 @@ const { pathToFileURL } = require('url')
 
 const projectRoot = path.resolve(__dirname, '..')
 const modelCases = [
-  { id: 'cafe-gun', archive: 'cafe-gun.zip', actionId: 'clip:Mgirl08_dazhaohu_a', expressionId: 'profile:微笑' },
-  { id: 'hiyori', archive: 'Hiyori.zip', actionId: 'clip:挥手', expressionId: 'profile:微笑' },
+  { id: 'cafe-gun', archive: 'cafe-gun.zip' },
+  { id: 'hiyori', archive: 'Hiyori.zip' },
   // Same ZIP under an unmapped id proves that standards-compliant ZIP groups and
   // native expressions remain available when no product mapping exists.
-  { id: 'hiyori-unmapped', sourceId: 'hiyori', archive: 'Hiyori.zip', actionId: 'group:PetGreet:0', expressionId: 'native:expressions/微笑.exp3.json' },
-  { id: 'mao_pro', archive: 'mao_pro.zip', actionId: 'clip:爆破魔法', expressionId: 'profile:生气' },
-  { id: 'mori-suit', archive: 'mori-suit.zip', actionId: 'clip:mtn_shake_huishou', expressionId: 'profile:face_weixiao' },
+  {
+    id: 'hiyori-unmapped',
+    sourceId: 'hiyori',
+    archive: 'Hiyori.zip',
+    actionId: 'group:PetGreet:0',
+    expressionId: 'native:expressions/微笑.exp3.json',
+  },
+  { id: 'mao_pro', archive: 'mao_pro.zip' },
+  { id: 'mori-suit', archive: 'mori-suit.zip' },
 ]
 
 app.commandLine.appendSwitch('force-device-scale-factor', '1')
@@ -83,6 +89,25 @@ async function previewAsset(win, modelId, kind, asset) {
   return { ...result, preview }
 }
 
+function summarizePreviews(results, requireParameterChange = false) {
+  const noChange = results
+    .filter(item => item.result?.ok && Number(item.result.preview?.changedParameters) === 0)
+    .map(item => ({
+      id: item.id,
+      resourceParameters: Number(item.result.preview?.expressionParameterCount) || 0,
+      matchedResourceParameters: Number(item.result.preview?.matchedExpressionParameterCount) || 0,
+    }))
+  return {
+    tested: results.length,
+    passed: results.filter(item => item.result?.ok).length,
+    noChange,
+    failures: results
+      .filter(item => !item.result?.ok)
+      .map(item => ({ id: item.id, error: item.result?.error || 'unknown preview error' })),
+    effective: !requireParameterChange || noChange.length === 0,
+  }
+}
+
 async function runModelCase(modelCase) {
   process.stdout.write(`QA loading ${modelCase.id}\n`)
   activeStatus = null
@@ -140,27 +165,50 @@ async function runModelCase(modelCase) {
   await waitUntil(() => activeStatus?.phase === 'ready' || activeStatus?.phase === 'error', 20000, `${modelCase.id} load`)
   if (activeStatus?.phase !== 'ready') throw new Error(`${modelCase.id} failed to load: ${activeStatus?.message || 'unknown error'}`)
   await waitUntil(() => activeAssets?.modelId === modelCase.id, 3000, `${modelCase.id} asset catalog`)
+  // A hidden BrowserWindow may deliver its first animation callback late. Let the
+  // model finish one normal scheduler cycle before judging the first zero-based
+  // motion curve, otherwise a valid idle can be sampled only at its t=0 value.
+  await wait(450)
 
-  const action = activeAssets.actions.find(item => item.id === modelCase.actionId)
-  if (!action) throw new Error(`${modelCase.id} action missing from catalog: ${modelCase.actionId}`)
-  const actionPreview = await previewAsset(win, modelCase.id, 'action', action)
-
-  let expressionPreview = null
-  if (modelCase.expressionId) {
-    const expression = activeAssets.expressions.find(item => item.id === modelCase.expressionId)
-    if (!expression) throw new Error(`${modelCase.id} expression missing from catalog: ${modelCase.expressionId}`)
-    expressionPreview = await previewAsset(win, modelCase.id, 'expression', expression)
+  const actions = modelCase.actionId
+    ? activeAssets.actions.filter(item => item.id === modelCase.actionId)
+    : activeAssets.actions
+  const expressions = modelCase.expressionId
+    ? activeAssets.expressions.filter(item => item.id === modelCase.expressionId)
+    : activeAssets.expressions
+  if (modelCase.actionId && !actions.length) {
+    throw new Error(`${modelCase.id} action missing from catalog: ${modelCase.actionId}`)
   }
+  if (modelCase.expressionId && !expressions.length) {
+    throw new Error(`${modelCase.id} expression missing from catalog: ${modelCase.expressionId}`)
+  }
+
+  const actionResults = []
+  for (const action of actions) {
+    actionResults.push({ id: action.id, result: await previewAsset(win, modelCase.id, 'action', action) })
+  }
+  const expressionResults = []
+  for (const expression of expressions) {
+    expressionResults.push({ id: expression.id, result: await previewAsset(win, modelCase.id, 'expression', expression) })
+  }
+  const requireParameterChange = modelCase.id === 'mori-suit'
+  const actionPreviews = summarizePreviews(actionResults, requireParameterChange)
+  const expressionPreviews = summarizePreviews(expressionResults, requireParameterChange)
 
   return {
     modelId: modelCase.id,
     status: activeStatus,
     actionCount: activeAssets.actions.length,
     expressionCount: activeAssets.expressions.length,
-    actionPreview,
-    expressionPreview,
+    actionPreviews,
+    expressionPreviews,
     consoleMessages,
-    passed: Boolean(actionPreview?.ok && (!modelCase.expressionId || expressionPreview?.ok)),
+    passed: Boolean(
+      actionPreviews.tested && actionPreviews.passed === actionPreviews.tested &&
+      expressionPreviews.passed === expressionPreviews.tested &&
+      actionPreviews.effective && expressionPreviews.effective &&
+      consoleMessages.length === 0
+    ),
   }
 }
 
@@ -168,7 +216,11 @@ async function run() {
   registerIPC()
   await app.whenReady()
   const models = []
-  for (const modelCase of modelCases) models.push(await runModelCase(modelCase))
+  const selectedCases = process.env.QA_MODEL_ID
+    ? modelCases.filter(modelCase => modelCase.id === process.env.QA_MODEL_ID)
+    : modelCases
+  if (!selectedCases.length) throw new Error(`Unknown QA_MODEL_ID: ${process.env.QA_MODEL_ID}`)
+  for (const modelCase of selectedCases) models.push(await runModelCase(modelCase))
   const report = { passed: models.every(model => model.passed), models }
   process.stdout.write(`${JSON.stringify(report, null, 2)}\n`)
   for (const win of qaWindows) if (!win.isDestroyed()) win.destroy()

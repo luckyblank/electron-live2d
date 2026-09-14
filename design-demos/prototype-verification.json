@@ -1,0 +1,224 @@
+{
+  "passed": true,
+  "htmlPath": "D:\\project\\static_project\\electron-demos\\electron-live2d\\design-demos\\live2d-companion-prototype.html",
+  "checkedAt": "2026-09-14T18:56:38.311Z",
+  "initial": {
+    "ready": true,
+    "state": {
+      "mode": "interactive",
+      "theme": "glass",
+      "reduced": false,
+      "dynamicBg": true,
+      "section": "character",
+      "model": "deepseek",
+      "nickname": "小蓝",
+      "scale": 85,
+      "position": "右下",
+      "preset": "natural",
+      "cursorFollow": true,
+      "followStrength": 68,
+      "randomMotion": true,
+      "idleEnabled": false,
+      "sleepy": true,
+      "locked": false,
+      "backgroundDetection": true,
+      "effects": true,
+      "bubble": "glass",
+      "autoSpeak": false,
+      "muted": true,
+      "aiCapability": "chat",
+      "aiTest": "ready",
+      "voice": "Cherry",
+      "voiceModel": "qwen",
+      "updatePhase": "idle",
+      "launchAtLogin": false,
+      "alwaysOnTop": true,
+      "longScreenshot": false,
+      "externalMessages": false
+    },
+    "windowRect": {
+      "width": 470,
+      "height": 760
+    },
+    "appOverflowX": false,
+    "brokenImages": [],
+    "video": {
+      "error": "",
+      "readyState": 4,
+      "source": "../models/deepseek-pet/待机呼吸休闲.webm"
+    },
+    "tabs": [
+      "角色",
+      "行为",
+      "AI",
+      "系统"
+    ],
+    "overviewCount": 4,
+    "focusableCount": 32,
+    "persisted": true
+  },
+  "flows": {
+    "character": {
+      "model": "hiyori",
+      "nickname": "日和",
+      "placeholderVisible": true
+    },
+    "behavior": {
+      "mode": "interactive",
+      "theme": "glass",
+      "reduced": false,
+      "dynamicBg": true,
+      "section": "behavior",
+      "model": "deepseek",
+      "nickname": "小蓝",
+      "scale": 85,
+      "position": "右下",
+      "preset": "quiet",
+      "cursorFollow": false,
+      "followStrength": 68,
+      "randomMotion": false,
+      "idleEnabled": true,
+      "sleepy": true,
+      "locked": false,
+      "backgroundDetection": true,
+      "effects": true,
+      "bubble": "glass",
+      "autoSpeak": false,
+      "muted": true,
+      "aiCapability": "chat",
+      "aiTest": "ready",
+      "voice": "Cherry",
+      "voiceModel": "qwen",
+      "updatePhase": "idle",
+      "launchAtLogin": false,
+      "alwaysOnTop": true,
+      "longScreenshot": false,
+      "externalMessages": false,
+      "renderedPage": "behavior"
+    },
+    "ai": {
+      "mode": "interactive",
+      "theme": "glass",
+      "reduced": false,
+      "dynamicBg": true,
+      "section": "ai",
+      "model": "deepseek",
+      "nickname": "小蓝",
+      "scale": 85,
+      "position": "右下",
+      "preset": "quiet",
+      "cursorFollow": false,
+      "followStrength": 68,
+      "randomMotion": false,
+      "idleEnabled": true,
+      "sleepy": true,
+      "locked": false,
+      "backgroundDetection": true,
+      "effects": true,
+      "bubble": "glass",
+      "autoSpeak": false,
+      "muted": true,
+      "aiCapability": "chat",
+      "aiTest": "success",
+      "voice": "Cherry",
+      "voiceModel": "qwen",
+      "updatePhase": "idle",
+      "launchAtLogin": false,
+      "alwaysOnTop": true,
+      "longScreenshot": false,
+      "externalMessages": false,
+      "renderedPage": "ai"
+    },
+    "bubble": "sweet",
+    "chat": {
+      "open": true,
+      "initialMessages": 3,
+      "afterSendMessages": 5
+    },
+    "voice": {
+      "capability": "tts",
+      "speaking": true
+    },
+    "system": {
+      "mode": "interactive",
+      "theme": "healing",
+      "reduced": false,
+      "dynamicBg": true,
+      "section": "system",
+      "model": "deepseek",
+      "nickname": "小蓝",
+      "scale": 85,
+      "position": "右下",
+      "preset": "quiet",
+      "cursorFollow": false,
+      "followStrength": 68,
+      "randomMotion": false,
+      "idleEnabled": true,
+      "sleepy": true,
+      "locked": false,
+      "backgroundDetection": true,
+      "effects": true,
+      "bubble": "sweet",
+      "autoSpeak": false,
+      "muted": true,
+      "aiCapability": "chat",
+      "aiTest": "ready",
+      "voice": "Cherry",
+      "voiceModel": "qwen",
+      "updatePhase": "idle",
+      "launchAtLogin": false,
+      "alwaysOnTop": true,
+      "longScreenshot": false,
+      "externalMessages": false,
+      "renderedPage": "system"
+    },
+    "update": "ready",
+    "resetConfirm": {
+      "open": true,
+      "confirm": true
+    },
+    "reduced": {
+      "state": true,
+      "body": "true"
+    },
+    "overview": {
+      "mode": "overview",
+      "cards": 4,
+      "visible": true
+    }
+  },
+  "screenshots": [
+    {
+      "name": "live2d-companion-character.png",
+      "width": 1800,
+      "height": 1125,
+      "bytes": 888731
+    },
+    {
+      "name": "live2d-companion-behavior.png",
+      "width": 1800,
+      "height": 1125,
+      "bytes": 893750
+    },
+    {
+      "name": "live2d-companion-ai.png",
+      "width": 1800,
+      "height": 1125,
+      "bytes": 865828
+    },
+    {
+      "name": "live2d-companion-system.png",
+      "width": 1800,
+      "height": 1125,
+      "bytes": 862802
+    },
+    {
+      "name": "live2d-companion-overview.png",
+      "width": 2000,
+      "height": 1375,
+      "bytes": 482112
+    }
+  ],
+  "errors": [],
+  "consoleErrors": []
+}

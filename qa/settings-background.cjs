@@ -7,19 +7,27 @@ const { pathToFileURL } = require('url')
 const projectRoot = path.resolve(__dirname, '..')
 
 app.commandLine.appendSwitch('force-device-scale-factor', '1')
-app.setPath('userData', path.join(os.tmpdir(), 'live2d-settings-background-qa-userdata'))
+const requestedModelId = process.env.QA_BACKGROUND_MODEL === 'deepseek-pet' ? 'deepseek-pet' : 'hiyori'
+const requestedTheme = process.env.QA_BACKGROUND_THEME === 'healing' ? 'healing' : 'glass'
+const qaVariant = `${requestedModelId}-${requestedTheme}`
+app.setPath('userData', path.join(os.tmpdir(), `live2d-settings-background-qa-userdata-${qaVariant}`))
 
-const outputDirectory = path.join(os.tmpdir(), 'live2d-settings-background-qa')
+const outputDirectory = path.join(os.tmpdir(), `live2d-settings-background-qa-${qaVariant}`)
 fs.mkdirSync(outputDirectory, { recursive: true })
 
 const hiyoriPath = pathToFileURL(path.join(projectRoot, 'models', 'hiyori', 'Hiyori.zip')).href
+const deepseekPetPath = pathToFileURL(path.join(projectRoot, 'models', 'deepseek-pet', 'pet.json')).href
 const brokenPath = pathToFileURL(path.join(projectRoot, 'models', '__missing__', 'missing.model3.json')).href
+const hiyoriModel = { id: 'hiyori', name: 'hiyori', displayName: 'hiyori', path: hiyoriPath, format: 'zip', cubismVersion: 4, status: 'ready', statusMessage: '' }
+const deepseekPetModel = { id: 'deepseek-pet', name: 'DeepSeek 小蓝鲸', displayName: 'DeepSeek 小蓝鲸', path: deepseekPetPath, format: 'video-pet', cubismVersion: null, status: 'ready', statusMessage: '' }
+const targetModel = requestedModelId === 'deepseek-pet' ? deepseekPetModel : hiyoriModel
 
 let snapshot = {
   appVersion: '1.0.1',
-  currentModelId: 'hiyori',
+  currentModelId: targetModel.id,
   models: [
-    { id: 'hiyori', name: 'hiyori', displayName: 'hiyori', path: hiyoriPath, format: 'zip', cubismVersion: 4, status: 'ready', statusMessage: '' },
+    hiyoriModel,
+    deepseekPetModel,
     { id: 'broken', name: 'broken', displayName: 'broken', path: brokenPath, format: 'folder', cubismVersion: 3, status: 'ready', statusMessage: '' },
   ],
   covers: {},
@@ -27,8 +35,8 @@ let snapshot = {
   pluginsFolder: path.join(outputDirectory, 'plugins'),
   preferences: {
     scale: 0.85,
-    cursorFollow: 'off',
-    effects: 'off',
+    cursorFollow: 'near',
+    effects: 'subtle',
     interactionMode: 'smart',
     idleEnabled: false,
     qualityMode: 'auto',
@@ -38,7 +46,7 @@ let snapshot = {
     onboardingSeen: true,
     backgroundDetection: false,
     settingsPetBackground: true,
-    settingsTheme: 'glass',
+    settingsTheme: requestedTheme,
     chatGreeting: '你好呀～今天想聊点什么？',
   },
   ai: {
@@ -48,13 +56,14 @@ let snapshot = {
     plugins: [],
     ttsDirectory: path.join(outputDirectory, 'tts'),
   },
-  runtime: { phase: 'ready', modelId: 'hiyori', message: '', paused: false, petVisible: true },
+  runtime: { phase: 'ready', modelId: targetModel.id, message: '', paused: false, petVisible: true },
 }
 
 let petWindow
 let settingsWindow
 let lastHitBounds = null
 let lastModelStatus = null
+let lastPetBackgroundPayload = null
 let frameCount = 0
 let nullFrameCount = 0
 
@@ -110,10 +119,21 @@ function registerIPC() {
     lastModelStatus = status
     snapshot.runtime = { ...snapshot.runtime, ...status }
   })
-  ipcMain.on('settings:pet-background-frame', (_event, frame) => {
-    if (frame === null) nullFrameCount++
-    else if (frame && Number(frame.byteLength) > 0) frameCount++
-    if (settingsWindow && !settingsWindow.isDestroyed()) settingsWindow.webContents.send('settings:pet-background-frame', frame)
+  ipcMain.on('settings:pet-background-frame', (_event, payload) => {
+    if (payload === null) {
+      nullFrameCount++
+      if (settingsWindow && !settingsWindow.isDestroyed()) settingsWindow.webContents.send('settings:pet-background-frame', null)
+      return
+    }
+    const frame = payload && payload.frame
+    if (
+      !payload || payload.modelId !== snapshot.currentModelId ||
+      payload.format !== snapshot.models.find(model => model.id === payload.modelId)?.format ||
+      !frame || !(Number(frame.byteLength) > 0)
+    ) return
+    frameCount++
+    lastPetBackgroundPayload = { ...payload, frame: Buffer.from(frame) }
+    if (settingsWindow && !settingsWindow.isDestroyed()) settingsWindow.webContents.send('settings:pet-background-frame', payload)
   })
 }
 
@@ -133,8 +153,21 @@ async function backgroundState(label) {
     const data = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data
     let opaquePixels = 0
     let alphaSum = 0
+    let minX = canvas.width
+    let minY = canvas.height
+    let maxX = -1
+    let maxY = -1
     for (let i = 3; i < data.length; i += 4) {
-      if (data[i] > 8) opaquePixels++
+      if (data[i] > 8) {
+        opaquePixels++
+        const pixel = (i - 3) / 4
+        const x = pixel % canvas.width
+        const y = Math.floor(pixel / canvas.width)
+        minX = Math.min(minX, x)
+        minY = Math.min(minY, y)
+        maxX = Math.max(maxX, x)
+        maxY = Math.max(maxY, y)
+      }
       alphaSum += data[i]
     }
     const rect = canvas.getBoundingClientRect()
@@ -145,14 +178,23 @@ async function backgroundState(label) {
       view: document.documentElement.dataset.settingsView,
       opaquePixels,
       alphaSum,
+      visibleBounds: maxX >= minX && maxY >= minY
+        ? { x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1 }
+        : null,
+      sourceSize: { width: canvas.width, height: canvas.height },
       rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+      modelId: root.dataset.modelId || '',
+      modelFormat: root.dataset.modelFormat || '',
+      videoPet: root.classList.contains('is-video-pet'),
+      canvasTransform: getComputedStyle(canvas).transform,
+      canvasTransitionDuration: getComputedStyle(canvas).transitionDuration,
     }
   })()`)
 }
 
-async function hasVisibleBackground() {
+async function hasVisibleBackground(modelId = '') {
   const state = await backgroundState('probe')
-  return state.ready && state.enabled && state.opaquePixels > 100
+  return state.ready && state.enabled && state.opaquePixels > 100 && (!modelId || state.modelId === modelId)
 }
 
 async function capture(name) {
@@ -228,6 +270,77 @@ async function run() {
   const firstFrameReady = await waitUntil(hasVisibleBackground)
   const states = [await backgroundState('first-open')]
 
+  let videoPetSwitchTransition = null
+  if (requestedModelId === 'deepseek-pet') {
+    const staleVideoPayload = lastPetBackgroundPayload && {
+      ...lastPetBackgroundPayload,
+      frame: Buffer.from(lastPetBackgroundPayload.frame),
+    }
+    await petWindow.webContents.executeJavaScript(`(() => {
+      window.__qaModelSnapshotMax = document.querySelectorAll('.model-snapshot').length
+      if (window.__qaModelSnapshotObserver) window.__qaModelSnapshotObserver.disconnect()
+      window.__qaModelSnapshotObserver = new MutationObserver(() => {
+        window.__qaModelSnapshotMax = Math.max(
+          window.__qaModelSnapshotMax,
+          document.querySelectorAll('.model-snapshot').length
+        )
+      })
+      window.__qaModelSnapshotObserver.observe(document.getElementById('pet-stage'), { childList: true })
+    })()`)
+    await settingsWindow.webContents.executeJavaScript(`(() => {
+      const root = document.getElementById('settings-pet-background')
+      window.__qaSettingsBackgroundCleared = false
+      if (window.__qaSettingsBackgroundObserver) window.__qaSettingsBackgroundObserver.disconnect()
+      window.__qaSettingsBackgroundObserver = new MutationObserver(() => {
+        if (!root.classList.contains('is-ready') && !root.dataset.modelId) {
+          window.__qaSettingsBackgroundCleared = true
+        }
+      })
+      window.__qaSettingsBackgroundObserver.observe(root, { attributes: true, attributeFilter: ['class', 'data-model-id'] })
+    })()`)
+    snapshot.currentModelId = hiyoriModel.id
+    snapshot.runtime.modelId = hiyoriModel.id
+    snapshot.runtime.phase = 'loading'
+    broadcast('video-pet-switch-regression')
+    const alternateReady = await waitUntil(() => lastModelStatus?.modelId === hiyoriModel.id && lastModelStatus?.phase === 'ready', 14000)
+    const alternateBackgroundReady = await waitUntil(() => hasVisibleBackground(hiyoriModel.id), 14000)
+    const alternateBackground = await backgroundState('video-pet-switch-alternate')
+    if (staleVideoPayload) {
+      settingsWindow.webContents.send('settings:pet-background-frame', staleVideoPayload)
+      await wait(160)
+    }
+    const afterStaleVideoFrame = await backgroundState('after-stale-video-frame')
+    const settingsBackgroundCleared = await settingsWindow.webContents.executeJavaScript(`(() => {
+      if (window.__qaSettingsBackgroundObserver) window.__qaSettingsBackgroundObserver.disconnect()
+      return Boolean(window.__qaSettingsBackgroundCleared)
+    })()`)
+    videoPetSwitchTransition = await petWindow.webContents.executeJavaScript(`(() => {
+      if (window.__qaModelSnapshotObserver) window.__qaModelSnapshotObserver.disconnect()
+      return {
+        alternateReady: ${JSON.stringify(alternateReady)},
+        maxSnapshots: Number(window.__qaModelSnapshotMax) || 0,
+        finalSnapshots: document.querySelectorAll('.model-snapshot').length,
+      }
+    })()`)
+    Object.assign(videoPetSwitchTransition, {
+      alternateBackgroundReady,
+      settingsBackgroundCleared,
+      alternateBackground,
+      afterStaleVideoFrame,
+      staleVideoFrameRejected: Boolean(
+        staleVideoPayload && afterStaleVideoFrame.modelId === hiyoriModel.id &&
+        !afterStaleVideoFrame.videoPet && afterStaleVideoFrame.ready
+      ),
+    })
+
+    snapshot.currentModelId = targetModel.id
+    snapshot.runtime.modelId = targetModel.id
+    snapshot.runtime.phase = 'loading'
+    broadcast('video-pet-switch-regression-restore')
+    await waitUntil(async () => lastModelStatus?.modelId === targetModel.id && lastModelStatus?.phase === 'ready' && await hasVisibleBackground(targetModel.id), 14000)
+    videoPetSwitchTransition.restoredBackground = await backgroundState('video-pet-switch-restored')
+  }
+
   for (const section of ['behavior', 'ai', 'system', 'characters']) {
     await settingsWindow.webContents.executeJavaScript(`document.querySelector('.section-tab[data-section=${JSON.stringify(section)}]').click()`)
     await wait(350)
@@ -257,18 +370,40 @@ async function run() {
   snapshot.runtime.modelId = 'broken'
   broadcast('broken-model-selected')
   await waitUntil(() => lastModelStatus?.modelId === 'broken' && lastModelStatus?.phase === 'error', 6000)
-  snapshot.currentModelId = 'hiyori'
-  snapshot.runtime.modelId = 'hiyori'
+  snapshot.currentModelId = targetModel.id
+  snapshot.runtime.modelId = targetModel.id
   broadcast('model-recovery')
-  const recovered = await waitUntil(async () => lastModelStatus?.modelId === 'hiyori' && lastModelStatus?.phase === 'ready' && await hasVisibleBackground(), 14000)
+  const recovered = await waitUntil(async () => lastModelStatus?.modelId === targetModel.id && lastModelStatus?.phase === 'ready' && await hasVisibleBackground(), 14000)
   states.push(await backgroundState('after-failed-switch-recovery'))
   const recoveryFrames = frameCount - recoveryStartFrames
 
   const screenshot = await capture('settings-background-final.png')
   const allStatesVisible = states.every(state => state.ready && state.enabled && state.opaquePixels > 100)
+  const firstState = states[0]
+  const firstVisibleBounds = firstState && firstState.visibleBounds
+  const firstRenderedVisibleBounds = firstVisibleBounds && firstState.sourceSize
+    ? {
+        width: firstVisibleBounds.width * firstState.rect.width / firstState.sourceSize.width,
+        height: firstVisibleBounds.height * firstState.rect.height / firstState.sourceSize.height,
+      }
+    : null
   const assertions = {
     modelReady,
     firstFrameReady,
+    videoPetBackgroundUsesVisibleFraming: requestedModelId !== 'deepseek-pet' || Boolean(
+      firstRenderedVisibleBounds && firstRenderedVisibleBounds.width >= 150 && firstRenderedVisibleBounds.height >= 180
+    ),
+    videoPetSwitchClearsPreviousFrame: requestedModelId !== 'deepseek-pet' || Boolean(
+      videoPetSwitchTransition && videoPetSwitchTransition.alternateReady && videoPetSwitchTransition.maxSnapshots === 0
+    ),
+    videoPetSettingsBackgroundIsModelAtomic: requestedModelId !== 'deepseek-pet' || Boolean(
+      videoPetSwitchTransition && videoPetSwitchTransition.settingsBackgroundCleared &&
+      videoPetSwitchTransition.alternateBackgroundReady && videoPetSwitchTransition.staleVideoFrameRejected &&
+      videoPetSwitchTransition.alternateBackground.canvasTransitionDuration === '0s' &&
+      videoPetSwitchTransition.restoredBackground.modelId === targetModel.id &&
+      videoPetSwitchTransition.restoredBackground.videoPet &&
+      videoPetSwitchTransition.restoredBackground.canvasTransitionDuration === '0s'
+    ),
     allViewsKeepBackground: states.filter(state => state.label.startsWith('after-tab')).every(state => state.ready && state.opaquePixels > 100),
     dragRecognized,
     backgroundVisibleDuringDrag: states.find(state => state.label === 'during-drag').opaquePixels > 100,
@@ -287,6 +422,8 @@ async function run() {
     recoveryFrames,
     lastModelStatus,
     lastHitBounds,
+    renderedVisibleBounds: firstRenderedVisibleBounds,
+    videoPetSwitchTransition,
     states,
     screenshot,
     assertions,

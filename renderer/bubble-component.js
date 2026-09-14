@@ -108,10 +108,101 @@
         position: relative;
         z-index: 2;
         display: -webkit-box;
-        max-height: 80px;
+        max-height: 4.74em;
         overflow: hidden;
         -webkit-box-orient: vertical;
-        -webkit-line-clamp: 4;
+        -webkit-line-clamp: 3;
+      }
+
+      .message-expand {
+        position: absolute;
+        z-index: 10;
+        right: 18px;
+        bottom: 8px;
+        display: none;
+        min-height: 26px;
+        padding: 2px 9px;
+        border: 1px solid rgba(255, 255, 255, .7);
+        border-radius: 13px;
+        outline: none;
+        background: rgba(245, 246, 255, .72);
+        box-shadow:
+          -14px 0 14px rgba(238, 241, 255, .82),
+          inset 0 1px 0 rgba(255, 255, 255, .84);
+        color: var(--bubble-accent);
+        font: 700 12px/1.2 "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+        white-space: nowrap;
+        cursor: pointer;
+        pointer-events: auto;
+        align-items: center;
+        gap: 7px;
+        transition: color 140ms ease, background 140ms ease, box-shadow 140ms ease, transform 120ms ease;
+      }
+
+      .message-expand::after {
+        width: 7px;
+        height: 7px;
+        margin-top: -4px;
+        border-right: 1.7px solid currentColor;
+        border-bottom: 1.7px solid currentColor;
+        content: "";
+        transform: rotate(45deg);
+      }
+
+      :host([expandable]) .message-expand:not([hidden]) {
+        display: inline-flex;
+      }
+
+      .message-expand:hover {
+        background: rgba(255, 255, 255, .88);
+        box-shadow:
+          inset 0 1px 0 rgba(255, 255, 255, .94),
+          0 3px 10px rgba(104, 88, 205, .13);
+      }
+
+      .message-expand:active {
+        transform: scale(.96);
+      }
+
+      .message-expand:focus-visible {
+        outline: 2px solid color-mix(in srgb, var(--bubble-accent) 46%, transparent);
+        outline-offset: 2px;
+      }
+
+      :host([theme="healing"]) .message-expand {
+        border-color: rgba(255, 190, 224, .76);
+        background: rgba(255, 243, 250, .82);
+        box-shadow:
+          -14px 0 14px rgba(255, 240, 248, .88),
+          inset 0 1px 0 rgba(255, 255, 255, .9);
+        color: #e954a3;
+      }
+
+      :host([theme="healing"]) .message-expand:hover {
+        background: rgba(255, 252, 253, .94);
+        box-shadow:
+          inset 0 1px 0 rgba(255, 255, 255, .96),
+          0 3px 10px rgba(220, 80, 155, .14);
+      }
+
+      /* 长消息操作始终压在装饰层之上，并为最靠近按钮的装饰降噪，
+         避免 sweet / pixel / sci-fi 的角标遮挡点击区域或按钮文字。 */
+      :host([expandable]) .heart-secondary,
+      :host([expandable]) .caret {
+        opacity: .18;
+      }
+
+      :host([style-name="pixel"]) .message-expand {
+        border-radius: 2px;
+        background: rgba(245, 243, 255, .94);
+        box-shadow: 2px 2px 0 rgba(104, 91, 203, .2);
+      }
+
+      :host([style-name="sci-fi"]) .message-expand {
+        border-color: rgba(143, 185, 255, .66);
+        border-radius: 6px 2px 6px 3px;
+        background: rgba(238, 246, 255, .88);
+        box-shadow: 0 0 8px rgba(94, 178, 255, .2);
       }
 
       .label {
@@ -142,8 +233,54 @@
         transform: skewX(-9deg);
       }
 
+      :host([source="external"]) .label {
+        box-sizing: border-box;
+        max-width: calc(100% - 93px);
+      }
+
+      :host([source="external"]) .label-text {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
       .label-text,
       .label-heart { transform: skewX(9deg); }
+
+      .source-marker {
+        position: absolute;
+        z-index: 7;
+        top: 7px;
+        right: 16px;
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        border: 0;
+        background: transparent;
+        box-shadow: none;
+        color: var(--bubble-accent);
+        font-size: 9.5px;
+        font-style: normal;
+        font-weight: 650;
+        letter-spacing: .02em;
+        line-height: 1;
+        opacity: .62;
+        pointer-events: none;
+        white-space: nowrap;
+      }
+
+      .source-marker::before {
+        width: 5px;
+        height: 5px;
+        border-radius: 50%;
+        background: currentColor;
+        content: "";
+      }
+
+      .source-marker[hidden] { display: none; }
+
+      /* 外部来源标识占用右上角时，让装饰线稿主动退让，保持信息安静可读。 */
+      :host([source="external"]) :is(.sparkle-top, .hud-top) { display: none; }
 
       .label-heart {
         display: none;
@@ -591,7 +728,8 @@
       :host([theme="healing"][tail-side="left"][style-name="sci-fi"]) .tail-left-fill { fill: #fff2f8; }
 
       @media (prefers-reduced-motion: reduce) {
-        :host(.interaction-bubble-widget) { transition: none; }
+        :host(.interaction-bubble-widget),
+        .message-expand { transition: none; }
       }
     </style>
     <span class="frame" aria-hidden="true"></span>
@@ -600,6 +738,7 @@
       <strong class="label-text"></strong>
       <i class="label-heart">♥</i>
     </span>
+    <span class="source-marker" aria-label="消息来源：外部消息" title="外部消息" hidden>外部</span>
     <i class="decor sparkle sparkle-top" aria-hidden="true">✦</i>
     <i class="decor sparkle sparkle-bottom" aria-hidden="true">✦</i>
     <i class="decor paw paw-primary" aria-hidden="true"></i>
@@ -614,7 +753,8 @@
     <i class="hud hud-bottom" aria-hidden="true"></i>
     <span class="hud-copy" aria-hidden="true">KITSUNE<br>WITH YOU</span>
     <span class="hud-status" aria-hidden="true">••• GOOD DAY</span>
-    <span class="message"></span>
+    <span class="message" aria-live="polite"></span>
+    <button class="message-expand" type="button" aria-expanded="false" aria-label="展开全文" hidden>展开全文</button>
     <i class="tail" aria-hidden="true"></i>
     <svg class="tail-left" viewBox="0 0 24 24" preserveAspectRatio="none" aria-hidden="true" focusable="false">
       <g class="tail-left-smooth">
@@ -635,35 +775,113 @@
   const styleWidths = Object.freeze({ glass: 270, sweet: 264, pixel: 270, 'sci-fi': 278 })
 
   class PetSpeechBubble extends HTMLElement {
-    static get observedAttributes() { return ['label', 'message', 'style-name'] }
+    static get observedAttributes() { return ['label', 'message', 'source', 'style-name', 'theme', 'expanded'] }
 
     constructor() {
       super()
       this.attachShadow({ mode: 'open' }).appendChild(template.content.cloneNode(true))
       this.labelElement = this.shadowRoot.querySelector('.label-text')
+      this.sourceElement = this.shadowRoot.querySelector('.source-marker')
       this.messageElement = this.shadowRoot.querySelector('.message')
+      this.expandButton = this.shadowRoot.querySelector('.message-expand')
+      this.overflowMeasureFrame = null
+      this.resizeObserver = null
+
+      // The host intentionally stays click-through so the speech bubble does not
+      // turn into a large drag blocker. Only this explicit control receives input.
+      this.expandButton.addEventListener('pointerdown', event => event.stopPropagation())
+      this.expandButton.addEventListener('mousedown', event => event.stopPropagation())
+      this.expandButton.addEventListener('click', event => {
+        event.stopPropagation()
+        if (!this.expandable) return
+        this.dispatchEvent(new CustomEvent('bubble-expand', {
+          bubbles: true,
+          composed: true,
+          detail: {
+            text: this.message,
+            label: this.label,
+            source: this.source,
+          },
+        }))
+      })
     }
 
     connectedCallback() {
       if (!this.hasAttribute('theme')) this.setAttribute('theme', 'glass')
       if (!this.hasAttribute('style-name')) this.setAttribute('style-name', 'glass')
       this.syncContent()
+      if (typeof ResizeObserver === 'function') {
+        if (!this.resizeObserver) {
+          this.resizeObserver = new ResizeObserver(() => this.scheduleOverflowMeasure())
+        }
+        this.resizeObserver.observe(this)
+      }
+      this.scheduleOverflowMeasure()
     }
 
-    attributeChangedCallback() { this.syncContent() }
+    disconnectedCallback() {
+      if (this.resizeObserver) this.resizeObserver.disconnect()
+      if (this.overflowMeasureFrame != null) cancelAnimationFrame(this.overflowMeasureFrame)
+      this.overflowMeasureFrame = null
+    }
+
+    attributeChangedCallback(name) {
+      if (name === 'expanded') {
+        this.syncExpandedState()
+        return
+      }
+      this.syncContent()
+    }
 
     syncContent() {
-      if (!this.labelElement || !this.messageElement) return
-      this.labelElement.textContent = this.getAttribute('label') || '伙伴'
-      this.messageElement.textContent = this.getAttribute('message') || ''
+      if (!this.labelElement || !this.sourceElement || !this.messageElement) return
+      const label = this.getAttribute('label') || '伙伴'
+      const message = this.getAttribute('message') || ''
+      if (this.labelElement.textContent !== label) this.labelElement.textContent = label
+      this.sourceElement.hidden = this.source !== 'external'
+      if (this.messageElement.textContent !== message) this.messageElement.textContent = message
+      this.scheduleOverflowMeasure()
+    }
+
+    scheduleOverflowMeasure() {
+      if (!this.isConnected) return
+      if (this.overflowMeasureFrame != null) cancelAnimationFrame(this.overflowMeasureFrame)
+      this.overflowMeasureFrame = requestAnimationFrame(() => {
+        this.overflowMeasureFrame = null
+        this.measureOverflow()
+      })
+    }
+
+    measureOverflow() {
+      if (!this.messageElement || !this.expandButton) return false
+      const hasMessage = this.messageElement.textContent.trim().length > 0
+      const overflowing = hasMessage && this.messageElement.scrollHeight > this.messageElement.clientHeight + 1
+      this.toggleAttribute('expandable', overflowing)
+      this.expandButton.hidden = !overflowing
+      if (!overflowing && this.expanded) this.removeAttribute('expanded')
+      this.syncExpandedState()
+      return overflowing
+    }
+
+    syncExpandedState() {
+      if (!this.expandButton) return
+      this.expandButton.setAttribute('aria-expanded', String(this.expandable && this.expanded))
     }
 
     get message() { return this.messageElement.textContent }
     set message(value) { this.setAttribute('message', String(value || '')) }
     get label() { return this.labelElement.textContent }
     set label(value) { this.setAttribute('label', String(value || '')) }
+    get source() { return this.getAttribute('source') === 'external' ? 'external' : '' }
+    set source(value) {
+      if (value === 'external') this.setAttribute('source', 'external')
+      else this.removeAttribute('source')
+    }
     get styleName() { return this.getAttribute('style-name') || 'glass' }
     set styleName(value) { this.setAttribute('style-name', String(value || 'glass')) }
+    get expandable() { return this.hasAttribute('expandable') }
+    get expanded() { return this.hasAttribute('expanded') }
+    set expanded(value) { this.toggleAttribute('expanded', Boolean(value)) }
     get preferredWidth() { return styleWidths[this.styleName] || styleWidths.glass }
     get visualOverflow() { return this.styleName === 'sweet' || this.styleName === 'sci-fi' ? 24 : 18 }
 

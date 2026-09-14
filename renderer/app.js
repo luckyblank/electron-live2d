@@ -27,11 +27,24 @@
     PREVIEW_ACTION_LABELS: previewActionLabels,
     PREVIEW_EXPRESSION_LABELS: previewExpressionLabels,
   } = require('../config/model-reactions')
+  const petViewport = document.getElementById('pet-viewport')
   const stage = document.getElementById('pet-stage')
   const effectsCanvas = document.getElementById('fx-canvas')
   const effectsContext = effectsCanvas.getContext('2d')
   const interactionBubble = document.getElementById('interaction-bubble')
   const statusToast = document.getElementById('status-toast')
+  const longMessageReader = document.getElementById('long-message-reader')
+  const longMessageBody = document.getElementById('long-message-reader-body')
+  const longMessageCopy = document.getElementById('long-message-copy')
+  const longMessageCollapse = document.getElementById('long-message-collapse')
+  const longMessageTitle = document.getElementById('long-message-title')
+  const longMessageSubtitle = document.getElementById('long-message-subtitle')
+  const longMessageSource = document.getElementById('long-message-source')
+  const longMessageBadge = document.getElementById('long-message-badge')
+  const longMessageAudioKind = document.getElementById('long-message-audio-kind')
+  const longMessageAudio = document.getElementById('long-message-audio')
+  const longMessageStatus = document.getElementById('long-message-status')
+  const longMessageCount = document.getElementById('long-message-count')
   const chatPanel = document.getElementById('ai-chat-panel')
   const chatMessages = document.getElementById('ai-chat-messages')
   const chatForm = document.getElementById('ai-chat-form')
@@ -52,6 +65,9 @@
   const SETTINGS_BACKGROUND_FRAME_INTERVAL = 1000 / 15
   const SETTINGS_BACKGROUND_WIDTH = 240
   const SETTINGS_BACKGROUND_HEIGHT = 360
+  const PET_VIEWPORT_WIDTH = 400
+  const PET_VIEWPORT_HEIGHT = 600
+  const LONG_MESSAGE_READER_WIDTH = 380
   const interactionCopy = {
     greet: ['你好呀～', '今天也一起加油', '见到你真好'],
     head: ['好舒服～', '再摸一下嘛', '嘿嘿，谢谢你'],
@@ -143,11 +159,137 @@
   let chatPositionAnimationFrame = null
   let chatMuted = true
   let speechSequence = 0
+  let speechAssetSequence = 0
+  const normalizedSpeechAssets = new WeakMap()
   let activeSpeechButton = null
+  let activeSpeechAssetId = null
   let activeSpeechBubbleLease = null
+  let activeBubbleSpeech = null
+  let chatRequestSequence = 0
+  let externalPriorityMessageId = ''
+  let externalPriorityBubbleLease = null
+  let externalPriorityTimer = null
   let wheelScaleTimer = null
   let wheelScaleDirection = 0
   let wheelScaleModelId = null
+  let petWindowLayout = {
+    expanded: false,
+    side: 'none',
+    mode: 'collapsed',
+    readerWidth: 0,
+    gap: 0,
+    stageOffsetX: 0,
+    readerOffsetX: 0,
+    outerWidth: PET_VIEWPORT_WIDTH,
+    outerHeight: PET_VIEWPORT_HEIGHT,
+    stageWidth: PET_VIEWPORT_WIDTH,
+    stageHeight: PET_VIEWPORT_HEIGHT,
+    revision: 0,
+  }
+  let longMessageState = {
+    open: false,
+    text: '',
+    label: '',
+    source: '',
+    lease: null,
+    speech: null,
+  }
+  let longMessageRequestSequence = 0
+  let longMessageLayoutQueue = Promise.resolve()
+  let longMessageMeasureFrame = null
+  let longMessageCopyTimer = null
+  let longMessageCopySequence = 0
+  let lastLongMessageBoundsSignature = ''
+  let lastViewportSize = { width: PET_VIEWPORT_WIDTH, height: PET_VIEWPORT_HEIGHT }
+
+  function petViewportRect() {
+    const rect = petViewport && petViewport.getBoundingClientRect()
+    if (rect && rect.width > 0 && rect.height > 0) return rect
+    return {
+      left: Number(petWindowLayout.stageOffsetX) || 0,
+      top: 0,
+      right: (Number(petWindowLayout.stageOffsetX) || 0) + PET_VIEWPORT_WIDTH,
+      bottom: PET_VIEWPORT_HEIGHT,
+      width: PET_VIEWPORT_WIDTH,
+      height: PET_VIEWPORT_HEIGHT,
+    }
+  }
+
+  function petViewportSize() {
+    const rect = petViewportRect()
+    return {
+      width: Math.round(rect.width) || PET_VIEWPORT_WIDTH,
+      height: Math.round(rect.height) || PET_VIEWPORT_HEIGHT,
+    }
+  }
+
+  function viewportPoint(clientX, clientY) {
+    const rect = petViewportRect()
+    return {
+      clientX: Number(clientX) - rect.left,
+      clientY: Number(clientY) - rect.top,
+    }
+  }
+
+  function isInteractivePetUi(target) {
+    const element = target instanceof Element ? target : null
+    return Boolean(element && element.closest('#ai-chat-panel, #long-message-reader, pet-speech-bubble'))
+  }
+
+  function applyPetWindowLayout(layout) {
+    if (!layout || typeof layout !== 'object') return false
+    const next = {
+      expanded: Boolean(layout.expanded),
+      side: ['left', 'right', 'overlay'].includes(layout.side) ? layout.side : 'none',
+      mode: ['left', 'right', 'overlay'].includes(layout.mode) ? layout.mode : 'collapsed',
+      readerWidth: Number(layout.readerWidth) || 0,
+      gap: Number(layout.gap) || 0,
+      stageOffsetX: Number(layout.stageOffsetX) || 0,
+      readerOffsetX: Number(layout.readerOffsetX) || 0,
+      outerWidth: Number(layout.outerWidth) || PET_VIEWPORT_WIDTH,
+      outerHeight: Number(layout.outerHeight) || PET_VIEWPORT_HEIGHT,
+      stageWidth: Number(layout.stageWidth) || PET_VIEWPORT_WIDTH,
+      stageHeight: Number(layout.stageHeight) || PET_VIEWPORT_HEIGHT,
+      revision: Number(layout.revision) || 0,
+    }
+    // Window resize notifications and invoke replies travel on separate IPC
+    // paths. Ignore a late event from an older open/close cycle so it cannot
+    // move the fixed pet stage back to a stale side after a quick collapse.
+    if (next.revision < petWindowLayout.revision) return false
+    const layoutKeys = [
+      'expanded', 'side', 'mode', 'readerWidth', 'gap', 'stageOffsetX',
+      'readerOffsetX', 'outerWidth', 'outerHeight', 'stageWidth', 'stageHeight', 'revision',
+    ]
+    if (layoutKeys.every(key => next[key] === petWindowLayout[key])) return false
+    petWindowLayout = next
+    document.body.style.setProperty('--pet-stage-offset-x', `${next.stageOffsetX}px`)
+    document.body.style.setProperty('--long-message-reader-offset-x', `${next.readerOffsetX}px`)
+    document.body.style.setProperty('--long-message-reader-width', `${next.readerWidth || LONG_MESSAGE_READER_WIDTH}px`)
+    document.documentElement.dataset.longMessageLayout = next.mode
+    if (longMessageReader) {
+      longMessageReader.dataset.side = next.side
+      longMessageReader.dataset.layoutRevision = String(next.revision)
+    }
+    if (interactionBubble.classList.contains('is-visible')) requestAnimationFrame(layoutInteractionBubble)
+    if (statusToast.classList.contains('is-visible')) requestAnimationFrame(reportStatusToastBounds)
+    if (longMessageState.open) scheduleLongMessageMeasurement()
+    return true
+  }
+
+  // Read the host geometry synchronously during the parser-blocking startup
+  // script, before Chromium can present its first frame. Stable shaped hosts
+  // start wider than the visible pet stage; applying their fixed stage offset
+  // here prevents even the initial frame from being painted in the left gutter.
+  if (typeof window.petAPI.previewLongMessageLayout === 'function') {
+    try {
+      applyPetWindowLayout(window.petAPI.previewLongMessageLayout({
+        open: false,
+        preferredWidth: LONG_MESSAGE_READER_WIDTH,
+      }))
+    } catch (error) {
+      console.warn('Initial pet-window layout sync failed:', error.message)
+    }
+  }
 
   function reportStatusToastBounds() {
     if (!statusToast.classList.contains('is-visible')) {
@@ -155,9 +297,10 @@
       return
     }
     const rect = statusToast.getBoundingClientRect()
+    const viewport = petViewportRect()
     window.petAPI.reportStatusBounds({
-      x: rect.left,
-      y: rect.top,
+      x: rect.left - viewport.left,
+      y: rect.top - viewport.top,
       width: rect.width,
       height: rect.height,
     })
@@ -198,8 +341,7 @@
 
   function resizeEffectsCanvas() {
     const dpr = Math.min(window.devicePixelRatio || 1, 1.5)
-    const width = document.documentElement.clientWidth
-    const height = document.documentElement.clientHeight
+    const { width, height } = petViewportSize()
     effectsCanvas.width = Math.max(1, Math.round(width * dpr))
     effectsCanvas.height = Math.max(1, Math.round(height * dpr))
     effectsCanvas.style.width = `${width}px`
@@ -212,8 +354,9 @@
     const canvas = document.createElement('canvas')
     canvas.id = 'live2d-canvas'
     canvas.classList.add('is-preparing')
-    canvas.width = Math.max(1, document.documentElement.clientWidth)
-    canvas.height = Math.max(1, document.documentElement.clientHeight)
+    const { width, height } = petViewportSize()
+    canvas.width = Math.max(1, width)
+    canvas.height = Math.max(1, height)
     canvas.style.width = '100%'
     canvas.style.height = '100%'
     canvas.addEventListener('webglcontextlost', event => {
@@ -304,6 +447,13 @@
     return JSON.parse(new TextDecoder('utf-8').decode(bytes))
   }
 
+  function motionHasPlayableCurves(motion) {
+    return (Array.isArray(motion && motion.Curves) ? motion.Curves : []).some(curve => (
+      curve && ['Parameter', 'PartOpacity'].includes(curve.Target) &&
+      Array.isArray(curve.Segments) && curve.Segments.length >= 2
+    ))
+  }
+
   function encodeJsonBuffer(value) {
     return new TextEncoder().encode(JSON.stringify(value)).buffer
   }
@@ -384,14 +534,10 @@
     if (!profile) return false
 
     const motionClips = new Map()
-    const retainedGroups = []
     for (const group of (buffers.motionGroups || [])) {
-      // 规范命名组继续交给 ZIP 原生动作分组兜底；同时把其中每条 motion
-      // 建立文件 stem 索引，供更高优先级的模型映射精确选择。空名称组不能
-      // 交给 live2d-renderer 0.6.x 预加载，但仍能通过这个索引按需播放。
-      if (typeof group.group === 'string' && group.group.trim()) {
-        retainedGroups.push(group)
-      }
+      // 建立文件 stem 索引，所有内置模型动作都从原始 buffer 按需播放。
+      // live2d-renderer 0.6.x 的批量预加载缓存键会串组，而且部分第三方动作
+      // 的事件数据会在预加载阶段触发解析异常；不把这些分组交给预加载器。
       const motionBuffers = group.motionData && Array.isArray(group.motionData.motionBuffers)
         ? group.motionData.motionBuffers
         : []
@@ -399,16 +545,20 @@
         const fileName = model.settings.getMotionFileName(group.group, index)
         const stem = motionFileStem(fileName)
         if (!stem) continue
-        let duration = 0
+        let motion = null
         try {
-          const motion = decodeMotionBuffer(motionBuffers[index])
-          duration = Number(motion.Meta && motion.Meta.Duration) || 0
+          motion = decodeMotionBuffer(motionBuffers[index])
         } catch (error) {
           console.warn(`Motion metadata ${stem} failed:`, error.message)
+          continue
+        }
+        if (!motionHasPlayableCurves(motion)) {
+          console.warn(`Motion ${stem} skipped: no playable parameter curves`)
+          continue
         }
         motionClips.set(stem, {
           buffer: motionBuffers[index],
-          duration,
+          duration: Number(motion.Meta && motion.Meta.Duration) || 0,
           group: group.group,
           index,
         })
@@ -474,16 +624,10 @@
       }
     }
 
-    // 空组资源只保留在 petMotionClips 中按需解析。不要交给
-    // MotionController.load()，否则同一空组内的动作会因缓存键冲突互相覆盖；
-    // 规范命名组则保留下来，作为映射资源缺失或加载失败时的第二级兜底。
-    buffers.motionGroups = retainedGroups
-    model.motionIds = [
-      ...retainedGroups.flatMap(group =>
-        group.motionData.motionBuffers.map((_, index) => `${group.group}_${index}`)
-      ),
-      ...[...motionClips.keys()].map(stem => `pet:${modelId}:${stem}`),
-    ]
+    // petMotionClips 已保留所有审核通过的资源。清空批量预加载输入，避免库的
+    // 缓存键冲突和事件解析错误；设置页与互动入口仍可按 stem 精确播放。
+    buffers.motionGroups = []
+    model.motionIds = [...motionClips.keys()].map(stem => `pet:${modelId}:${stem}`)
     console.info(
       `Reaction profile ${modelId}: ${motionClips.size} motions, ` +
       `${model.petExpressionIds.size} expressions ` +
@@ -524,6 +668,38 @@
       maxTextureSize,
       scale: 1,
     })
+
+    // Live2D 在 draw() 之后会 loadParameters() 恢复本帧基线，因此从帧末
+    // 读取核心参数无法判断表情是否真正生效。仅在启动表情后的短窗口内，
+    // 于 ExpressionController 写入参数后记录变化，供设置页预览自检使用。
+    const originalExpressionUpdate = model.expressionController.update.bind(model.expressionController)
+    model.expressionController.update = deltaTime => {
+      const probe = model.petExpressionProbe
+      const shouldProbe = probe && performance.now() <= probe.expiresAt && model.model
+      const before = shouldProbe ? modelParameterSnapshot(model) : null
+      const result = originalExpressionUpdate(deltaTime)
+      if (before) {
+        const change = changedModelParameters(before, modelParameterSnapshot(model))
+        probe.changed = Math.max(probe.changed, change.changed)
+        probe.totalDelta = Math.max(probe.totalDelta, change.totalDelta)
+        probe.largestDelta = Math.max(probe.largestDelta, change.largestDelta)
+      }
+      return result
+    }
+    const originalMotionUpdate = model.motionController.update.bind(model.motionController)
+    model.motionController.update = deltaTime => {
+      const probe = model.petMotionProbe
+      const shouldProbe = probe && performance.now() <= probe.expiresAt && model.model
+      const before = shouldProbe ? modelParameterSnapshot(model) : null
+      const result = originalMotionUpdate(deltaTime)
+      if (before) {
+        const change = changedModelParameters(before, modelParameterSnapshot(model))
+        probe.changed = Math.max(probe.changed, change.changed)
+        probe.totalDelta = Math.max(probe.totalDelta, change.totalDelta)
+        probe.largestDelta = Math.max(probe.largestDelta, change.largestDelta)
+      }
+      return result
+    }
 
     const originalLoadBuffers = model.loadBuffers.bind(model)
     model.loadBuffers = async link => {
@@ -701,15 +877,21 @@
     const actions = []
     const expressions = []
     const profile = modelReactionProfiles[modelId]
-    const preferredClips = profile && Array.isArray(profile.previewClips)
+    const hasCuratedPreview = profile && Array.isArray(profile.previewClips)
+    const hasCuratedExpressionPreview = profile && Array.isArray(profile.previewExpressions)
+    const preferredClips = hasCuratedPreview
       ? profile.previewClips
       : ['mtn_idle', 'mtn_shake_huishou', 'mtn_fushen', 'mtn_shakeh', 'head_diantou', 'head_yaotou', 'mtn_shake', 'mtn_qishen']
     if (model.petMotionClips && model.petMotionClips.size) {
       const clipNames = [...model.petMotionClips.keys()]
-      const ordered = [
-        ...preferredClips.filter(name => clipNames.includes(name)),
-        ...clipNames.filter(name => !preferredClips.includes(name) && /^(mtn_|head_)/i.test(name)),
-      ]
+      // 有显式清单的内置模型只展示审核过的完整动作。自动补入 mtn_/head_
+      // 会把第三方包里的瞬时姿态、恢复片段甚至空动作暴露成可点击项目。
+      const ordered = hasCuratedPreview
+        ? preferredClips.filter(name => clipNames.includes(name))
+        : [
+            ...preferredClips.filter(name => clipNames.includes(name)),
+            ...clipNames.filter(name => !preferredClips.includes(name) && /^(mtn_|head_)/i.test(name)),
+          ]
       for (const clip of ordered.slice(0, 24)) {
         actions.push({
           id: `clip:${clip}`,
@@ -741,7 +923,9 @@
     if (model.petExpressionIds && model.petExpressionIds.size) {
       const preferred = ['face_nor', 'face_weixiao', 'face_daxiao', 'face_xiaoqi', 'face_gandong', 'face_xingfen', 'face_jusang', 'face_haoqi', 'face_xiao']
       const sources = [...model.petExpressionIds.keys()]
-      const ordered = [...preferred.filter(source => sources.includes(source)), ...sources.filter(source => !preferred.includes(source))]
+      const ordered = hasCuratedExpressionPreview
+        ? profile.previewExpressions.filter(source => sources.includes(source))
+        : [...preferred.filter(source => sources.includes(source)), ...sources.filter(source => !preferred.includes(source))]
       for (const source of ordered.slice(0, 24)) {
         const expressionId = model.petExpressionIds.get(source)
         expressions.push({
@@ -754,17 +938,19 @@
         includedExpressionIds.add(expressionId)
       }
     }
-    // 映射表情排在前面，但不能因此隐藏 ZIP 里未参与互动映射的原生表情；
-    // 去重后补齐原生资源，让设置页仍可预览模型包提供的完整表情集合。
-    for (const expressionId of (model.expressionIds || [])) {
-      if (expressions.length >= 24) break
-      if (includedExpressionIds.has(expressionId)) continue
-      expressions.push({
-        id: `native:${expressionId}`,
-        label: readablePreviewLabel(expressionId, '表情'),
-        type: 'native',
-        expressionId,
-      })
+    // 未配置精选列表时，映射表情排在前面并补齐 ZIP 原生资源；配置了精选
+    // 列表的模型则只展示审核过、差异明确的入口，避免默认态和近似态重复。
+    if (!hasCuratedExpressionPreview) {
+      for (const expressionId of (model.expressionIds || [])) {
+        if (expressions.length >= 24) break
+        if (includedExpressionIds.has(expressionId)) continue
+        expressions.push({
+          id: `native:${expressionId}`,
+          label: readablePreviewLabel(expressionId, '表情'),
+          type: 'native',
+          expressionId,
+        })
+      }
     }
     if (!actions.length && profile) {
       actions.push(
@@ -812,19 +998,20 @@
     }
   }
 
-  function waitForPreviewFrames(frameCount = 8) {
+  function waitForPreviewFrames(frameCount = 8, minimumDuration = 180) {
     return new Promise(resolve => {
       let remaining = frameCount
       let finished = false
+      const startedAt = performance.now()
       const fallback = setTimeout(() => {
         if (finished) return
         finished = true
         resolve()
-      }, 520)
+      }, Math.max(620, minimumDuration + 240))
       const next = () => {
         if (finished) return
         remaining--
-        if (remaining <= 0) {
+        if (remaining <= 0 && performance.now() - startedAt >= minimumDuration) {
           finished = true
           clearTimeout(fallback)
           resolve()
@@ -858,8 +1045,8 @@
       const neutralExpression = profile && model.petExpressionIds
         ? model.petExpressionIds.get(profile.neutralExpression)
         : Array.isArray(model.expressionIds) ? model.expressionIds[0] : ''
-      if (kind === 'expression' && neutralExpression && typeof model.setExpression === 'function') {
-        model.setExpression(neutralExpression)
+      if (kind === 'expression' && neutralExpression) {
+        startNativeExpressionPreview(neutralExpression)
       } else if (baseline.length && model.model) {
         const count = Math.min(baseline.length, model.model.getParameterCount())
         for (let index = 0; index < count; index++) {
@@ -940,7 +1127,22 @@
           frame: typeof frame === 'string' && frame.length <= 700000 ? frame : '',
         })
       }
-      const parameterChange = changedModelParameters(before, modelParameterSnapshot(previewModel))
+      const finalParameterChange = changedModelParameters(before, modelParameterSnapshot(previewModel))
+      const expressionProbe = request.kind === 'expression' && playback && previewModel.petExpressionProbe &&
+        previewModel.petExpressionProbe.source === playback.source
+        ? previewModel.petExpressionProbe
+        : null
+      const motionProbe = request.kind === 'action' && playback && previewModel.petMotionProbe &&
+        previewModel.petMotionProbe.source === playback.source
+        ? previewModel.petMotionProbe
+        : null
+      const parameterChange = expressionProbe || motionProbe
+        ? {
+            changed: (expressionProbe || motionProbe).changed,
+            totalDelta: (expressionProbe || motionProbe).totalDelta,
+            largestDelta: (expressionProbe || motionProbe).largestDelta,
+          }
+        : finalParameterChange
       const manager = request.kind === 'expression' ? previewModel.expressionManager : previewModel.motionManager
       const handle = playback && typeof playback === 'object' ? playback.handle : null
       const active = handle !== null && handle !== undefined && handle !== -1 && manager && typeof manager.isFinishedByHandle === 'function'
@@ -959,6 +1161,8 @@
         changedParameters: parameterChange.changed,
         parameterDelta: parameterChange.totalDelta,
         largestParameterDelta: parameterChange.largestDelta,
+        expressionParameterCount: Number(playback && playback.parameterCount) || 0,
+        matchedExpressionParameterCount: Number(playback && playback.matchedParameterCount) || 0,
         frame: typeof frame === 'string' && frame.length <= 700000 ? frame : '',
       })
     } catch (error) {
@@ -1033,8 +1237,11 @@
     // 可以让不同 Live2D 文件的画布原点/留白差异不影响视觉锚点。
     const anchor = modelBoundsCenter(bounds, model.canvas)
     const canvasRect = model.canvas.getBoundingClientRect()
-    const anchorX = canvasRect.width - (anchor.x - canvasRect.left)
-    const anchorY = (anchor.y - canvasRect.top) - canvasRect.height / 2
+    // lastHitBounds is always pet-viewport local. The viewport may be shifted
+    // inside a widened BrowserWindow when the long-message reader opens, so
+    // never mix it with the canvas' outer-window left/top coordinates.
+    const anchorX = canvasRect.width - anchor.x
+    const anchorY = anchor.y - canvasRect.height / 2
     const worldX = (anchorX - model.x) / currentScale
     const worldY = (anchorY - model.y) / currentScale
     model.scale = nextScale
@@ -1117,6 +1324,7 @@
 
     const sourceCanvas = state.liveCanvas
     const sourceModel = state.model
+    const sourceMeta = state.modelMeta
     if (!state.settingsBackgroundCanvas) {
       state.settingsBackgroundCanvas = document.createElement('canvas')
       state.settingsBackgroundCanvas.width = SETTINGS_BACKGROUND_WIDTH
@@ -1155,9 +1363,14 @@
       const frame = await blob.arrayBuffer()
       if (
         state.settingsBackgroundCaptureActive &&
-        sourceCanvas === state.liveCanvas && sourceModel === state.model
+        sourceCanvas === state.liveCanvas && sourceModel === state.model &&
+        sourceMeta && sourceMeta === state.modelMeta
       ) {
-        window.petAPI.sendSettingsPetBackgroundFrame(frame)
+        window.petAPI.sendSettingsPetBackgroundFrame({
+          modelId: sourceMeta.id,
+          format: sourceMeta.format,
+          frame,
+        })
         state.settingsBackgroundErrorReported = false
       }
     } catch (error) {
@@ -1196,7 +1409,15 @@
       // live2d-renderer 0.6.x 预加载多动作分组时会复用错误的缓存键。
       // 预览时直接从已加载的分组 buffer 创建动作，确保点击的就是该索引。
       const motionBuffer = normalizedMotionBuffer(sourceBuffer)
-      const motionMeta = decodeMotionBuffer(motionBuffer).Meta || {}
+      const motionData = decodeMotionBuffer(motionBuffer)
+      if (!motionHasPlayableCurves(motionData)) return false
+      const parameterIds = (motionData.Curves || [])
+        .filter(curve => curve && curve.Target === 'Parameter' && curve.Id)
+        .map(curve => curve.Id)
+      const modelParameterIds = model.parameters && Array.isArray(model.parameters.ids) ? model.parameters.ids : []
+      const matchedParameterCount = parameterIds.filter(id => modelParameterIds.includes(id)).length
+      if (parameterIds.length && !matchedParameterCount) return false
+      const motionMeta = motionData.Meta || {}
       const motion = model.loadMotion(
         motionBuffer,
         motionBuffer.byteLength,
@@ -1215,11 +1436,24 @@
       model.motionManager.setReservePriority(priority)
       const handle = model.motionManager.startMotionPriority(motion, true, priority)
       if (handle === -1 || handle === null || handle === undefined) return false
+      model.petMotionProbe = {
+        source: `${groupName}:${motionIndex}`,
+        expiresAt: performance.now() + 750,
+        changed: 0,
+        totalDelta: 0,
+        largestDelta: 0,
+      }
       const duration = Number(motionMeta.Duration)
       state.activeUntil = performance.now() + (Number.isFinite(duration)
         ? Math.max(2600, duration * 1000 + 500)
         : 3200)
-      return { handle, kind: 'motion', source: `${groupName}:${motionIndex}` }
+      return {
+        handle,
+        kind: 'motion',
+        source: `${groupName}:${motionIndex}`,
+        parameterCount: parameterIds.length,
+        matchedParameterCount,
+      }
     } catch (error) {
       console.warn(`Motion ${groupName}:${motionIndex} failed:`, error.message)
       return false
@@ -1235,21 +1469,55 @@
         ? model.buffers.expressionBuffers[index]
         : null
       if (sourceBuffer) {
+        const expressionData = decodeMotionBuffer(sourceBuffer)
+        const parameterIds = (Array.isArray(expressionData.Parameters) ? expressionData.Parameters : [])
+          .map(parameter => parameter && parameter.Id)
+          .filter(Boolean)
+        const modelParameterIds = model.parameters && Array.isArray(model.parameters.ids)
+          ? model.parameters.ids
+          : []
+        const matchedParameterCount = parameterIds.filter(id => modelParameterIds.includes(id)).length
+        if (!matchedParameterCount) {
+          console.warn(`Expression ${expressionId} has no parameters used by this model`)
+          return false
+        }
         const expression = model.loadExpression(sourceBuffer, sourceBuffer.byteLength, expressionId)
         if (!expression) return false
         model.expressionManager.stopAllMotions()
         const handle = model.expressionManager.startMotion(expression, true)
-        return handle !== -1 && handle !== null && handle !== undefined
-          ? { handle, kind: 'expression', source: expressionId }
-          : false
+        if (handle !== -1 && handle !== null && handle !== undefined) {
+          model.petExpressionProbe = {
+            source: expressionId,
+            expiresAt: performance.now() + 750,
+            changed: 0,
+            totalDelta: 0,
+            largestDelta: 0,
+          }
+          return {
+              handle,
+              kind: 'expression',
+              source: expressionId,
+              parameterCount: parameterIds.length,
+              matchedParameterCount,
+            }
+        }
+        return false
       }
       const cached = model.expressions && model.expressions.getValue(expressionId)
       if (!cached) return false
       model.expressionManager.stopAllMotions()
       const handle = model.expressionManager.startMotion(cached, false)
-      return handle !== -1 && handle !== null && handle !== undefined
-        ? { handle, kind: 'expression', source: expressionId }
-        : false
+      if (handle !== -1 && handle !== null && handle !== undefined) {
+        model.petExpressionProbe = {
+          source: expressionId,
+          expiresAt: performance.now() + 750,
+          changed: 0,
+          totalDelta: 0,
+          largestDelta: 0,
+        }
+        return { handle, kind: 'expression', source: expressionId }
+      }
+      return false
     } catch (error) {
       console.warn(`Expression ${expressionId} failed:`, error.message)
       return false
@@ -1263,6 +1531,14 @@
     if (!model || !clip || !model.motionManager) return false
     try {
       const motionBuffer = clip.normalizedBuffer || (clip.normalizedBuffer = normalizedMotionBuffer(clip.buffer))
+      const motionData = decodeMotionBuffer(motionBuffer)
+      if (!motionHasPlayableCurves(motionData)) return false
+      const parameterIds = (motionData.Curves || [])
+        .filter(curve => curve && curve.Target === 'Parameter' && curve.Id)
+        .map(curve => curve.Id)
+      const modelParameterIds = model.parameters && Array.isArray(model.parameters.ids) ? model.parameters.ids : []
+      const matchedParameterCount = parameterIds.filter(id => modelParameterIds.includes(id)).length
+      if (parameterIds.length && !matchedParameterCount) return false
       const motion = model.loadMotion(
         motionBuffer,
         motionBuffer.byteLength,
@@ -1285,8 +1561,21 @@
       model.motionManager.setReservePriority(priority)
       const handle = model.motionManager.startMotionPriority(motion, true, priority)
       if (handle === -1 || handle === null || handle === undefined) return false
+      model.petMotionProbe = {
+        source: clipName,
+        expiresAt: performance.now() + 750,
+        changed: 0,
+        totalDelta: 0,
+        largestDelta: 0,
+      }
       state.activeUntil = performance.now() + Math.max(2600, clip.duration * 1000 + 500)
-      return { handle, kind: 'motion', source: clipName }
+      return {
+        handle,
+        kind: 'motion',
+        source: clipName,
+        parameterCount: parameterIds.length,
+        matchedParameterCount,
+      }
     } catch (error) {
       console.warn(`Profile motion ${clipName} failed:`, error.message)
       return false
@@ -1326,15 +1615,17 @@
 
   function applyInteractionExpression(kind, expressionId, neutralId, sourceLabel) {
     const model = state.model
-    if (!expressionId || !model || typeof model.setExpression !== 'function') return false
+    if (!expressionId || !model || !model.expressionManager) return false
     try {
-      model.setExpression(expressionId)
+      // ExpressionController.setExpression() 没有返回值，资源缺失时也不会抛错。
+      // 直接启动并校验句柄，避免点击无效却仍被界面标记为成功。
+      if (!startNativeExpressionPreview(expressionId)) return false
       const sequence = state.reactionSequence
       const duration = kind === 'calm' || kind === 'sad' ? 3600 : kind === 'excited' ? 3200 : 2600
       state.expressionResetTimer = setTimeout(() => {
         state.expressionResetTimer = null
         if (sequence !== state.reactionSequence || model !== state.model) return
-        if (neutralId) model.setExpression(neutralId)
+        if (neutralId) startNativeExpressionPreview(neutralId)
       }, duration)
       return true
     } catch (error) {
@@ -1423,10 +1714,19 @@
   }
 
   async function switchModel(modelMeta) {
-    const frozen = createFrozenFrame()
     const previousModel = state.model
     const previousMeta = state.modelMeta
     const previousCanvas = state.liveCanvas
+    const switchingAwayFromVideoPet = previousModel && previousModel.kind === 'video-pet' &&
+      previousMeta && previousMeta.id !== modelMeta.id
+    // 视频宠物的画布本身就是上一段视频的最后一帧。跨角色切换时若再把它
+    // 复制成过渡快照，旧角色会一直盖在新角色上方，直到新模型加载完成。
+    // 只有离开视频宠物时立即清掉旧快照；同一角色恢复以及普通 Live2D
+    // 之间的切换仍保留原有的无白屏过渡。
+    if (switchingAwayFromVideoPet) {
+      document.querySelectorAll('.model-snapshot').forEach(snapshot => snapshot.remove())
+    }
+    const frozen = switchingAwayFromVideoPet ? null : createFrozenFrame()
     clearReactionTimers()
     stopCurrentSpeech()
     // 切模期间保留设置页最后一张有效角色帧；新模型首帧就绪后会原子替换。
@@ -1570,12 +1870,13 @@
       state.lastMaskRebuild = performance.now()
 
       // 角色包围盒（窗口局部 DIP），发给主进程用于位置预设贴角
+      const viewport = petViewportSize()
       const bounds = opaquePixels >= 12
         ? {
-            x: Math.round(minX * (window.innerWidth / width)),
-            y: Math.round(minY * (window.innerHeight / height)),
-            width: Math.round((maxX - minX + 1) * (window.innerWidth / width)),
-            height: Math.round((maxY - minY + 1) * (window.innerHeight / height)),
+            x: Math.round(minX * (viewport.width / width)),
+            y: Math.round(minY * (viewport.height / height)),
+            width: Math.round((maxX - minX + 1) * (viewport.width / width)),
+            height: Math.round((maxY - minY + 1) * (viewport.height / height)),
           }
         : null
       if (JSON.stringify(bounds) !== JSON.stringify(state.lastHitBounds)) {
@@ -1665,17 +1966,18 @@
     // 保证任何位置都能抓住角色（边缘/头顶/尾巴都不再失效）。
     // 角色精细命中（hitAreasAt）仅用于点击反馈选择。
     if (!state.model || !state.model.loaded) return false
-    return clientX >= 0 && clientX < window.innerWidth && clientY >= 0 && clientY < window.innerHeight
+    const viewport = petViewportSize()
+    return clientX >= 0 && clientX < viewport.width && clientY >= 0 && clientY < viewport.height
   }
 
   function isDraggablePoint(clientX, clientY, target = null) {
     const hoveredElement = target instanceof Element ? target : document.elementFromPoint(clientX, clientY)
-    const overChat = Boolean(hoveredElement && hoveredElement.closest('#ai-chat-panel'))
+    const point = viewportPoint(clientX, clientY)
     return Boolean(
       state.preferences &&
       state.preferences.interactionMode !== 'locked' &&
-      !overChat &&
-      isOnPet(clientX, clientY)
+      !isInteractivePetUi(hoveredElement) &&
+      isOnPet(point.clientX, point.clientY)
     )
   }
 
@@ -1685,7 +1987,7 @@
   }
 
   function updateMouseCapture(clientX, clientY, target = null) {
-    state.pointer = { clientX, clientY }
+    state.pointer = viewportPoint(clientX, clientY)
     setDragAffordance(isDraggablePoint(clientX, clientY, target))
   }
 
@@ -1842,14 +2144,15 @@
         },
       }
     }
+    const viewport = petViewportSize()
     return {
-      x: window.innerWidth * 0.5,
-      y: window.innerHeight * 0.22,
+      x: viewport.width * 0.5,
+      y: viewport.height * 0.22,
       head: {
-        left: window.innerWidth * 0.38,
-        right: window.innerWidth * 0.62,
-        top: window.innerHeight * 0.12,
-        bottom: window.innerHeight * 0.3,
+        left: viewport.width * 0.38,
+        right: viewport.width * 0.62,
+        top: viewport.height * 0.12,
+        bottom: viewport.height * 0.3,
       },
     }
   }
@@ -1886,7 +2189,15 @@
     interactionBubble.styleName = currentBubbleStyle()
     // Bubble identity is model-owned, not theme-owned: a saved nickname wins;
     // otherwise show the model's original role name.
-    interactionBubble.label = nickname || modelName || displayName || '伙伴'
+    const identity = nickname || modelName || displayName || '伙伴'
+    interactionBubble.label = identity
+    interactionBubble.source = externalPriorityMessageId ? 'external' : ''
+    if (longMessageState.open) {
+      longMessageState.label = interactionBubble.label
+      longMessageTitle.textContent = interactionBubble.label
+      syncLongMessageSource(interactionBubble.source)
+      longMessageReader.setAttribute('aria-label', `${interactionBubble.label}的完整消息`)
+    }
   }
 
   function reportBubbleVisualBounds(bounds) {
@@ -1902,8 +2213,7 @@
   }
 
   function layoutInteractionBubble() {
-    const width = window.innerWidth
-    const height = window.innerHeight
+    const { width, height } = petViewportSize()
     const bodyEdge = 20
     const gap = 10
     const mouth = currentMouthAnchor()
@@ -1923,21 +2233,440 @@
     reportBubbleVisualBounds({ left, top, width: bubbleWidth, height: bubbleHeight })
   }
 
-  function dismissBubble(lease = activeBubbleLease) {
+  function normalizePlayableSpeech(speech, source = 'ai') {
+    if (!speech) return null
+    if (typeof speech === 'object') {
+      const cached = normalizedSpeechAssets.get(speech)
+      if (cached) return cached
+    }
+    const audioBase64 = typeof speech === 'string'
+      ? speech.trim()
+      : typeof speech.audioBase64 === 'string'
+        ? speech.audioBase64.trim()
+        : ''
+    if (!audioBase64) return null
+    const descriptor = {
+      id: `speech-${++speechAssetSequence}`,
+      audioBase64,
+      mimeType: typeof speech === 'object' && typeof speech.mimeType === 'string' && speech.mimeType.trim()
+        ? speech.mimeType.trim()
+        : 'audio/wav',
+      source: source === 'external' ? 'external' : 'ai',
+    }
+    if (typeof speech === 'object') normalizedSpeechAssets.set(speech, descriptor)
+    normalizedSpeechAssets.set(descriptor, descriptor)
+    return Object.freeze(descriptor)
+  }
+
+  function bubbleSpeechForLease(lease = activeBubbleLease) {
+    return activeBubbleSpeech && activeBubbleSpeech.lease === lease
+      ? activeBubbleSpeech.descriptor
+      : null
+  }
+
+  function setSpeechButtonPlaying(button, playing) {
+    if (!button) return
+    const isPlaying = Boolean(playing)
+    const label = isPlaying ? '停止播放这条语音' : '播放这条语音'
+    button.classList.toggle('is-playing', isPlaying)
+    button.setAttribute('aria-pressed', String(isPlaying))
+    button.setAttribute('aria-label', label)
+    button.title = label
+  }
+
+  function syncSpeechControlState() {
+    document.querySelectorAll('.ai-message-audio[data-speech-asset-id]').forEach(button => {
+      setSpeechButtonPlaying(button, Boolean(
+        activeSpeechAssetId && button.dataset.speechAssetId === activeSpeechAssetId
+      ))
+    })
+    if (!longMessageAudio) return
+    const speech = longMessageState.speech
+    if (speech) longMessageAudio.dataset.speechAssetId = speech.id
+    else delete longMessageAudio.dataset.speechAssetId
+    setSpeechButtonPlaying(longMessageAudio, Boolean(
+      speech && activeSpeechAssetId && speech.id === activeSpeechAssetId
+    ))
+  }
+
+  function syncLongMessageSpeech(speech = longMessageState.speech) {
+    const playableSpeech = normalizePlayableSpeech(speech, speech && speech.source)
+    longMessageState.speech = playableSpeech
+    const hasVoice = Boolean(playableSpeech)
+    longMessageAudioKind.dataset.kind = hasVoice ? 'voice' : 'text'
+    longMessageAudioKind.textContent = hasVoice ? '语音消息' : '非语音消息'
+    longMessageAudioKind.setAttribute('aria-label', hasVoice ? '这是一条语音消息' : '这是一条非语音消息')
+    longMessageAudio.hidden = !hasVoice
+    syncSpeechControlState()
+  }
+
+  function setBubbleSpeech(lease, speech, source = 'ai') {
     if (lease == null || lease !== activeBubbleLease) return false
+    const previousSpeech = bubbleSpeechForLease(lease)
+    const playableSpeech = normalizePlayableSpeech(speech, source)
+    if (
+      previousSpeech && activeSpeechAssetId === previousSpeech.id &&
+      (!playableSpeech || playableSpeech.id !== previousSpeech.id)
+    ) stopCurrentSpeech()
+    activeBubbleSpeech = playableSpeech ? { lease, descriptor: playableSpeech } : null
+    if (longMessageState.open && longMessageState.lease === lease) {
+      syncLongMessageSpeech(playableSpeech)
+    }
+    return true
+  }
+
+  function longMessageCharacterCount(text) {
+    return Array.from(String(text || '').replace(/\s/gu, '')).length
+  }
+
+  function syncLongMessageSource(source = longMessageState.source) {
+    const normalizedSource = source === 'external' ? 'external' : ''
+    longMessageState.source = normalizedSource
+    longMessageSource.hidden = normalizedSource !== 'external'
+    if (normalizedSource) longMessageReader.dataset.source = normalizedSource
+    else delete longMessageReader.dataset.source
+  }
+
+  function syncLongMessageContent(
+    text = longMessageState.text,
+    label = longMessageState.label,
+    source = longMessageState.source
+  ) {
+    const normalizedText = String(text || '').trim()
+    const normalizedLabel = String(label || interactionBubble.label || '伙伴').trim() || '伙伴'
+    longMessageState.text = normalizedText
+    longMessageState.label = normalizedLabel
+    longMessageBody.textContent = normalizedText
+    longMessageTitle.textContent = normalizedLabel
+    longMessageSubtitle.textContent = '完整消息'
+    syncLongMessageSource(source)
+    const characterCount = longMessageCharacterCount(normalizedText)
+    longMessageCount.textContent = `${characterCount} 字`
+    longMessageBadge.setAttribute('aria-label', `长消息，共 ${characterCount} 字`)
+    longMessageReader.setAttribute('aria-label', `${normalizedLabel}的完整消息`)
+    syncLongMessageSpeech(longMessageState.speech)
+    resetLongMessageCopyFeedback()
+    scheduleLongMessageMeasurement()
+  }
+
+  function reportLongMessageVisualBounds() {
+    if (!longMessageState.open || longMessageReader.hidden) {
+      if (lastLongMessageBoundsSignature !== 'closed') {
+        lastLongMessageBoundsSignature = 'closed'
+        window.petAPI.reportLongMessageBounds(null)
+      }
+      return
+    }
+    // offset* describes the final layout box and is unaffected by the 220ms
+    // transform entry animation. Reporting getBoundingClientRect() here would
+    // briefly shrink/shift the Windows native shape and clip the glass card.
+    const bounds = {
+      x: longMessageReader.offsetLeft,
+      y: longMessageReader.offsetTop,
+      width: longMessageReader.offsetWidth,
+      height: longMessageReader.offsetHeight,
+      revision: petWindowLayout.revision,
+    }
+    if (bounds.width <= 0 || bounds.height <= 0) return
+    const signature = JSON.stringify(bounds)
+    if (signature === lastLongMessageBoundsSignature) return
+    lastLongMessageBoundsSignature = signature
+    window.petAPI.reportLongMessageBounds(bounds)
+  }
+
+  function updateLongMessageOverflowState() {
+    if (!longMessageState.open || longMessageReader.hidden) return
+    const scrollable = longMessageBody.scrollHeight > longMessageBody.clientHeight + 1
+    const atStart = longMessageBody.scrollTop <= 1
+    const atEnd = longMessageBody.scrollTop + longMessageBody.clientHeight >= longMessageBody.scrollHeight - 1
+    longMessageReader.classList.toggle('is-scrollable', scrollable)
+    longMessageReader.classList.toggle('is-at-start', atStart)
+    longMessageReader.classList.toggle('is-at-end', atEnd)
+    const statusText = scrollable ? '可滚动查看全文' : '内容已完整显示'
+    const statusTextNode = Array.from(longMessageStatus.childNodes).find(node => node.nodeType === Node.TEXT_NODE)
+    if (statusTextNode) statusTextNode.nodeValue = statusText
+    else longMessageStatus.appendChild(document.createTextNode(statusText))
+    reportLongMessageVisualBounds()
+  }
+
+  function scheduleLongMessageMeasurement() {
+    if (!longMessageState.open || longMessageReader.hidden) return
+    if (longMessageMeasureFrame != null) cancelAnimationFrame(longMessageMeasureFrame)
+    longMessageMeasureFrame = requestAnimationFrame(() => {
+      longMessageMeasureFrame = requestAnimationFrame(() => {
+        longMessageMeasureFrame = null
+        updateLongMessageOverflowState()
+      })
+    })
+  }
+
+  function resetLongMessageCopyFeedback() {
+    longMessageCopySequence += 1
+    if (longMessageCopyTimer) clearTimeout(longMessageCopyTimer)
+    longMessageCopyTimer = null
+    longMessageCopy.classList.remove('is-copied')
+    const copyLabel = longMessageCopy.querySelector('span')
+    if (copyLabel) copyLabel.textContent = '复制'
+    longMessageCopy.setAttribute('aria-label', '复制完整消息')
+  }
+
+  function resumeBubbleDismissalAfterReader(stateBeforeClose) {
+    if (!stateBeforeClose || stateBeforeClose.lease == null || stateBeforeClose.lease !== activeBubbleLease) return
+    if (externalPriorityMessageId) {
+      scheduleExternalPriorityRelease(externalPriorityMessageId, stateBeforeClose.text)
+      return
+    }
+    if (bubbleTimer) clearTimeout(bubbleTimer)
+    bubbleTimer = setTimeout(() => {
+      bubbleTimer = null
+      dismissBubble(stateBeforeClose.lease)
+    }, bubbleDurationForText(stateBeforeClose.text))
+  }
+
+  function hideBubbleForLongMessageReader(lease) {
+    if (lease == null || lease !== activeBubbleLease) return false
+    interactionBubble.expanded = true
+    interactionBubble.setAttribute('aria-hidden', 'true')
+    interactionBubble.classList.remove('is-visible')
+    return true
+  }
+
+  function restoreBubbleAfterLongMessageReader(stateBeforeClose) {
+    if (
+      !stateBeforeClose || stateBeforeClose.lease == null ||
+      stateBeforeClose.lease !== activeBubbleLease || !interactionBubble.message
+    ) return false
+    interactionBubble.expanded = false
+    interactionBubble.removeAttribute('aria-hidden')
+    interactionBubble.classList.add('is-visible')
+    requestAnimationFrame(() => {
+      if (
+        stateBeforeClose.lease === activeBubbleLease &&
+        interactionBubble.classList.contains('is-visible')
+      ) layoutInteractionBubble()
+    })
+    return true
+  }
+
+  function waitForVisualFrames(count = 1) {
+    return new Promise(resolve => {
+      const step = remaining => requestAnimationFrame(() => {
+        if (remaining <= 1) resolve()
+        else step(remaining - 1)
+      })
+      step(Math.max(1, Number(count) || 1))
+    })
+  }
+
+  async function createPetStageTransitionFrame(dataURL, stageOffsetX) {
+    if (typeof dataURL !== 'string' || !dataURL.startsWith('data:image/')) return null
+    const frame = new Image()
+    frame.className = 'pet-stage-transition-frame'
+    frame.alt = ''
+    frame.setAttribute('aria-hidden', 'true')
+    frame.style.left = `${Math.round(Number(stageOffsetX) || 0)}px`
+    frame.src = dataURL
+    try { await frame.decode() } catch (error) { return null }
+    return frame
+  }
+
+  async function performLongMessageLayoutRequest(options) {
+    const canCommitSynchronously = typeof window.petAPI.previewLongMessageLayout === 'function'
+      && typeof window.petAPI.commitLongMessageLayout === 'function'
+    if (!canCommitSynchronously) return window.petAPI.setLongMessageLayout(options)
+
+    // Stable shaped hosts keep the same stage offset for every layout and take
+    // the direct path below. The captured-frame branch remains only for a
+    // legacy dynamic host whose left-side layout changes BrowserWindow.x.
+    const previousLayout = { ...petWindowLayout }
+    const preview = window.petAPI.previewLongMessageLayout(options)
+    if (!preview || typeof preview !== 'object') return window.petAPI.setLongMessageLayout(options)
+    const stageMoves = Number(preview.stageOffsetX) !== Number(previousLayout.stageOffsetX)
+    const canStageVisualHandoff = stageMoves
+      && typeof window.petAPI.capturePetTransitionFrame === 'function'
+      && typeof window.petAPI.setLongMessageTransitionState === 'function'
+    let transitionFrame = null
+    let transitionActive = false
+    try {
+      if (canStageVisualHandoff) {
+        const dataURL = await window.petAPI.capturePetTransitionFrame()
+        transitionFrame = await createPetStageTransitionFrame(dataURL, previousLayout.stageOffsetX)
+        if (transitionFrame) {
+          transitionActive = window.petAPI.setLongMessageTransitionState(true) === true
+          document.body.appendChild(transitionFrame)
+        }
+      }
+      applyPetWindowLayout(preview)
+      // The captured stage remains at the old physical screen position while
+      // Chromium paints the live stage at its future offset. The main process
+      // exposes only the stage shape during this hand-off, so neither copy can
+      // leak into the reader area.
+      if (transitionActive) await waitForVisualFrames(2)
+      const committed = window.petAPI.commitLongMessageLayout(options)
+      if (!committed || typeof committed !== 'object') throw new Error('窗口布局提交失败')
+      applyPetWindowLayout(committed)
+      if (transitionActive) await waitForVisualFrames(2)
+      return committed
+    } catch (error) {
+      applyPetWindowLayout({ ...previousLayout, revision: petWindowLayout.revision })
+      throw error
+    } finally {
+      if (transitionFrame) transitionFrame.remove()
+      if (transitionActive) window.petAPI.setLongMessageTransitionState(false)
+    }
+  }
+
+  function requestLongMessageLayout(options) {
+    // A fast double click can enqueue close while open is still handing its
+    // compositor frame to the new native bounds. Keep those transactions in
+    // order so a late open commit can never win over the user's collapse.
+    const operation = longMessageLayoutQueue
+      .catch(() => undefined)
+      .then(() => performLongMessageLayoutRequest(options))
+    longMessageLayoutQueue = operation.catch(() => undefined)
+    return operation
+  }
+
+  async function openLongMessageReader(detail = {}) {
+    const text = String(detail.text || interactionBubble.message || '').trim()
+    const lease = activeBubbleLease
+    if (!text || lease == null || !interactionBubble.expandable) return false
+
+    const requestSequence = ++longMessageRequestSequence
+    if (bubbleTimer) clearTimeout(bubbleTimer)
+    bubbleTimer = null
+    if (externalPriorityTimer) clearTimeout(externalPriorityTimer)
+    externalPriorityTimer = null
+    longMessageState = {
+      open: true,
+      text,
+      label: String(detail.label || interactionBubble.label || '伙伴'),
+      source: detail.source === 'external' || interactionBubble.source === 'external' ? 'external' : '',
+      lease,
+      speech: bubbleSpeechForLease(lease),
+    }
+    syncLongMessageContent()
+    hideBubbleForLongMessageReader(lease)
+
+    try {
+      const layout = await requestLongMessageLayout({
+        open: true,
+        preferredWidth: LONG_MESSAGE_READER_WIDTH,
+      })
+      if (requestSequence !== longMessageRequestSequence || lease !== activeBubbleLease || !longMessageState.open) return false
+      applyPetWindowLayout(layout)
+      longMessageReader.hidden = false
+      // The host ignores the hidden bubble while the reader layout is open.
+      // Clear its cached bounds only after the atomic window-layout commit so
+      // Windows does not rebuild the collapsed shape immediately beforehand.
+      window.petAPI.reportBubbleBounds(null)
+      // Chromium does not reliably apply scrollTop while an element is
+      // display:none via [hidden]. Every newly opened message must begin at
+      // the first line, including after the previous theme was scrolled down.
+      longMessageBody.scrollTop = 0
+      longMessageReader.classList.remove('is-visible')
+      requestAnimationFrame(() => {
+        if (!longMessageState.open) return
+        longMessageReader.classList.add('is-visible')
+        longMessageBody.focus({ preventScroll: true })
+        scheduleLongMessageMeasurement()
+      })
+      setDragAffordance(false)
+      markInteraction(60000)
+      return true
+    } catch (error) {
+      if (requestSequence !== longMessageRequestSequence) return false
+      console.warn('Long-message reader failed to open:', error.message)
+      longMessageState.open = false
+      longMessageState.source = ''
+      syncLongMessageSource('')
+      longMessageState.speech = null
+      syncLongMessageSpeech(null)
+      interactionBubble.expanded = false
+      longMessageReader.hidden = true
+      restoreBubbleAfterLongMessageReader({ text, lease })
+      resumeBubbleDismissalAfterReader({ text, lease })
+      showStatus('完整消息展开失败', 'error', 2200)
+      return false
+    }
+  }
+
+  async function closeLongMessageReader(options = {}) {
+    const stateBeforeClose = { ...longMessageState }
+    const hadExpandedLayout = Boolean(petWindowLayout.expanded)
+    if (!stateBeforeClose.open && !hadExpandedLayout) return false
+    const readerOwnsActiveSpeech = Boolean(
+      stateBeforeClose.speech && activeSpeechAssetId === stateBeforeClose.speech.id
+    ) || activeSpeechBubbleLease === stateBeforeClose.lease || activeSpeechButton === longMessageAudio
+    if (readerOwnsActiveSpeech) stopCurrentSpeech()
+    const requestSequence = ++longMessageRequestSequence
+    longMessageState = { open: false, text: '', label: '', source: '', lease: null, speech: null }
+    syncLongMessageSource('')
+    syncLongMessageSpeech(null)
+    if (longMessageMeasureFrame != null) cancelAnimationFrame(longMessageMeasureFrame)
+    longMessageMeasureFrame = null
+    interactionBubble.expanded = false
+    longMessageReader.classList.remove('is-visible', 'is-scrollable', 'is-at-start', 'is-at-end')
+    longMessageBody.scrollTop = 0
+    longMessageReader.hidden = true
+    resetLongMessageCopyFeedback()
+    reportLongMessageVisualBounds()
+
+    try {
+      // Paint the hidden state before changing the native origin/width. Without
+      // this frame barrier Windows can reuse the previous card texture at its
+      // collapsed offset and the reader visibly slides before disappearing.
+      if (!options.hostLayout) await waitForVisualFrames(2)
+      const layout = options.hostLayout || await requestLongMessageLayout({ open: false })
+      if (requestSequence === longMessageRequestSequence) applyPetWindowLayout(layout)
+    } catch (error) {
+      console.warn('Long-message reader failed to collapse:', error.message)
+    }
+    if (requestSequence === longMessageRequestSequence) {
+      if (options.dismissBubble === true) {
+        if (
+          stateBeforeClose.lease === externalPriorityBubbleLease &&
+          externalPriorityMessageId
+        ) {
+          releaseExternalPriority(externalPriorityMessageId)
+        } else {
+          dismissBubble(stateBeforeClose.lease, true)
+        }
+      } else {
+        if (options.restoreBubble !== false) restoreBubbleAfterLongMessageReader(stateBeforeClose)
+        if (options.resumeBubble !== false) resumeBubbleDismissalAfterReader(stateBeforeClose)
+      }
+    }
+    return true
+  }
+
+  function dismissBubble(lease = activeBubbleLease, force = false) {
+    if (lease == null || lease !== activeBubbleLease) return false
+    if (longMessageState.open && longMessageState.lease === lease) {
+      if (!force) return false
+      closeLongMessageReader({ resumeBubble: false, restoreBubble: false })
+    }
     if (bubbleTimer) clearTimeout(bubbleTimer)
     bubbleTimer = null
     activeBubbleLease = null
+    if (activeBubbleSpeech && activeBubbleSpeech.lease === lease) activeBubbleSpeech = null
+    interactionBubble.removeAttribute('aria-hidden')
     interactionBubble.classList.remove('is-visible')
     window.petAPI.reportBubbleBounds(null)
     return true
   }
 
-  function updateBubbleText(lease, text) {
+  function updateBubbleText(lease, text, options = {}) {
     if (lease == null || lease !== activeBubbleLease || !text) return false
+    if (Object.prototype.hasOwnProperty.call(options, 'speech')) {
+      setBubbleSpeech(lease, options.speech, options.source)
+    }
     interactionBubble.message = text
     syncBubbleChrome()
-    layoutInteractionBubble()
+    if (interactionBubble.classList.contains('is-visible')) layoutInteractionBubble()
+    if (longMessageState.open && longMessageState.lease === lease) {
+      syncLongMessageContent(text, interactionBubble.label, interactionBubble.source)
+    }
     return true
   }
 
@@ -1951,12 +2680,14 @@
     ) return null
     // AI 请求期间只允许最终回复占用宠物气泡；拖动、点击和闲置反馈
     // 仍可执行动作与粒子效果，但不覆盖对话状态，也不在结束后补发。
-    if (chatBusy && source !== 'ai') return null
+    if (externalPriorityMessageId && source !== 'external') return null
+    if (chatBusy && !['ai', 'external'].includes(source)) return null
     // 气泡是严格的单实例资源：当前内容存续期间，任何后来消息直接
     // 丢弃，不替换、不续时，也不进入队列。
     if (activeBubbleLease != null || interactionBubble.classList.contains('is-visible')) return null
     const lease = ++bubbleLeaseSequence
     activeBubbleLease = lease
+    setBubbleSpeech(lease, options.speech, source)
 
     interactionBubble.message = text
     interactionBubble.classList.remove('is-left', 'is-right')
@@ -1993,8 +2724,9 @@
       angry: { motion: 'angry', count: 7, pose: { x: -0.36, y: -0.14 } },
       drag: { motion: 'drag', count: 5, pose: { x: 0.22, y: 0.12 } },
     }[kind] || { motion: 'tap', count: 6, pose: { x: 0, y: 0.2 } }
-    const x = Math.max(20, Math.min(window.innerWidth - 20, Number(point && point.clientX) || window.innerWidth * 0.5))
-    const y = Math.max(20, Math.min(window.innerHeight - 20, Number(point && point.clientY) || window.innerHeight * 0.32))
+    const viewport = petViewportSize()
+    const x = Math.max(20, Math.min(viewport.width - 20, Number(point && point.clientX) || viewport.width * 0.5))
+    const y = Math.max(20, Math.min(viewport.height - 20, Number(point && point.clientY) || viewport.height * 0.32))
 
     clearReactionTimers()
     const priority = kind === 'excited' ? motionPriority.force : motionPriority.normal
@@ -2014,10 +2746,45 @@
     markInteraction(kind === 'calm' ? 3000 : 2400)
   }
 
-  function appendChatMessage(text, type = 'assistant', speech = null, kind = null) {
+  function addSpeechButton(message, text, speech) {
+    const playableSpeech = normalizePlayableSpeech(speech, 'ai')
+    if (!message || !playableSpeech || message.querySelector('.ai-message-audio')) return null
+    const audioButton = document.createElement('button')
+    audioButton.className = 'ai-message-audio'
+    audioButton.type = 'button'
+    audioButton.dataset.speechAssetId = playableSpeech.id
+    audioButton.setAttribute('aria-pressed', 'false')
+    audioButton.setAttribute('aria-label', '播放这条语音')
+    audioButton.title = '播放这条语音'
+    audioButton.innerHTML = '<svg viewBox="0 0 18 18" aria-hidden="true"><path d="M3 7h3l3.5-2.8v9.6L6 11H3z"/><path d="M12 6.2a4 4 0 0 1 0 5.6M14 4.3a6.6 6.6 0 0 1 0 9.4"/></svg>'
+    audioButton.addEventListener('click', () => playGeneratedSpeech(playableSpeech, audioButton, text))
+    message.classList.add('has-audio')
+    message.appendChild(audioButton)
+    return audioButton
+  }
+
+  function appendChatMessage(text, type = 'assistant', speech = null, kind = null, metadata = {}) {
     const message = document.createElement('div')
     message.className = `ai-message is-${type}`
     message.dataset.messageKind = kind || (type === 'thinking' || type === 'error' ? 'system' : 'conversation')
+    const source = metadata.source === 'external' ? 'external' : 'app'
+    const sourceLabel = source === 'external' ? '外部' : 'APP'
+    message.dataset.messageSource = source
+    message.dataset.messageSourceLabel = sourceLabel
+    if (source === 'external' && metadata.sender) message.dataset.messageSender = String(metadata.sender).slice(0, 60)
+    const origin = document.createElement('span')
+    origin.className = 'ai-message-origin'
+    const badge = document.createElement('b')
+    badge.className = 'ai-message-source'
+    badge.textContent = sourceLabel
+    origin.appendChild(badge)
+    if (source === 'external' && metadata.sender) {
+      const sender = document.createElement('span')
+      sender.className = 'ai-message-sender'
+      sender.textContent = String(metadata.sender).slice(0, 60)
+      origin.appendChild(sender)
+    }
+    message.appendChild(origin)
     const content = document.createElement('span')
     content.className = 'ai-message-content'
     content.textContent = text
@@ -2030,18 +2797,7 @@
       timestamp.textContent = now.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })
       message.appendChild(timestamp)
     }
-    if (type === 'assistant' && speech && speech.audioBase64) {
-      const audioButton = document.createElement('button')
-      audioButton.className = 'ai-message-audio'
-      audioButton.type = 'button'
-      audioButton.setAttribute('aria-label', '播放这条语音')
-      audioButton.title = '播放这条语音'
-      audioButton.innerHTML = '<svg viewBox="0 0 18 18" aria-hidden="true"><path d="M3 7h3l3.5-2.8v9.6L6 11H3z"/><path d="M12 6.2a4 4 0 0 1 0 5.6M14 4.3a6.6 6.6 0 0 1 0 9.4"/></svg>'
-      const voiceBubbleText = text.length > 42 ? `${text.slice(0, 42)}…` : text
-      audioButton.addEventListener('click', () => playGeneratedSpeech(speech.audioBase64, audioButton, voiceBubbleText))
-      message.classList.add('has-audio')
-      message.appendChild(audioButton)
-    }
+    if (type === 'assistant') addSpeechButton(message, text, speech)
     chatMessages.appendChild(message)
     chatMessages.scrollTop = chatMessages.scrollHeight
     updateChatPosition()
@@ -2060,17 +2816,26 @@
     const entries = []
     chatMessages.querySelectorAll('.ai-message').forEach(el => {
       if (el.classList.contains('is-thinking')) return
+      if (el.dataset.messageSource === 'external') return
       const type = ['user', 'error'].find(t => el.classList.contains(`is-${t}`)) || 'assistant'
       const kind = el.dataset.messageKind || (type === 'error' ? 'system' : 'conversation')
       const content = el.querySelector('.ai-message-content')
-      if (content && content.textContent) entries.push({ type, kind, text: content.textContent })
+      if (content && content.textContent) {
+        entries.push({
+          type,
+          kind,
+          text: content.textContent,
+          source: 'app',
+          sourceLabel: 'APP',
+        })
+      }
     })
     chatHistories.set(modelId, entries.slice(-CHAT_HISTORY_KEEP))
   }
 
   function renderChatHistoryEntries(entries) {
     chatMessages.replaceChildren()
-    for (const entry of entries) appendChatMessage(entry.text, entry.type, null, entry.kind)
+    for (const entry of entries) appendChatMessage(entry.text, entry.type, null, entry.kind, entry)
   }
 
   async function restoreChatHistory(modelId) {
@@ -2088,10 +2853,12 @@
         state.snapshot.currentModelId !== modelId
       ) return
       const entries = result && result.ok && Array.isArray(result.messages)
-        ? result.messages.map(message => ({
+        ? result.messages.filter(message => message.source !== 'external').map(message => ({
             type: message.role === 'user' ? 'user' : 'assistant',
             kind: 'conversation',
             text: String(message.content || ''),
+            source: 'app',
+            sourceLabel: 'APP',
           })).filter(entry => entry.text)
         : []
       chatHistories.set(modelId, entries.slice(-CHAT_HISTORY_KEEP))
@@ -2149,21 +2916,23 @@
   function chatAnchorMatchesCurrentModel() {
     const modelId = state.modelMeta && state.modelMeta.id
     const modelScale = state.model && Number(state.model.scale)
+    const viewport = petViewportSize()
     return Number.isFinite(state.chatAnchorBottom)
       && state.chatAnchorModelId === modelId
       && Number.isFinite(modelScale)
       && Math.abs(state.chatAnchorScale - modelScale) < 0.001
-      && state.chatAnchorViewportHeight === window.innerHeight
+      && state.chatAnchorViewportHeight === viewport.height
   }
 
   function captureChatAnchor(bounds = state.lastHitBounds) {
     if (!bounds || !state.modelMeta || !state.model) return false
     const modelScale = Number(state.model.scale)
     if (!Number.isFinite(modelScale)) return false
-    state.chatAnchorBottom = Math.max(0, Math.min(window.innerHeight, bounds.y + bounds.height))
+    const viewport = petViewportSize()
+    state.chatAnchorBottom = Math.max(0, Math.min(viewport.height, bounds.y + bounds.height))
     state.chatAnchorModelId = state.modelMeta.id
     state.chatAnchorScale = modelScale
-    state.chatAnchorViewportHeight = window.innerHeight
+    state.chatAnchorViewportHeight = viewport.height
     return true
   }
 
@@ -2173,7 +2942,7 @@
       return
     }
     const chatTop = chatPanel.offsetTop
-    const bottom = Math.max(18, window.innerHeight - chatTop + 10)
+    const bottom = Math.max(18, petViewportSize().height - chatTop + 10)
     statusToast.style.setProperty('--toast-bottom', `${bottom}px`)
     if (statusToast.classList.contains('is-visible')) requestAnimationFrame(reportStatusToastBounds)
   }
@@ -2192,7 +2961,7 @@
     }
     const characterBottom = state.chatAnchorBottom
     const panelHeight = chatPanel.offsetHeight || 222
-    const maximumTop = Math.max(10, window.innerHeight - panelHeight - 10)
+    const maximumTop = Math.max(10, petViewportSize().height - panelHeight - 10)
     chatPanel.classList.toggle('is-overlapping-pet', characterBottom > maximumTop)
     chatPanel.style.setProperty('--chat-top', `${Math.min(characterBottom, maximumTop)}px`)
     updateStatusToastPosition()
@@ -2288,12 +3057,9 @@
 
   function stopCurrentSpeech() {
     speechSequence += 1
-    if (activeSpeechButton) {
-      activeSpeechButton.classList.remove('is-playing')
-      activeSpeechButton.setAttribute('aria-label', '播放这条语音')
-      activeSpeechButton.title = '播放这条语音'
-      activeSpeechButton = null
-    }
+    activeSpeechButton = null
+    activeSpeechAssetId = null
+    syncSpeechControlState()
     if (activeSpeechBubbleLease != null) {
       const lease = activeSpeechBubbleLease
       activeSpeechBubbleLease = null
@@ -2301,6 +3067,31 @@
     }
     if (!state.model || typeof state.model.stopAudio !== 'function') return
     try { state.model.stopAudio() } catch (error) { /* 没有正在播放的语音 */ }
+    // live2d-renderer stops the Web Audio source but intentionally retains the
+    // decoded samples and RMS cursor. Its update loop therefore keeps driving
+    // ParamMouthOpenY after playback was cancelled. Reset both the controller
+    // and current lip-sync parameters so collapse closes the mouth immediately.
+    const wavController = state.model.wavController
+    if (wavController) {
+      wavController.samples = null
+      wavController.sampleOffset = 0
+      wavController.samplesPerChannel = 0
+      wavController.userTime = 0
+      wavController.previousRms = 0
+      wavController.rms = 0
+    }
+    const coreModel = state.model.model
+    const lipSyncIds = state.model.lipSyncIds
+    if (!coreModel || !lipSyncIds || typeof lipSyncIds.getSize !== 'function') return
+    for (let index = 0; index < lipSyncIds.getSize(); index++) {
+      try {
+        const id = lipSyncIds.at(index)
+        const parameterIndex = coreModel.getParameterIndex(id)
+        const minimum = coreModel.getParameterMinimumValue(parameterIndex)
+        const maximum = coreModel.getParameterMaximumValue(parameterIndex)
+        coreModel.setParameterValueById(id, Math.max(minimum, Math.min(maximum, 0)))
+      } catch (error) { /* 不完整模型可能没有可写的口型参数 */ }
+    }
   }
 
   function chatCapabilityAvailability(capability) {
@@ -2345,7 +3136,10 @@
         return null
       }
       if (!result.audioBase64) throw new Error('语音服务没有返回可播放音频')
-      return { audioBase64: result.audioBase64, mimeType: result.mimeType || 'audio/wav' }
+      return normalizePlayableSpeech({
+        audioBase64: result.audioBase64,
+        mimeType: result.mimeType || 'audio/wav',
+      }, 'ai')
     } catch (error) {
       if (requestId !== speechSequence) return null
       console.warn('Speech synthesis failed:', error.message)
@@ -2354,52 +3148,53 @@
     }
   }
 
-  async function playGeneratedSpeech(audioBase64, button = null, bubbleText = '') {
-    if (!audioBase64 || !state.model || typeof state.model.inputAudio !== 'function') return false
-    if (chatMuted) {
+  async function playGeneratedSpeech(speechInput, button = null, bubbleText = '', options = {}) {
+    const speech = normalizePlayableSpeech(speechInput, options.source)
+    if (!speech || !state.model || typeof state.model.inputAudio !== 'function') return false
+    if (chatMuted && !options.ignoreMute) {
       showStatus('请先解除静音再播放语音', 'info', 2200)
       return false
     }
-    if (button && activeSpeechButton === button) {
+    if (activeSpeechAssetId === speech.id) {
       stopCurrentSpeech()
       return false
     }
     stopCurrentSpeech()
     const requestId = ++speechSequence
     const model = state.model
-    if (button) {
-      activeSpeechButton = button
-      button.classList.add('is-playing')
-      button.setAttribute('aria-label', '停止这条语音')
-      button.title = '停止这条语音'
-    }
+    activeSpeechButton = button
+    activeSpeechAssetId = speech.id
+    if (button) button.dataset.speechAssetId = speech.id
+    syncSpeechControlState()
     try {
       if (model.audioContext && model.audioContext.state === 'suspended') await model.audioContext.resume()
       if (requestId !== speechSequence || model !== state.model) return false
       markInteraction(60000)
-      const playback = model.inputAudio(base64ToArrayBuffer(audioBase64), true)
-      const speechBubbleLease = bubbleText
-        ? showBubble(bubbleText, null, 'ai', { hold: true })
+      const playback = model.inputAudio(base64ToArrayBuffer(speech.audioBase64), true)
+      const speechBubbleLease = bubbleText && !options.reuseBubble
+        ? showBubble(bubbleText, null, options.source === 'external' ? 'external' : 'ai', {
+            hold: true,
+            speech,
+          })
         : null
       if (speechBubbleLease != null) activeSpeechBubbleLease = speechBubbleLease
       Promise.resolve(playback).then(() => {
         if (requestId !== speechSequence) return
-        if (button && activeSpeechButton === button) {
-          button.classList.remove('is-playing')
-          button.setAttribute('aria-label', '播放这条语音')
-          button.title = '播放这条语音'
-          activeSpeechButton = null
-        }
+        activeSpeechButton = null
+        activeSpeechAssetId = null
+        syncSpeechControlState()
         if (activeSpeechBubbleLease === speechBubbleLease) {
           activeSpeechBubbleLease = null
           dismissBubble(speechBubbleLease)
         }
         markInteraction(1600)
+        if (typeof options.onComplete === 'function') options.onComplete(true)
       }).catch(error => {
         if (requestId !== speechSequence) return
         stopCurrentSpeech()
         console.warn('Speech playback failed:', error.message)
         showStatus(error.message || '语音播放失败', 'error', 3200)
+        if (typeof options.onComplete === 'function') options.onComplete(false)
       })
       return true
     } catch (error) {
@@ -2407,13 +3202,192 @@
       stopCurrentSpeech()
       console.warn('Speech playback failed:', error.message)
       showStatus(error.message || '语音播放失败', 'error', 3200)
+      if (typeof options.onComplete === 'function') options.onComplete(false)
       return false
+    }
+  }
+
+  function releaseExternalPriority(messageId) {
+    if (!messageId || externalPriorityMessageId !== messageId) return false
+    if (longMessageState.open && longMessageState.lease === externalPriorityBubbleLease) return false
+    if (externalPriorityTimer) clearTimeout(externalPriorityTimer)
+    externalPriorityTimer = null
+    if (externalPriorityBubbleLease != null) dismissBubble(externalPriorityBubbleLease)
+    externalPriorityBubbleLease = null
+    externalPriorityMessageId = ''
+    syncBubbleChrome()
+    return true
+  }
+
+  function updateOpenLongMessageForIncoming(text, source, speech = null) {
+    const lease = longMessageState.open && longMessageState.lease === activeBubbleLease
+      ? activeBubbleLease
+      : null
+    if (lease == null) return null
+    if (bubbleTimer) clearTimeout(bubbleTimer)
+    bubbleTimer = null
+    if (!updateBubbleText(lease, text, { speech, source })) return null
+    longMessageBody.scrollTop = 0
+    scheduleLongMessageMeasurement()
+    return lease
+  }
+
+  function messageOverflowsCollapsedBubble(text, source = 'external') {
+    const normalizedText = String(text || '').trim()
+    if (!normalizedText) return false
+    const probe = document.createElement('pet-speech-bubble')
+    probe.className = 'interaction-bubble-widget'
+    probe.setAttribute('theme', interactionBubble.getAttribute('theme') || 'glass')
+    probe.setAttribute('style-name', interactionBubble.getAttribute('style-name') || 'glass')
+    probe.label = interactionBubble.label
+    probe.source = source
+    probe.message = normalizedText
+    probe.style.visibility = 'hidden'
+    probe.style.pointerEvents = 'none'
+    petViewport.appendChild(probe)
+    let overflowing = false
+    try {
+      overflowing = typeof probe.measureOverflow === 'function' && probe.measureOverflow()
+    } finally {
+      probe.remove()
+    }
+    return Boolean(overflowing)
+  }
+
+  function shouldRetainReaderForExternalMessage(message) {
+    // A direct message's final display text is already known. A relay reply is
+    // unknown while it is thinking, so temporarily retain the reader and make
+    // the final long/short decision when the completed text arrives.
+    return Boolean(
+      message && (
+        message.type === 'relay' ||
+        (message.type === 'direct' && messageOverflowsCollapsedBubble(message.content, 'external'))
+      )
+    )
+  }
+
+  function updateExternalPriorityFinalSurface(text, speech = null) {
+    const readerOwnsLease = longMessageState.open
+      && longMessageState.lease === externalPriorityBubbleLease
+      && externalPriorityBubbleLease === activeBubbleLease
+    if (readerOwnsLease && !messageOverflowsCollapsedBubble(text, 'external')) {
+      const readerLease = externalPriorityBubbleLease
+      dismissBubble(readerLease, true)
+      externalPriorityBubbleLease = showBubble(text, null, 'external', { hold: true, speech })
+      return externalPriorityBubbleLease != null
+    }
+    if (updateBubbleText(externalPriorityBubbleLease, text, { speech, source: 'external' })) return true
+    if (activeBubbleLease != null) dismissBubble(activeBubbleLease)
+    externalPriorityBubbleLease = showBubble(text, null, 'external', { hold: true, speech })
+    return externalPriorityBubbleLease != null
+  }
+
+  function scheduleExternalPriorityRelease(messageId, text, maximum = null) {
+    if (externalPriorityTimer) clearTimeout(externalPriorityTimer)
+    const duration = Number.isFinite(maximum) && maximum > 0
+      ? maximum
+      : bubbleDurationForText(text)
+    externalPriorityTimer = setTimeout(() => releaseExternalPriority(messageId), duration)
+  }
+
+  function beginExternalPriority(message) {
+    if (externalPriorityTimer) clearTimeout(externalPriorityTimer)
+    externalPriorityTimer = null
+    const retainedReaderLease = shouldRetainReaderForExternalMessage(message)
+      && longMessageState.open && longMessageState.lease === activeBubbleLease
+      ? activeBubbleLease
+      : null
+    if (retainedReaderLease == null && activeBubbleLease != null) dismissBubble(activeBubbleLease, true)
+    if (retainedReaderLease != null) stopCurrentSpeech()
+    externalPriorityMessageId = message.id
+    externalPriorityBubbleLease = retainedReaderLease
+    syncBubbleChrome()
+    return retainedReaderLease
+  }
+
+  function externalMessageProgressText(event, message) {
+    if (event && typeof event.progressText === 'string' && event.progressText.trim()) {
+      return event.progressText.trim()
+    }
+    const stage = event && event.stage
+    if (stage === 'thinking') return '思考中…'
+    if (stage === 'speech') return '语音合成中…'
+    if (message.type === 'relay') return '思考中…'
+    if (message.speak) return '语音合成中…'
+    return message.content
+  }
+
+  function handleExternalMessageEvent(event) {
+    if (!event || !event.message || !event.message.id) return
+    const message = event.message
+
+    if (event.phase === 'received') {
+      const retainedReaderLease = beginExternalPriority(message)
+      const progressText = externalMessageProgressText(event, message)
+      if (retainedReaderLease != null) {
+        externalPriorityBubbleLease = updateOpenLongMessageForIncoming(progressText, 'external')
+      } else {
+        externalPriorityBubbleLease = showBubble(progressText, null, 'external', { hold: true })
+      }
+      markInteraction(60000)
+      return
+    }
+
+    // 外部消息的中间态只更新当前长持有气泡：不设置超时，
+    // 不进入 App 聊天记录，也不在阶段切换时销毁后重建。
+    if (event.phase === 'progress') {
+      if (externalPriorityMessageId !== message.id) return
+      const progressText = externalMessageProgressText(event, message)
+      if (!updateBubbleText(externalPriorityBubbleLease, progressText)) {
+        if (activeBubbleLease != null) dismissBubble(activeBubbleLease, true)
+        externalPriorityBubbleLease = showBubble(progressText, null, 'external', { hold: true })
+      }
+      markInteraction(60000)
+      return
+    }
+
+    if (event.phase === 'failed') {
+      if (externalPriorityMessageId !== message.id) return
+      const errorText = event.error || '外部消息处理失败'
+      updateExternalPriorityFinalSurface(errorText)
+      scheduleExternalPriorityRelease(message.id, errorText)
+      return
+    }
+
+    if (event.phase !== 'completed' || !event.result) return
+    if (externalPriorityMessageId !== message.id) return
+    const result = event.result
+    const speech = normalizePlayableSpeech(result.speech, 'external')
+    updateExternalPriorityFinalSurface(result.text, speech)
+    runInteraction(emotionInteractions[result.emotion] || 'curious', null, { bubble: false })
+    if (speech) {
+      scheduleExternalPriorityRelease(message.id, result.text, 65000)
+      playGeneratedSpeech(speech, null, '', {
+        ignoreMute: true,
+        reuseBubble: true,
+        source: 'external',
+        onComplete: () => releaseExternalPriority(message.id),
+      }).then(started => {
+        if (!started) scheduleExternalPriorityRelease(message.id, result.text)
+      })
+    } else {
+      scheduleExternalPriorityRelease(message.id, result.text)
     }
   }
 
   async function submitChat() {
     const text = chatInput.value.trim()
     if (!text || chatBusy) return
+    const retainedReaderLease = longMessageState.open && longMessageState.lease === activeBubbleLease
+      ? activeBubbleLease
+      : null
+    if (retainedReaderLease != null) {
+      if (externalPriorityTimer) clearTimeout(externalPriorityTimer)
+      externalPriorityTimer = null
+      externalPriorityMessageId = ''
+      externalPriorityBubbleLease = null
+    }
+    const requestSequence = ++chatRequestSequence
     stopCurrentSpeech()
     chatBusy = true
     chatInput.value = ''
@@ -2424,52 +3398,77 @@
     chatPresenceText.textContent = '思考中'
     appendChatMessage(text, 'user')
     const thinking = appendChatMessage('正在想', 'thinking')
-    const progressBubbleLease = showBubble('思考中…', null, 'ai', { hold: true })
+    const progressBubbleLease = retainedReaderLease != null
+      ? updateOpenLongMessageForIncoming('思考中…', 'ai')
+      : showBubble('思考中…', null, 'ai', { hold: true })
+    const readerStillOwnsProgress = () => progressBubbleLease != null
+      && longMessageState.open
+      && longMessageState.lease === progressBubbleLease
+      && activeBubbleLease === progressBubbleLease
     markInteraction(60000)
     try {
       const result = await window.petAPI.sendAIMessage(text)
+      if (requestSequence !== chatRequestSequence) return
       if (!result || !result.ok) throw new Error(result && result.error ? result.error : '暂时没有收到回复')
       const ai = state.snapshot && state.snapshot.ai
       const ttsReady = Boolean(!chatMuted && ai && ai.readyByCapability && ai.readyByCapability.tts)
       let speech = null
       if (ttsReady) {
-        thinking.textContent = '语言组织中'
-        chatPresenceText.textContent = '语言组织中'
-        updateBubbleText(progressBubbleLease, '语言组织中…')
+        thinking.textContent = '语音合成中'
+        chatPresenceText.textContent = '语音合成中'
+        updateBubbleText(progressBubbleLease, '语音合成中…')
         markInteraction(60000)
         speech = await synthesizeAssistantSpeech(result.text)
+        if (requestSequence !== chatRequestSequence) return
       }
       thinking.remove()
-      dismissBubble(progressBubbleLease)
+      const keepReaderOpen = readerStillOwnsProgress()
+      if (!keepReaderOpen) dismissBubble(progressBubbleLease)
       const assistantMessage = appendChatMessage(result.text, 'assistant', speech)
       // 回复开头的情绪标签已由主进程剥离并解析为稳定键，映射到对应
       // 的情绪动作；模型没给标签时退回好奇反应（原默认行为）
       runInteraction(emotionInteractions[result.emotion] || 'curious', null, { bubble: false })
-      const bubbleText = result.text.length > 42 ? `${result.text.slice(0, 42)}…` : result.text
       if (speech) {
         const audioButton = assistantMessage.querySelector('.ai-message-audio')
-        playGeneratedSpeech(speech.audioBase64, audioButton, bubbleText)
-      } else showBubble(bubbleText, null, 'ai')
+        if (keepReaderOpen) {
+          updateBubbleText(progressBubbleLease, result.text, { speech, source: 'ai' })
+          playGeneratedSpeech(speech, audioButton, '', { reuseBubble: true, source: 'ai' })
+        } else {
+          playGeneratedSpeech(speech, audioButton, result.text)
+        }
+      } else if (keepReaderOpen) {
+        updateBubbleText(progressBubbleLease, result.text, { speech: null, source: 'ai' })
+      } else {
+        showBubble(result.text, null, 'ai')
+      }
     } catch (error) {
+      if (requestSequence !== chatRequestSequence) return
       thinking.remove()
-      dismissBubble(progressBubbleLease)
       const message = error.message || '连接失败，请稍后再试'
       appendChatMessage(message, 'error')
-      showBubble(message, null, 'ai')
+      if (readerStillOwnsProgress()) {
+        updateBubbleText(progressBubbleLease, message, { speech: null, source: 'ai' })
+      } else {
+        dismissBubble(progressBubbleLease)
+        showBubble(message, null, 'ai')
+      }
     } finally {
       dismissBubble(progressBubbleLease)
-      chatBusy = false
-      chatInput.disabled = false
-      updateChatSendState()
-      chatPanel.classList.remove('is-thinking')
-      chatPresenceText.textContent = '在线'
-      chatInput.focus()
+      if (requestSequence === chatRequestSequence) {
+        chatBusy = false
+        chatInput.disabled = false
+        updateChatSendState()
+        chatPanel.classList.remove('is-thinking')
+        chatPresenceText.textContent = '在线'
+        chatInput.focus()
+      } else {
+        thinking.remove()
+      }
     }
   }
 
   function drawEffects(timestamp) {
-    const width = window.innerWidth
-    const height = window.innerHeight
+    const { width, height } = petViewportSize()
     const delta = state.lastFxFrame ? Math.min(0.05, (timestamp - state.lastFxFrame) / 1000) : 0
     state.lastFxFrame = timestamp
     effectsContext.clearRect(0, 0, width, height)
@@ -2692,7 +3691,7 @@
     if (state.model && state.model.kind === 'video-pet' && state.lastHitBounds) {
       return point.clientY <= state.lastHitBounds.y + state.lastHitBounds.height * 0.42
     }
-    return hitAreas.some(name => name.includes('head')) || point.clientY <= window.innerHeight * 0.34
+    return hitAreas.some(name => name.includes('head')) || point.clientY <= petViewportSize().height * 0.34
   }
 
   function runGestureInteraction(gestureId, fallbackKind, point) {
@@ -2749,7 +3748,7 @@
     if (modelChanged) {
       invalidateChatAnchor(true)
       pendingGreetingBubble = null
-      dismissBubble()
+      dismissBubble(activeBubbleLease, true)
     }
     state.snapshot = snapshot
     if (state.modelMeta && state.modelMeta.id === snapshot.currentModelId) {
@@ -2834,15 +3833,16 @@
   })
 
   document.addEventListener('mousedown', event => {
-    if (event.target.closest('#ai-chat-panel')) return
-    if (!state.preferences || event.button !== 0 || state.preferences.interactionMode === 'locked' || !isOnPet(event.clientX, event.clientY)) return
+    if (isInteractivePetUi(event.target)) return
+    const point = viewportPoint(event.clientX, event.clientY)
+    if (!state.preferences || event.button !== 0 || state.preferences.interactionMode === 'locked' || !isOnPet(point.clientX, point.clientY)) return
     state.pointerDown = {
       screenX: event.screenX,
       screenY: event.screenY,
-      clientX: event.clientX,
-      clientY: event.clientY,
+      clientX: point.clientX,
+      clientY: point.clientY,
       time: performance.now(),
-      hitAreas: hitAreasAt(event.clientX, event.clientY),
+      hitAreas: hitAreasAt(point.clientX, point.clientY),
     }
     state.dragging = false
     state.dragCamera = null
@@ -2865,7 +3865,7 @@
       stage.classList.remove('is-dragging')
       if (moved >= 24 && performance.now() - state.lastDragReaction > 1800) {
         state.lastDragReaction = performance.now()
-        runGestureInteraction('drag-end', 'drag', { clientX: event.clientX, clientY: event.clientY })
+        runGestureInteraction('drag-end', 'drag', viewportPoint(event.clientX, event.clientY))
       }
     } else if (!state.longPressTriggered && moved < 6 && elapsed < 520 && isOnPet(pointerDown.clientX, pointerDown.clientY)) {
       queueClickInteraction(pointerDown, pointerDown.hitAreas)
@@ -2885,9 +3885,10 @@
   })
 
   document.addEventListener('contextmenu', event => {
-    if (event.target.closest('#ai-chat-panel')) return
+    if (isInteractivePetUi(event.target)) return
     event.preventDefault()
-    if (state.preferences && state.preferences.interactionMode !== 'locked' && isOnPet(event.clientX, event.clientY)) {
+    const point = viewportPoint(event.clientX, event.clientY)
+    if (state.preferences && state.preferences.interactionMode !== 'locked' && isOnPet(point.clientX, point.clientY)) {
       markInteraction(900)
       window.petAPI.showContextMenu()
     }
@@ -2917,12 +3918,17 @@
   })
 
   document.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && longMessageState.open) {
+      event.preventDefault()
+      closeLongMessageReader({ dismissBubble: true })
+      return
+    }
     if (event.key === 'Escape' && !chatPanel.hidden) {
       event.preventDefault()
       setChatOpen(false)
       return
     }
-    if (event.target.closest('#ai-chat-panel')) return
+    if (isInteractivePetUi(event.target)) return
     if (!event.ctrlKey) return
     if (event.key.toLowerCase() === 'm') {
       event.preventDefault()
@@ -2946,7 +3952,10 @@
       state.activeUntil = Math.max(state.activeUntil, performance.now() + 500)
       ensureScheduler()
     }
-    if (point.inside) updateMouseCapture(point.clientX, point.clientY)
+    if (point.inside) {
+      state.pointer = { clientX: point.clientX, clientY: point.clientY }
+      setDragAffordance(isOnPet(point.clientX, point.clientY))
+    }
     else if (!state.dragging) setDragAffordance(false)
   })
 
@@ -2967,6 +3976,71 @@
   window.petAPI.onModelPreview(previewModelAsset)
 
   window.petAPI.onChatVisibility(open => setChatOpen(open, false))
+
+  window.petAPI.onExternalMessage(handleExternalMessageEvent)
+
+  interactionBubble.addEventListener('bubble-expand', event => {
+    event.preventDefault()
+    openLongMessageReader(event.detail || {})
+  })
+
+  longMessageCollapse.addEventListener('click', () => {
+    closeLongMessageReader({ dismissBubble: true })
+  })
+
+  longMessageAudio.addEventListener('click', () => {
+    const speech = longMessageState.speech
+    const lease = longMessageState.lease
+    if (!longMessageState.open || lease == null || !speech) return
+    playGeneratedSpeech(speech, longMessageAudio, '', {
+      ignoreMute: true,
+      reuseBubble: true,
+      source: speech.source,
+    })
+  })
+
+  longMessageCopy.addEventListener('click', async () => {
+    if (!longMessageState.open || !longMessageState.text) return
+    const copySequence = ++longMessageCopySequence
+    const copiedState = {
+      lease: longMessageState.lease,
+      text: longMessageState.text,
+    }
+    try {
+      const result = await window.petAPI.writeClipboardText(copiedState.text)
+      if (
+        copySequence !== longMessageCopySequence || !longMessageState.open ||
+        longMessageState.lease !== copiedState.lease || longMessageState.text !== copiedState.text
+      ) return
+      if (result !== true) throw new Error('复制失败')
+      const label = longMessageCopy.querySelector('span')
+      longMessageCopy.classList.add('is-copied')
+      if (label) label.textContent = '已复制'
+      longMessageCopy.setAttribute('aria-label', '完整消息已复制')
+      if (longMessageCopyTimer) clearTimeout(longMessageCopyTimer)
+      longMessageCopyTimer = setTimeout(() => {
+        if (copySequence !== longMessageCopySequence) return
+        longMessageCopyTimer = null
+        longMessageCopy.classList.remove('is-copied')
+        if (label) label.textContent = '复制'
+        longMessageCopy.setAttribute('aria-label', '复制完整消息')
+      }, 1500)
+    } catch (error) {
+      console.warn('Long-message copy failed:', error.message)
+      showStatus('复制失败，请稍后再试', 'error', 2200)
+    }
+  })
+
+  longMessageBody.addEventListener('scroll', updateLongMessageOverflowState, { passive: true })
+  longMessageReader.addEventListener('animationend', scheduleLongMessageMeasurement)
+
+  window.petAPI.onPetWindowLayoutChanged(layout => {
+    if (longMessageState.open && layout && layout.expanded === false) {
+      closeLongMessageReader({ hostLayout: layout, dismissBubble: true })
+      return
+    }
+    applyPetWindowLayout(layout)
+  })
 
   window.petAPI.onSettingsPetBackgroundCapture(active => {
     const next = Boolean(active)
@@ -3161,11 +4235,17 @@
   })
 
   window.addEventListener('resize', () => {
-    resizeEffectsCanvas()
-    if (state.model && state.model.loaded) {
+    const viewport = petViewportSize()
+    const viewportChanged = viewport.width !== lastViewportSize.width || viewport.height !== lastViewportSize.height
+    if (viewportChanged) {
+      lastViewportSize = viewport
+      resizeEffectsCanvas()
+    }
+    if (viewportChanged && state.model && state.model.loaded) {
       state.model.needsResize = true
       state.hitMaskPending = true
     }
+    if (longMessageState.open) scheduleLongMessageMeasurement()
   })
 
   // 观察聊天框的真实尺寸，覆盖主题切换、展开动画和系统字体变化。
@@ -3175,9 +4255,12 @@
       if (!chatPanel.hidden) updateChatPosition()
     })
     chatPanelResizeObserver.observe(chatPanel)
+    const longMessageResizeObserver = new ResizeObserver(() => scheduleLongMessageMeasurement())
+    longMessageResizeObserver.observe(longMessageReader)
   }
 
   resizeEffectsCanvas()
+  lastViewportSize = petViewportSize()
   try {
     const snapshot = await window.petAPI.getSnapshot()
     applySnapshot(snapshot)

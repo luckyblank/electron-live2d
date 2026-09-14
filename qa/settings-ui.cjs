@@ -165,6 +165,8 @@ let snapshot = {
     onboardingSeen: true,
     backgroundDetection: true,
     settingsPetBackground: true,
+    appLongScreenshotEnabled: false,
+    externalMessagesEnabled: false,
     settingsTheme: 'glass',
     bubbleStyles: { glass: 'glass', healing: 'glass' },
     chatGreeting: '你好呀～今天想聊点什么？',
@@ -195,6 +197,20 @@ let snapshot = {
       }),
     ],
   },
+  externalMessages: {
+    enabled: false,
+    status: 'stopped',
+    running: false,
+    host: '127.0.0.1',
+    port: 17373,
+    httpBaseUrl: 'http://127.0.0.1:17373',
+    messageUrl: 'http://127.0.0.1:17373/api/v1/messages',
+    websocketUrl: 'ws://127.0.0.1:17373/api/v1/events',
+    testerUrl: 'http://127.0.0.1:17373/external-message-tester.html',
+    queueDepth: 0,
+    websocketClients: 0,
+    error: '',
+  },
 }
 
 let win
@@ -208,9 +224,29 @@ const modelGestureUpdates = []
 const openedUrls = []
 const copiedTexts = []
 const shortcutCaptureRequests = []
+let externalTesterOpenCount = 0
+const externalTesterOpenTargets = []
+let updateCheckCount = 0
+let updateCheckResult = {
+  ok: true,
+  hasUpdate: false,
+  current: '1.0.1',
+  latest: '1.0.1',
+  ignored: false,
+  releaseNotes: '',
+}
 function cloneSnapshot() { return structuredClone(snapshot) }
 function patchSnapshot(patch) {
   snapshot.preferences = { ...snapshot.preferences, ...patch }
+  if (Object.prototype.hasOwnProperty.call(patch, 'externalMessagesEnabled')) {
+    const enabled = Boolean(patch.externalMessagesEnabled)
+    snapshot.externalMessages = {
+      ...snapshot.externalMessages,
+      enabled,
+      running: enabled,
+      status: enabled ? 'running' : 'stopped',
+    }
+  }
   return cloneSnapshot()
 }
 
@@ -287,8 +323,16 @@ function registerIPC() {
     ipcMain.handle(channel, () => true)
   }
   ipcMain.handle('window:open-external', (_event, url) => { openedUrls.push(url); return true })
+  ipcMain.handle('external-message:open-tester', (_event, target) => {
+    externalTesterOpenCount += 1
+    externalTesterOpenTargets.push(target)
+    return snapshot.externalMessages.running
+  })
   ipcMain.handle('clipboard:write-text', (_event, value) => { copiedTexts.push(value); return true })
-  ipcMain.handle('update:check', () => ({ ok: true, hasUpdate: false, current: '1.0.1', latest: '1.0.1' }))
+  ipcMain.handle('update:check', () => {
+    updateCheckCount += 1
+    return structuredClone(updateCheckResult)
+  })
   ipcMain.handle('update:download', () => ({ ok: false }))
   ipcMain.handle('ai:plugin-install', () => ({ ok: true, ai: cloneSnapshot().ai }))
   ipcMain.handle('ai:plugin-activate', (_e, pluginId, capability) => {
@@ -364,6 +408,7 @@ async function pageMetrics(theme, section) {
     const heroNameText = heroName ? heroName.querySelector('.hero-name-text') : null
     const heroNameMark = heroName ? heroName.querySelector('.hero-name-mark') : null
     const heroNameTextStyle = heroNameText ? getComputedStyle(heroNameText) : null
+    const switchInputs = [...active.querySelectorAll('.switch-input')]
     const candidates = [...active.querySelectorAll('h1,h2,p,small,strong,label,button,kbd,output,span')]
       .filter(el => visible(el) && el.children.length === 0 && (el.textContent || '').trim())
       .map(el => {
@@ -418,6 +463,24 @@ async function pageMetrics(theme, section) {
         actionPreviewCount:characterProfile.querySelectorAll('#profile-action-preview .profile-preview-card').length,
         expressionPreviewCount:characterProfile.querySelectorAll('#profile-expression-preview .profile-preview-card').length,
       } : null,
+      switches: switchInputs.map(input => {
+        const track = input.nextElementSibling
+        const row = input.closest('.setting-row')
+        const trackStyle = getComputedStyle(track)
+        const thumbStyle = getComputedStyle(track, '::after')
+        const rowStyle = getComputedStyle(row)
+        return {
+          setting:input.dataset.setting,
+          checked:input.checked,
+          rowBackgroundImage:rowStyle.backgroundImage,
+          rowBackdropFilter:rowStyle.backdropFilter,
+          trackBackgroundColor:trackStyle.backgroundColor,
+          trackBackgroundImage:trackStyle.backgroundImage,
+          trackBorderWidth:trackStyle.borderTopWidth,
+          trackBackdropFilter:trackStyle.backdropFilter,
+          thumbBackgroundColor:thumbStyle.backgroundColor,
+        }
+      }),
       iconCount: active.querySelectorAll('svg').length,
       pluginDetails: [...active.querySelectorAll('.plugin-detail')].map(el => ({
         text: (el.textContent || '').trim(),
@@ -573,7 +636,13 @@ async function run() {
   await win.webContents.insertCSS('*,*::before,*::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}')
   await new Promise(resolve => setTimeout(resolve, 800))
   const frame = await makeBackgroundFrame()
-  if (frame) win.webContents.send('settings:pet-background-frame', frame)
+  if (frame) {
+    win.webContents.send('settings:pet-background-frame', {
+      modelId: snapshot.currentModelId,
+      format: snapshot.models.find(model => model.id === snapshot.currentModelId)?.format || '',
+      frame,
+    })
+  }
   await new Promise(resolve => setTimeout(resolve, 800))
 
   const results = {
@@ -588,6 +657,58 @@ async function run() {
     characterLayouts: {},
     interactions: {},
   }
+
+  const readUpdateIndicator = `(() => {
+    const footer = document.querySelector('#footer-update')
+    return {
+      hidden: footer.hidden,
+      display: getComputedStyle(footer).display,
+      title: footer.title,
+      status: document.querySelector('#update-status').textContent.trim(),
+      dotHidden: document.querySelector('#update-dot').hidden,
+      dialogHidden: document.querySelector('#update-dialog').hidden,
+    }
+  })()`
+  results.interactions.updateIndicator = {
+    checksAfterLoad: updateCheckCount,
+    currentVersion: await win.webContents.executeJavaScript(readUpdateIndicator),
+  }
+
+  updateCheckResult = {
+    ok: true,
+    hasUpdate: true,
+    current: '1.0.1',
+    latest: '1.0.2',
+    ignored: false,
+    releaseNotes: '# QA update',
+  }
+  await win.webContents.executeJavaScript(`document.querySelector('#check-update').click()`)
+  await new Promise(resolve => setTimeout(resolve, 100))
+  results.interactions.updateIndicator.availableVersion = await win.webContents.executeJavaScript(readUpdateIndicator)
+  await win.webContents.executeJavaScript(`document.querySelector('#update-later').click()`)
+
+  updateCheckResult.ignored = true
+  await win.webContents.executeJavaScript(`document.querySelector('#check-update').click()`)
+  await new Promise(resolve => setTimeout(resolve, 100))
+  results.interactions.updateIndicator.ignoredVersion = await win.webContents.executeJavaScript(readUpdateIndicator)
+
+  updateCheckResult = { ok: false, reason: 'QA offline' }
+  await win.webContents.executeJavaScript(`document.querySelector('#check-update').click()`)
+  await new Promise(resolve => setTimeout(resolve, 100))
+  results.interactions.updateIndicator.failedCheck = await win.webContents.executeJavaScript(readUpdateIndicator)
+  updateCheckResult = {
+    ok: true,
+    hasUpdate: false,
+    current: '1.0.1',
+    latest: '1.0.1',
+    ignored: false,
+    releaseNotes: '',
+  }
+  await win.webContents.executeJavaScript(`(() => {
+    document.querySelector('#update-status').textContent = '已是最新版本（v1.0.1）'
+    document.querySelector('#update-dot').hidden = true
+    document.querySelector('#footer-update').hidden = true
+  })()`)
 
   for (const theme of ['glass', 'healing']) {
     snapshot.preferences.settingsTheme = theme
@@ -692,6 +813,33 @@ async function run() {
       opaqueCorners: longScreenshotAlpha && longScreenshotAlpha.corners.every(alpha => alpha === 255),
     } : null,
   }
+  shortcutCaptureRequests.length = 0
+  await win.webContents.executeJavaScript(`window.dispatchEvent(new KeyboardEvent('keydown', {
+    key: 'S',
+    ctrlKey: true,
+    shiftKey: true,
+  }))`)
+  await new Promise(resolve => setTimeout(resolve, 80))
+  results.interactions.longScreenshot.disabledShortcutSections = [...shortcutCaptureRequests]
+  results.interactions.longScreenshot.toggle = await win.webContents.executeJavaScript(`(async () => {
+    document.querySelector('.section-tab[data-section="system"]').click()
+    const input = document.querySelector('[data-setting="appLongScreenshotEnabled"]')
+    const row = input.closest('.setting-row')
+    const before = input.checked
+    input.click()
+    await new Promise(resolve => setTimeout(resolve, 120))
+    const state = {
+      exists: Boolean(input),
+      before,
+      after: input.checked,
+      label: row.querySelector('strong').textContent.trim(),
+      hint: row.querySelector('small').textContent.replace(/\s+/g, ' ').trim(),
+    }
+    document.querySelector('.section-tab[data-section="characters"]').click()
+    document.querySelector('[data-profile-tab="interactions"]').click()
+    return state
+  })()`)
+  shortcutCaptureRequests.length = 0
   await win.webContents.executeJavaScript(`window.dispatchEvent(new KeyboardEvent('keydown', {
     key: 'S',
     ctrlKey: true,
@@ -699,6 +847,9 @@ async function run() {
   }))`)
   await new Promise(resolve => setTimeout(resolve, 80))
   results.interactions.longScreenshot.shortcutSections = [...shortcutCaptureRequests]
+  results.interactions.longScreenshot.togglePatch = settingsUpdates.find(update => (
+    update && update.appLongScreenshotEnabled === true
+  )) || null
   await win.webContents.executeJavaScript(`document.querySelector('[data-profile-tab="basic"]').click()`)
 
   results.interactions.bubbleStyles = {}
@@ -1161,6 +1312,13 @@ async function run() {
         return rect.left >= bounds.left - .5 && rect.right <= bounds.right + .5
       }).length
     }
+    const selectedIsVisible = (list, selected) => {
+      const outer = list.getBoundingClientRect()
+      const inner = selected.getBoundingClientRect()
+      // Chromium rounds scrollWidth/clientWidth to whole CSS pixels, so the
+      // final card can differ from the scroller edge by less than one pixel.
+      return inner.left >= outer.left - 1 && inner.right <= outer.right + 1
+    }
     const inspect = kind => {
       const list = document.querySelector(kind === 'action' ? '#profile-action-preview' : '#profile-expression-preview')
       const carousel = list.closest('.profile-preview-carousel')
@@ -1190,11 +1348,7 @@ async function run() {
     await new Promise(resolve => setTimeout(resolve, 100))
     action.locate.click()
     await new Promise(resolve => setTimeout(resolve, 440))
-    const actionSelectedVisible = visibleCount(action.list) > 0 && (() => {
-      const outer = action.list.getBoundingClientRect()
-      const inner = lastAction.getBoundingClientRect()
-      return inner.left >= outer.left - .5 && inner.right <= outer.right + .5
-    })()
+    const actionSelectedVisible = selectedIsVisible(action.list, lastAction)
 
     const expression = inspect('expression')
     expression.next.click()
@@ -1205,13 +1359,9 @@ async function run() {
     await new Promise(resolve => setTimeout(resolve, 100))
     expression.locate.click()
     await new Promise(resolve => setTimeout(resolve, 440))
-    const expressionSelectedVisible = (() => {
-      const outer = expression.list.getBoundingClientRect()
-      const inner = lastExpression.getBoundingClientRect()
-      return inner.left >= outer.left - .5 && inner.right <= outer.right + .5
-    })()
+    const expressionSelectedVisible = selectedIsVisible(expression.list, lastExpression)
     return {
-      action:{ ...action.initial, movedRight:actionMoved, selectedVisible:actionSelectedVisible, selectedId:lastAction.dataset.profileAssetId },
+      action:{ ...action.initial, movedRight:actionMoved, selectedVisible:visibleCount(action.list) > 0 && actionSelectedVisible, selectedId:lastAction.dataset.profileAssetId },
       expression:{ ...expression.initial, movedRight:expressionMoved, selectedVisible:expressionSelectedVisible, selectedId:lastExpression.dataset.profileAssetId },
     }
   })()`)
@@ -1422,6 +1572,85 @@ async function run() {
   })()`)
   results.interactions.themeSwitch = themeSwitch
 
+  settingsUpdates.length = 0
+  results.interactions.externalMessages = await win.webContents.executeJavaScript(`(async () => {
+    const toggle = document.querySelector('[data-setting="externalMessagesEnabled"]')
+    const service = document.querySelector('#external-message-service')
+    const hiddenBeforeEnable = service.hidden
+    toggle.click()
+    await new Promise(resolve => setTimeout(resolve, 140))
+    const httpUrl = document.querySelector('#external-message-http-url').textContent.trim()
+    const websocketUrl = document.querySelector('#external-message-websocket-url').textContent.trim()
+    const httpSelection = getComputedStyle(document.querySelector('#external-message-http-url')).userSelect
+    const checkedWhileEnabled = toggle.checked
+    const hiddenWhileEnabled = service.hidden
+    const testerTarget = document.querySelector('#external-message-tester-target')
+    const defaultTesterTarget = testerTarget.value
+    const testerTargetOptions = [...testerTarget.options].map(option => option.value)
+    const testerTargetPicker = document.querySelector('#external-message-tester-target-picker')
+    const testerTargetTrigger = document.querySelector('#external-message-tester-target-trigger')
+    const openTesterButton = document.querySelector('#external-message-open-tester')
+    document.querySelector('#external-message-open-tester').click()
+    await new Promise(resolve => setTimeout(resolve, 80))
+    const testerDisabled = document.querySelector('#external-message-open-tester').disabled
+    return {
+      checkedWhileEnabled,
+      hiddenBeforeEnable,
+      hiddenWhileEnabled,
+      httpUrl,
+      websocketUrl,
+      httpSelection,
+      copyButtonPresent: Boolean(document.querySelector('#external-message-copy')),
+      testerDisabled,
+      defaultTesterTarget,
+      testerTargetOptions,
+      systemSelectEnhanced: Boolean(testerTarget.classList.contains('search-select-native') && testerTargetPicker && testerTargetTrigger),
+      openTesterButtonText: openTesterButton.textContent.trim(),
+    }
+  })()`)
+  await win.webContents.executeJavaScript(`(() => {
+    document.documentElement.dataset.settingsView = 'system'
+    document.querySelectorAll('.section-tab').forEach(button => {
+      const active = button.dataset.section === 'system'
+      button.classList.toggle('is-active', active)
+      if (active) button.setAttribute('aria-current', 'page')
+      else button.removeAttribute('aria-current')
+    })
+    document.querySelectorAll('.settings-section').forEach(section => {
+      const active = section.dataset.view === 'system'
+      section.hidden = !active
+      section.classList.toggle('is-active', active)
+      if (active) section.scrollTo({ top: 0, left: 0, behavior: 'auto' })
+    })
+  })()`)
+  results.interactions.externalMessages.screenshot = path.join(outDir, 'external-message-service-enabled.png')
+  fs.writeFileSync(
+    results.interactions.externalMessages.screenshot,
+    await win.capturePage().then(image => image.toPNG())
+  )
+  results.interactions.externalMessages.browserTesterOpened = await win.webContents.executeJavaScript(`(async () => {
+    const target = document.querySelector('#external-message-tester-target')
+    target.value = 'browser'
+    document.querySelector('#external-message-open-tester').click()
+    await new Promise(resolve => setTimeout(resolve, 80))
+    return target.value === 'browser'
+  })()`)
+  const disabledExternalState = await win.webContents.executeJavaScript(`(async () => {
+    const toggle = document.querySelector('[data-setting="externalMessagesEnabled"]')
+    toggle.click()
+    await new Promise(resolve => setTimeout(resolve, 140))
+    const service = document.querySelector('#external-message-service')
+    return {
+      hiddenAfterDisable: service.hidden,
+      status: service.dataset.status,
+      statusText: document.querySelector('#external-message-service-status').textContent.trim(),
+    }
+  })()`)
+  Object.assign(results.interactions.externalMessages, disabledExternalState)
+  results.interactions.externalMessages.submittedPatches = [...settingsUpdates]
+  results.interactions.externalMessages.testerOpenCount = externalTesterOpenCount
+  results.interactions.externalMessages.testerOpenTargets = [...externalTesterOpenTargets]
+
   results.consoleErrors = consoleMessages.filter(item => item.level === 'error' || /uncaught|unhandled/i.test(item.message || ''))
   const samePatch = (actual, expected) => {
     if (!actual || Object.keys(actual).length !== Object.keys(expected).length) return false
@@ -1492,6 +1721,23 @@ async function run() {
     ))
   })
   const pageEyebrowSizeIsUniform = results.pages.every(page => page.pageEyebrow && page.pageEyebrow.fontSize === '13px')
+  const switchPages = results.pages.filter(page => ['behavior', 'system'].includes(page.section))
+  const checkedSwitchesByTheme = Object.fromEntries(['glass', 'healing'].map(theme => [
+    theme,
+    switchPages.flatMap(page => page.theme === theme ? page.switches : []).filter(item => item.checked),
+  ]))
+  const expectedSwitchCounts = { behavior: 5, system: 6 }
+  const mainSwitchStylesAreTranslucent = switchPages.length === 4 && switchPages.every(page => (
+    page.switches.length === expectedSwitchCounts[page.section] && page.switches.every(item => (
+      item.rowBackgroundImage.includes('linear-gradient') && item.rowBackgroundImage.includes('rgba') &&
+      item.rowBackdropFilter === 'none' && item.trackBorderWidth === '1px' &&
+      !item.trackBackdropFilter.includes('blur') && item.thumbBackgroundColor.startsWith('rgba') &&
+      (item.checked
+        ? item.trackBackgroundImage.includes('linear-gradient') && item.trackBackgroundImage.includes('rgba')
+        : item.trackBackgroundColor.startsWith('rgba'))
+    ))
+  )) && checkedSwitchesByTheme.glass.length > 0 && checkedSwitchesByTheme.healing.length > 0 &&
+    checkedSwitchesByTheme.glass[0].trackBackgroundImage !== checkedSwitchesByTheme.healing[0].trackBackgroundImage
   const heroTypographyIsAdaptive = Object.values(results.interactions.heroTypography).every(themeCases => (
     Object.values(themeCases).every(result => (
       result.text && result.lang === result.expectedLanguage && result.classes.includes(result.expectedClass) &&
@@ -1544,6 +1790,7 @@ async function run() {
     themeChromeUniformAcrossAllPages: chromeIsUniform,
     petPositionUniformAcrossAllPages: petPositionIsUniform,
     pageEyebrowSizeUniformAcrossAllPages: pageEyebrowSizeIsUniform,
+    mainSwitchesUseThemeAwareTranslucentSurfaces: mainSwitchStylesAreTranslucent,
     heroTypographySupportsCjkLatinAndLongNames: heroTypographyIsAdaptive,
     contactAuthorMatchesReferenceAndWorks: contactAuthorIsValid,
     voicePickerSupportsFuzzySearchAndKeyboard: voicePickerIsValid,
@@ -1555,9 +1802,26 @@ async function run() {
         result.after.captureModeCleared && result.after.titlebarButtonRemoved && result.after.activeSection === 'characters' &&
         result.after.profileTab === result.before.profileTab &&
         Math.abs(result.after.scrollTop - result.before.scrollTop) <= 1 &&
+        result.disabledShortcutSections.length === 0 && result.toggle.exists && !result.toggle.before && result.toggle.after &&
+        result.toggle.label === 'APP 长截图' && result.toggle.hint.includes('当前选中的 Tab 页面') &&
+        result.toggle.hint.includes('Ctrl + Shift + S') && samePatch(result.togglePatch, { appLongScreenshotEnabled: true }) &&
         result.shortcutSections.join('|') === 'characters'
     })(),
     companionChatShortcutRemoved: characterPages.every(page => !page.companion.hasChatShortcut),
+    updateIndicatorAppearsOnlyForNewVersion: (() => {
+      const result = results.interactions.updateIndicator
+      return result.checksAfterLoad === 1 &&
+        result.currentVersion.hidden && result.currentVersion.display === 'none' &&
+        result.currentVersion.status.includes('已是最新版本') && result.currentVersion.dotHidden &&
+        result.currentVersion.dialogHidden &&
+        !result.availableVersion.hidden && result.availableVersion.display !== 'none' &&
+        result.availableVersion.title.includes('v1.0.2') && !result.availableVersion.dotHidden &&
+        !result.availableVersion.dialogHidden &&
+        result.ignoredVersion.hidden && result.ignoredVersion.display === 'none' &&
+        result.ignoredVersion.status.includes('已忽略') && result.ignoredVersion.dotHidden &&
+        result.failedCheck.hidden && result.failedCheck.display === 'none' &&
+        result.failedCheck.status.includes('检查失败') && result.failedCheck.dotHidden
+    })(),
     pluginCardReadyBadgeRemoved: results.pages.filter(page => page.section === 'ai').every(page => page.pluginReadyBadgeCount === 0),
     defaultGreetingShortcutWorks: results.interactions.defaultGreeting.exists &&
       results.interactions.defaultGreeting.label === '默认' &&
@@ -1657,6 +1921,24 @@ async function run() {
       results.interactions.aiDeactivate.stoppedText === '启用' &&
       results.interactions.aiDeactivate.activeLabel === '未启用' &&
       results.interactions.aiDeactivate.restartedText === '停用',
+    externalMessageSwitchAndTesterWork: results.interactions.externalMessages.checkedWhileEnabled &&
+      results.interactions.externalMessages.hiddenBeforeEnable &&
+      !results.interactions.externalMessages.hiddenWhileEnabled &&
+      results.interactions.externalMessages.hiddenAfterDisable &&
+      !results.interactions.externalMessages.testerDisabled &&
+      results.interactions.externalMessages.httpUrl === 'http://127.0.0.1:17373/api/v1/messages' &&
+      results.interactions.externalMessages.websocketUrl === 'ws://127.0.0.1:17373/api/v1/events' &&
+      ['text', 'auto'].includes(results.interactions.externalMessages.httpSelection) &&
+      !results.interactions.externalMessages.copyButtonPresent &&
+      results.interactions.externalMessages.defaultTesterTarget === 'app' &&
+      results.interactions.externalMessages.testerTargetOptions.join('|') === 'app|browser' &&
+      results.interactions.externalMessages.systemSelectEnhanced &&
+      results.interactions.externalMessages.openTesterButtonText === '打开测试页面' &&
+      results.interactions.externalMessages.browserTesterOpened &&
+      results.interactions.externalMessages.testerOpenCount === 2 &&
+      results.interactions.externalMessages.testerOpenTargets.join('|') === 'app|browser' &&
+      results.interactions.externalMessages.submittedPatches.some(patch => samePatch(patch, { externalMessagesEnabled: true })) &&
+      results.interactions.externalMessages.submittedPatches.some(patch => samePatch(patch, { externalMessagesEnabled: false })),
     noPageError: results.consoleErrors.length === 0,
   }
   results.companionAssertions = {

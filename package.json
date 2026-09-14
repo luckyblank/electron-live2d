@@ -8,18 +8,23 @@
     "start": "nodemon --exec electron .",
     "dev": "nodemon --exec \"electron . --dev\"",
     "reset:new-user": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/reset-new-user.ps1",
-    "check": "node --check main.js && node --check model-inspector.js && node --check settings-screenshot.js && node --check preload.js && node --check settings-preload.js && node --check config/bubble-styles.js && node --check config/model-reactions.js && node --check ai/plugin-manager.js && node --check plugins/deepseek/index.js && node --check plugins/zhipu-tts/index.js && node --check plugins/qwen-tts/index.js && node --check renderer/bubble-component.js && node --check renderer/video-pet-model.js && node --check renderer/app.js && node --check renderer/settings.js",
+    "check": "node --check main.js && node --check tray-menu.js && node --check external-message-server.js && node --check external-message-tester-preload.js && node --check model-inspector.js && node --check settings-screenshot.js && node --check preload.js && node --check settings-preload.js && node --check config/bubble-styles.js && node --check config/model-reactions.js && node --check ai/plugin-manager.js && node --check ai/tts-cache.js && node --check plugins/deepseek/index.js && node --check plugins/zhipu-tts/index.js && node --check plugins/qwen-tts/index.js && node --check renderer/bubble-component.js && node --check renderer/video-pet-model.js && node --check renderer/app.js && node --check renderer/settings.js",
     "lint": "eslint .",
-    "qa:check": "node --check qa/settings-ui.cjs && node --check qa/chat-acceptance.cjs && node --check qa/settings-background.cjs && node --check qa/directory-model.cjs && node --check qa/conversation-persistence.cjs && node --check qa/model-reactions.cjs && node --check qa/model-reaction-runtime.cjs && node --check qa/qwen-tts.cjs && node --check qa/video-pet-smoke.cjs",
+    "qa:check": "node --check qa/settings-ui.cjs && node --check qa/chat-acceptance.cjs && node --check qa/settings-background.cjs && node --check qa/directory-model.cjs && node --check qa/conversation-persistence.cjs && node --check qa/external-message-server.cjs && node --check qa/external-message-tester-ui.cjs && node --check qa/clean-model-archives.cjs && node --check qa/model-reactions.cjs && node --check qa/model-reaction-runtime.cjs && node --check qa/qwen-tts.cjs && node --check qa/tts-cache.cjs && node --check qa/video-pet-smoke.cjs && node --check qa/tray-menu.cjs",
     "qa:settings": "electron qa/settings-ui.cjs",
     "qa:chat": "electron qa/chat-acceptance.cjs",
     "qa:background": "electron qa/settings-background.cjs",
     "qa:directory": "electron qa/directory-model.cjs",
     "qa:conversation": "node qa/conversation-persistence.cjs",
+    "qa:external-messages": "node qa/external-message-server.cjs",
+    "qa:external-message-ui": "electron qa/external-message-tester-ui.cjs",
     "qa:qwen": "node qa/qwen-tts.cjs",
+    "qa:tts-cache": "node qa/tts-cache.cjs",
     "qa:models": "node qa/model-reactions.cjs",
     "qa:reactions": "electron qa/model-reaction-runtime.cjs",
     "qa:video": "electron qa/video-pet-smoke.cjs",
+    "qa:clean-models": "node qa/clean-model-archives.cjs",
+    "qa:tray-menu": "node qa/tray-menu.cjs",
     "package:win": "npm run check && electron-builder --win",
     "release": "npm run check && electron-builder --win"
   },
@@ -72,6 +77,7 @@
   },
   "dependencies": {
     "electron-store": "^8.2.0",
-    "live2d-renderer": "^0.6.6"
+    "live2d-renderer": "^0.6.6",
+    "ws": "^8.21.3"
   }
 }

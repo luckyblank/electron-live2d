@@ -96,6 +96,7 @@ async function main() {
   assert.strictEqual(plugin.config.model, 'qwen3-tts-flash')
   assert.strictEqual(plugin.config.voice, 'Cherry')
   assert.strictEqual(plugin.ttsTuning, false)
+  assert.deepStrictEqual(plugin.ttsCacheKeyFields, ['model', 'voice'])
   assert.strictEqual(plugin.voices.length, 48)
   assert(plugin.voices.every(voice => voice.previewUrl.startsWith('https://help-static-aliyun-doc.aliyuncs.com/')))
 

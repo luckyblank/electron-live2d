@@ -1,0 +1,6 @@
+interface:
+  display_name: "宠物模型开发"
+  short_description: "开发并验证本项目的 Live2D 与透明 WebM 桌宠模型"
+  default_prompt: "Use $pet-model-development to add or update a pet model according to this repository's model contracts and QA requirements."
+policy:
+  allow_implicit_invocation: true

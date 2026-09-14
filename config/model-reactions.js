@@ -68,7 +68,7 @@ function cafeGunExpression(overrides = {}, fadeInTime = 0.22, fadeOutTime = 0.35
 // 只有同 stem 的 motion 已被显式登记时才会转换成表情作为兼容兜底。
 const MODEL_REACTION_PROFILES = deepFreeze({
   'cafe-gun': {
-    // 该模型把 33 条动作全部登记在空名称组中，不能依赖动作组语义；这里按
+    // 该模型的原始包把动作全部登记在空名称组中，不能依赖动作组语义；这里按
     // 文件的拼音原名逐项映射。它没有 .exp3.json，因此情绪主要由动作表达。
     //
     // 它的视线参数也沿用旧式全大写命名，而 live2d-renderer 只会自动写入
@@ -194,12 +194,7 @@ const MODEL_REACTION_PROFILES = deepFreeze({
       drag: '惊讶',
     },
     actions: {
-      idle: [
-        { clip: 'Mgirl08_stand' },
-        { clip: 'Mgirl08_stand02' },
-        { clip: 'Mgirl08_stand_a' },
-        { clip: 'Mgirl08_stand_c' },
-      ],
+      idle: [{ clip: 'Mgirl08_stand' }],
       tap: [{ clip: 'Mgirl08_jingya' }, { clip: 'Mgirl08_wuye' }],
       greet: [{ clip: 'Mgirl08_dazhaohu_a' }],
       head: [{ clip: 'Mgirl08_motouweixiao' }],
@@ -212,17 +207,14 @@ const MODEL_REACTION_PROFILES = deepFreeze({
       snack: [{ clip: 'Mgirl08_kending' }, { clip: 'Mgirl08_weixiao' }],
       shy: [{ clip: 'Mgirl08_xiuxiuqieqie' }, { clip: 'Mgirl08_duishouzhi' }],
       curious: [{ clip: 'Mgirl08_yihuo' }, { clip: 'Mgirl08_tuoyeyihuo' }],
-      // 原资源没有睡眠动作，stand_c 是幅度最小、最适合安静状态的片段。
-      sleepy: [{ clip: 'Mgirl08_stand_c' }],
+      // 原资源没有睡眠动作，复用唯一待机片段作为安静状态。
+      sleepy: [{ clip: 'Mgirl08_stand' }],
       sad: [{ clip: 'Mgirl08_wuye' }],
       angry: [{ clip: 'Mgirl08_shengqi' }],
       drag: [{ clip: 'Mgirl08_jingya' }],
     },
     previewClips: [
       'Mgirl08_stand',
-      'Mgirl08_stand02',
-      'Mgirl08_stand_a',
-      'Mgirl08_stand_c',
       'Mgirl08_dazhaohu_a',
       'Mgirl08_motouweixiao',
       'Mgirl08_weixiao',
@@ -245,7 +237,7 @@ const MODEL_REACTION_PROFILES = deepFreeze({
     // 让“难过/生气/拖动”等 ZIP 未单独分组的互动也能命中合适资源。
     neutralExpression: '默认',
     actions: {
-      idle: [{ clip: '轻摇' }, { clip: '呼吸' }, { clip: '环顾' }],
+      idle: [{ clip: '轻摇' }],
       tap: [{ clip: '被戳' }],
       greet: [{ clip: '挥手' }],
       head: [{ clip: '点头' }],
@@ -285,7 +277,7 @@ const MODEL_REACTION_PROFILES = deepFreeze({
     // 表现力的扩展动作；若某次模型包裁剪了这些文件，渲染器会回退到语义组。
     neutralExpression: '默认',
     actions: {
-      idle: [{ clip: '待机' }, { clip: '呼吸' }, { clip: '环顾' }],
+      idle: [{ clip: '待机' }],
       tap: [{ clip: '扶帽' }, { clip: '摇摆' }],
       greet: [{ clip: '挥手' }],
       head: [{ clip: '点头' }, { clip: '扶帽' }],
@@ -329,7 +321,7 @@ const MODEL_REACTION_PROFILES = deepFreeze({
       tap: [{ clip: 'mtn_shake' }],
       greet: [{ clip: 'mtn_shake_huishou' }],
       head: [{ clip: 'head_diantou' }],
-      shy: [{ clip: 'head_ditou' }],
+      shy: [{ clip: 'mtn_fushen', followUp: { clip: 'mtn_qishen', delay: 1250 } }],
       happy: [{ clip: 'mtn_shakeh' }],
       snack: [{ clip: 'head_diantou' }],
       curious: [{ clip: 'mtn_shake' }],
@@ -353,15 +345,23 @@ const MODEL_REACTION_PROFILES = deepFreeze({
       drag: 'face_haoqi',
     },
     previewClips: [
-      'mtn_idle',
+      'mtn_shake',
       'mtn_shake_huishou',
       'mtn_fushen',
-      'mtn_qishen',
       'mtn_shakeh',
-      'mtn_shake',
       'head_diantou',
-      'head_ditou',
       'head_yaotou',
+    ],
+    // 默认/满足仍供互动重置和“吃零食”使用，但不作为独立预览入口。
+    // 其余七种在眼睛、眉毛、嘴型或脸颊参数上都有明确差异。
+    previewExpressions: [
+      'face_weixiao',
+      'face_gandong',
+      'face_daxiao',
+      'face_haoqi',
+      'face_xingfen',
+      'face_jusang',
+      'face_xiaoqi',
     ],
   },
 })
@@ -369,9 +369,6 @@ const MODEL_REACTION_PROFILES = deepFreeze({
 // 拼音资源名在设置页直接展示不够直观；中文资源名会自动使用自身文件名。
 const PREVIEW_ACTION_LABELS = deepFreeze({
   Mgirl08_stand: '待机',
-  Mgirl08_stand02: '待机 2',
-  Mgirl08_stand_a: '待机 A',
-  Mgirl08_stand_c: '安静待机',
   Mgirl08_dazhaohu_a: '打招呼',
   Mgirl08_motouweixiao: '摸头微笑',
   Mgirl08_weixiao: '微笑',
@@ -386,12 +383,11 @@ const PREVIEW_ACTION_LABELS = deepFreeze({
   Mgirl08_wuye: '无语',
   Mgirl08_shuijingxie: '水晶鞋',
   Mgirl08_xianqunzi: '掀裙摆',
-  mtn_idle: '待机',
   mtn_shake_huishou: '挥手',
-  mtn_fushen: '坐下',
+  mtn_fushen: '俯身',
   mtn_qishen: '起身',
-  mtn_shakeh: '开心跳跃',
-  mtn_shake: '轻轻摇摆',
+  mtn_shakeh: '开心摇摆',
+  mtn_shake: '待机',
   head_diantou: '点头',
   head_ditou: '低头',
   head_yaotou: '摇头',

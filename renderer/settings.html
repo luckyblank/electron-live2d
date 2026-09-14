@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' file: data:; media-src 'self' data: https://docs.bigmodel.cn https://help-static-aliyun-doc.aliyuncs.com">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Live2D 桌面伙伴</title>
+  <title>桌面伙伴</title>
   <link rel="stylesheet" href="settings.css">
   <link rel="stylesheet" href="settings-reference.css">
   <link rel="stylesheet" href="search-select.css">
@@ -79,8 +79,8 @@
           <div class="companion-control-row">
             <span class="companion-control-label">陪伴模式</span>
             <div id="companion-presets" class="companion-presets" role="group" aria-label="陪伴预设">
-              <button type="button" data-companion-preset="quiet" aria-pressed="false" aria-label="安静陪伴：光标跟随关闭、互动特效关闭、闲置与睡眠开启、性能模式自适应" title="关闭光标跟随和特效；保留闲置休息；性能自适应">安静陪伴</button>
               <button type="button" data-companion-preset="natural" aria-pressed="false" aria-label="自然互动：光标靠近时跟随、轻量特效开启、闲置与睡眠关闭、性能模式自适应" title="靠近时跟随并保留轻量特效；不自动进入睡眠；性能自适应">自然互动</button>
+              <button type="button" data-companion-preset="quiet" aria-pressed="false" aria-label="安静陪伴：光标跟随关闭、互动特效关闭、闲置与睡眠开启、性能模式自适应" title="关闭光标跟随和特效；保留闲置休息；性能自适应">安静陪伴</button>
               <button type="button" data-companion-preset="eco" aria-pressed="false" aria-label="省电陪伴：光标跟随关闭、互动特效关闭、闲置与睡眠开启、性能模式省资源" title="关闭光标跟随和特效；保留闲置休息；性能模式省资源">省电陪伴</button>
             </div>
           </div>
@@ -683,7 +683,46 @@
             <input class="switch-input" type="checkbox" data-setting="settingsPetBackground">
             <span class="switch-track" aria-hidden="true"></span>
           </label>
+          <label class="setting-row">
+            <span class="setting-row-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="15" rx="2"/><path d="M7 8H5v2M17 8h2v2M7 15H5v-2M17 15h2v-2"/><path d="M9 22h6M12 19v3"/></svg></span>
+            <span class="setting-copy"><strong>APP 长截图</strong><small>仅截取当前选中的 Tab 页面 · 快捷键 Ctrl + Shift + S</small></span>
+            <input class="switch-input" type="checkbox" data-setting="appLongScreenshotEnabled">
+            <span class="switch-track" aria-hidden="true"></span>
+          </label>
+          <label class="setting-row">
+            <span class="setting-row-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 8.5a4.5 4.5 0 0 1 8 0M6 5.5a8 8 0 0 1 12 0"/><rect x="4" y="11" width="16" height="9" rx="2"/><path d="M8 15h4m2 0h2"/></svg></span>
+            <span class="setting-copy"><strong>允许外部消息接入</strong><small>开启本机 HTTP 与 WebSocket 消息入口。</small></span>
+            <input class="switch-input" type="checkbox" data-setting="externalMessagesEnabled">
+            <span class="switch-track" aria-hidden="true"></span>
+          </label>
         </div>
+
+        <section id="external-message-service" class="external-message-service" aria-labelledby="external-message-service-title" hidden>
+          <div class="external-message-service-head">
+            <span class="external-message-service-state" aria-hidden="true"></span>
+            <div>
+              <strong id="external-message-service-title">外部消息服务</strong>
+              <small id="external-message-service-status">服务未开启</small>
+            </div>
+          </div>
+          <div class="external-message-service-url">
+            <span>HTTP POST</span>
+            <code id="external-message-http-url">http://127.0.0.1:17373/api/v1/messages</code>
+          </div>
+          <div class="external-message-service-url">
+            <span>WebSocket</span>
+            <code id="external-message-websocket-url">ws://127.0.0.1:17373/api/v1/events</code>
+          </div>
+          <div class="external-message-service-actions">
+            <label class="external-message-tester-target">
+              <select id="external-message-tester-target" aria-label="测试页面打开方式">
+                <option value="app" selected>APP 内部打开</option>
+                <option value="browser">浏览器打开</option>
+              </select>
+            </label>
+            <button id="external-message-open-tester" class="text-button" type="button">打开测试页面</button>
+          </div>
+        </section>
 
         <fieldset class="theme-fieldset">
           <legend><span class="theme-heading-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 0 18h1.4a2.1 2.1 0 0 0 0-4.2h-1a1.5 1.5 0 0 1 0-3h1.8A6.8 6.8 0 0 0 21 7c0-2.2-4-4-9-4Z"/><circle cx="7.5" cy="9" r="1"/><circle cx="10.5" cy="6.8" r="1"/><circle cx="15" cy="7" r="1"/></svg></span><span>页面主题</span><small>不同的风格<br>同样的陪伴 ♡</small></legend>
@@ -749,7 +788,7 @@
         <circle class="cat-blush" cx="114" cy="59" r="5"/><circle class="cat-blush" cx="156" cy="59" r="5"/>
       </svg>
       <div class="footer-right">
-        <button id="footer-update" class="footer-update" type="button" title="检查版本更新">
+        <button id="footer-update" class="footer-update" type="button" title="发现新版本时可在此查看" hidden>
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5v7.5m0 0 3-3m-3 3L5 7M3.5 12.5h9"/></svg>
         </button>
         <span id="app-version">v1.0.1</span>

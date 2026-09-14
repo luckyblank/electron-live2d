@@ -1,0 +1,1313 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' data:; img-src 'self' data:; media-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'">
+  <title>Live2D Companion · 伙伴控制中心原型</title>
+  <!--
+    设计假设：
+    - 这是 Windows Electron 桌面应用的高保真交互原型，不是网页或生产设置页。
+    - 原型展示设置窗口与桌面角色的因果关系，所有服务调用均为本地模拟。
+    - 玻璃与治愈两套主题都从仓库真实资产取色；不引入第三套无依据的品牌色。
+    - DeepSeek 小蓝鲸使用仓库真实透明 WebM；其余角色封面由正式应用运行时生成，原型诚实占位。
+    - 470 × 760 是设置窗口的真实尺寸；宽屏外壳只用于展示桌面环境和四屏总览。
+
+    待落地边界：
+    - 不连接 Electron IPC、AI、TTS、文件系统或更新服务器。
+    - 不读取环境变量和用户数据目录。
+    - 如果未来落地，优先复用正式应用既有可访问性、持久化与 QA 契约。
+  -->
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #e9ebff;
+      --bg-deep: #d9defd;
+      --surface: rgba(255, 255, 255, .72);
+      --surface-strong: rgba(255, 255, 255, .92);
+      --surface-soft: rgba(239, 240, 255, .72);
+      --ink: #202449;
+      --muted: #666b91;
+      --quiet: #8e93b5;
+      --line: rgba(93, 94, 156, .16);
+      --primary: #7356f6;
+      --primary-deep: #5942d9;
+      --primary-soft: #e2dfff;
+      --success: #058449;
+      --danger: #a4425e;
+      --gold: #f7c86a;
+      --shadow: 0 34px 90px rgba(54, 50, 127, .24), 0 8px 30px rgba(68, 62, 150, .12);
+      --window-shadow: 0 30px 90px rgba(37, 37, 91, .26), 0 5px 20px rgba(61, 56, 145, .14);
+      --display: "Segoe UI Variable Display", "Trebuchet MS", "Microsoft YaHei UI", sans-serif;
+      --body: "Microsoft YaHei UI", "Microsoft YaHei", DengXian, sans-serif;
+      --serif: STKaiti, KaiTi, "Microsoft YaHei UI", sans-serif;
+      --mono: "Cascadia Code", Consolas, monospace;
+      --ease: cubic-bezier(.22, 1, .36, 1);
+    }
+
+    body[data-theme="healing"] {
+      --bg: #fffaf2;
+      --bg-deep: #fbe9ed;
+      --surface: rgba(255, 253, 249, .84);
+      --surface-strong: rgba(255, 253, 249, .96);
+      --surface-soft: rgba(255, 240, 247, .76);
+      --ink: #302747;
+      --muted: #796e86;
+      --quiet: #a094aa;
+      --line: rgba(151, 99, 132, .17);
+      --primary: #d44291;
+      --primary-deep: #ae2c73;
+      --primary-soft: #fff0f7;
+      --success: #3f8a68;
+      --danger: #aa4058;
+      --shadow: 0 34px 90px rgba(116, 66, 100, .20), 0 8px 30px rgba(207, 91, 150, .10);
+      --window-shadow: 0 30px 90px rgba(100, 55, 91, .22), 0 5px 20px rgba(189, 82, 136, .12);
+    }
+
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; }
+    body {
+      min-width: 1120px;
+      color: var(--ink);
+      font-family: var(--body);
+      background: var(--bg);
+      overflow-x: auto;
+      transition: background .45s ease, color .3s ease;
+    }
+    button, input, select, textarea { font: inherit; }
+    button { color: inherit; }
+    button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
+      outline: 3px solid color-mix(in oklch, var(--primary) 38%, white);
+      outline-offset: 2px;
+    }
+    button:disabled { cursor: not-allowed; opacity: .52; }
+    h1, h2, h3, p { margin: 0; }
+    h1, h2, h3 { text-wrap: balance; }
+    p { text-wrap: pretty; }
+    img, video { display: block; max-width: 100%; }
+    ::selection { color: white; background: var(--primary); }
+    * { scrollbar-width: thin; scrollbar-color: color-mix(in oklch, var(--primary) 26%, transparent) transparent; }
+
+    .icon-sprite { position: fixed; width: 0; height: 0; overflow: hidden; }
+    .icon { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+    .icon.fill { fill: currentColor; stroke: none; }
+
+    .prototype { min-height: 100vh; position: relative; overflow: hidden; isolation: isolate; }
+    .prototype::before,
+    .prototype::after {
+      content: "";
+      position: fixed;
+      z-index: -2;
+      border-radius: 50%;
+      filter: blur(4px);
+      pointer-events: none;
+      transition: background .5s ease, transform .8s var(--ease);
+    }
+    .prototype::before {
+      width: 720px; height: 720px; left: -220px; top: -310px;
+      background: radial-gradient(circle, color-mix(in oklch, var(--primary) 26%, white) 0, transparent 68%);
+    }
+    .prototype::after {
+      width: 620px; height: 620px; right: -170px; bottom: -310px;
+      background: radial-gradient(circle, color-mix(in oklch, var(--gold) 22%, white) 0, transparent 70%);
+    }
+
+    .demo-toolbar {
+      position: relative;
+      z-index: 40;
+      width: min(1460px, calc(100vw - 48px));
+      min-width: 1072px;
+      height: 68px;
+      margin: 18px auto 0;
+      padding: 10px 12px 10px 18px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      border: 1px solid rgba(255,255,255,.72);
+      border-radius: 22px;
+      background: color-mix(in oklch, var(--surface-strong) 80%, transparent);
+      box-shadow: 0 12px 40px rgba(60, 56, 120, .12);
+      backdrop-filter: blur(24px) saturate(150%);
+    }
+    .demo-brand { display: flex; align-items: center; gap: 12px; min-width: 270px; }
+    .demo-brand img { width: 40px; height: 40px; filter: drop-shadow(0 7px 12px rgba(67,54,147,.18)); }
+    .demo-brand strong { display: block; font-family: var(--display); font-size: 15px; letter-spacing: .01em; }
+    .demo-brand small { display: block; margin-top: 2px; color: var(--muted); font: 10px/1.2 var(--mono); letter-spacing: .1em; text-transform: uppercase; }
+    .tool-cluster { display: flex; align-items: center; gap: 8px; }
+    .tool-label { margin: 0 2px 0 8px; color: var(--quiet); font-size: 11px; font-weight: 700; letter-spacing: .08em; }
+    .tool-button {
+      min-height: 40px;
+      padding: 0 13px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
+      border: 1px solid var(--line);
+      border-radius: 13px;
+      background: rgba(255,255,255,.42);
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 700;
+      transition: transform .22s var(--ease), background .2s, border-color .2s, color .2s;
+    }
+    .tool-button:hover { transform: translateY(-1px); border-color: color-mix(in oklch, var(--primary) 40%, transparent); }
+    .tool-button.active { color: white; border-color: transparent; background: var(--primary); box-shadow: 0 8px 18px color-mix(in oklch, var(--primary) 28%, transparent); }
+    .tool-button.icon-only { width: 40px; padding: 0; }
+
+    .workspace {
+      width: min(1460px, calc(100vw - 48px));
+      min-width: 1072px;
+      margin: 18px auto 26px;
+      position: relative;
+    }
+    .interactive-layout {
+      min-height: calc(100vh - 130px);
+      display: grid;
+      grid-template-columns: minmax(560px, 1fr) 470px;
+      align-items: center;
+      gap: clamp(28px, 4vw, 74px);
+      padding: 12px clamp(18px, 3vw, 54px) 24px;
+    }
+    body[data-mode="overview"] .interactive-layout { display: none; }
+    body:not([data-mode="overview"]) .overview-layout { display: none; }
+
+    .desktop-scene {
+      position: relative;
+      min-height: 760px;
+      overflow: hidden;
+      border: 1px solid rgba(255,255,255,.64);
+      border-radius: 42px;
+      background:
+        linear-gradient(rgba(255,255,255,.04) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,.04) 1px, transparent 1px),
+        radial-gradient(circle at 68% 22%, rgba(255,255,255,.68), transparent 24%),
+        linear-gradient(155deg, color-mix(in oklch, var(--bg) 78%, white), var(--bg-deep));
+      background-size: 40px 40px, 40px 40px, auto, auto;
+      box-shadow: var(--shadow);
+      isolation: isolate;
+    }
+    .desktop-scene::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      z-index: -1;
+      opacity: .13;
+      background: url("../renderer/assets/theme-glass.png") 8% 92% / 370px no-repeat;
+      filter: saturate(.72);
+      transition: background-image .3s ease, opacity .3s ease;
+    }
+    body[data-theme="healing"] .desktop-scene::before { background-image: url("../renderer/assets/theme-healing.png"); opacity: .11; }
+    .scene-menubar {
+      height: 42px;
+      padding: 0 18px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      color: color-mix(in oklch, var(--ink) 76%, transparent);
+      border-bottom: 1px solid rgba(255,255,255,.46);
+      background: rgba(255,255,255,.24);
+      backdrop-filter: blur(12px);
+      font: 11px var(--mono);
+    }
+    .scene-menubar > div { display: flex; align-items: center; gap: 12px; }
+    .scene-wordmark { font-family: var(--display); font-weight: 800; letter-spacing: .02em; }
+    .scene-copy {
+      position: absolute;
+      left: 42px; top: 86px;
+      width: 280px;
+    }
+    .scene-kicker { color: var(--primary-deep); font: 700 11px/1 var(--mono); letter-spacing: .14em; text-transform: uppercase; }
+    .scene-copy h1 { margin-top: 11px; font: 760 38px/1.08 var(--display); letter-spacing: -.045em; }
+    .scene-copy p { margin-top: 13px; color: var(--muted); font-size: 13px; line-height: 1.75; }
+    .scene-copy .live-status { margin-top: 18px; }
+
+    .pet-stage {
+      position: absolute;
+      inset: 148px 24px 62px 250px;
+      display: flex;
+      align-items: flex-end;
+      justify-content: center;
+      pointer-events: none;
+    }
+    .pulse-field {
+      position: absolute;
+      width: 420px; height: 420px;
+      left: 50%; top: 54%;
+      transform: translate(-50%, -50%);
+      border-radius: 50%;
+      border: 1px solid color-mix(in oklch, var(--primary) 25%, transparent);
+      box-shadow:
+        0 0 0 34px color-mix(in oklch, var(--primary) 4%, transparent),
+        0 0 0 78px color-mix(in oklch, var(--primary) 3%, transparent),
+        inset 0 0 90px color-mix(in oklch, var(--primary) 11%, transparent);
+      animation: pulse-field 5.4s ease-in-out infinite;
+    }
+    .pulse-field::before,
+    .pulse-field::after {
+      content: ""; position: absolute; inset: 48px; border-radius: 50%;
+      border: 1px dashed color-mix(in oklch, var(--primary) 26%, transparent);
+      animation: slow-spin 28s linear infinite;
+    }
+    .pulse-field::after { inset: 96px; animation-direction: reverse; animation-duration: 20s; }
+    .pet-visual {
+      position: relative;
+      z-index: 2;
+      width: min(390px, 74%);
+      height: 560px;
+      display: flex;
+      align-items: flex-end;
+      justify-content: center;
+      transform: scale(var(--pet-scale, .86));
+      transform-origin: center bottom;
+      transition: transform .5s var(--ease), filter .3s;
+      filter: drop-shadow(0 24px 25px rgba(52,49,113,.18));
+    }
+    .pet-visual.is-speaking { animation: speaking-lift .9s ease-in-out infinite alternate; }
+    .pet-visual video { width: 100%; height: 100%; object-fit: contain; object-position: center bottom; }
+    .pet-placeholder {
+      width: 280px; height: 390px;
+      align-self: flex-end;
+      display: none;
+      place-items: center;
+      border: 1px dashed color-mix(in oklch, var(--primary) 42%, transparent);
+      border-radius: 45% 45% 34% 34%;
+      background: color-mix(in oklch, var(--surface) 68%, transparent);
+      color: var(--muted);
+      text-align: center;
+      padding: 30px;
+      backdrop-filter: blur(12px);
+    }
+    .pet-placeholder strong { display: block; color: var(--ink); font: 700 18px var(--display); }
+    .pet-placeholder span { display: block; margin-top: 8px; font-size: 12px; line-height: 1.65; }
+
+    .speech-bubble {
+      position: absolute;
+      z-index: 5;
+      right: 22px; top: 110px;
+      width: 250px;
+      padding: 15px 17px 14px;
+      border: 1px solid rgba(255,255,255,.76);
+      border-radius: 20px 20px 20px 7px;
+      background: color-mix(in oklch, var(--surface-strong) 90%, transparent);
+      box-shadow: 0 16px 35px rgba(59,53,129,.14);
+      backdrop-filter: blur(20px) saturate(150%);
+      transform-origin: bottom left;
+      transition: border-radius .25s, background .25s, transform .25s var(--ease);
+    }
+    .speech-bubble[data-style="sweet"] { border-radius: 26px 26px 26px 8px; border-color: color-mix(in oklch, var(--primary) 30%, white); }
+    .speech-bubble[data-style="pixel"] { border-radius: 4px; box-shadow: 6px 6px 0 color-mix(in oklch, var(--primary) 25%, transparent); font-family: var(--mono); }
+    .speech-bubble[data-style="sci-fi"] { border-radius: 2px 18px 2px 18px; background: color-mix(in oklch, var(--ink) 90%, transparent); color: white; border-color: color-mix(in oklch, var(--primary) 72%, white); }
+    .speech-bubble small { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; color: var(--primary-deep); font-size: 10px; font-weight: 800; letter-spacing: .08em; }
+    .speech-bubble[data-style="sci-fi"] small { color: color-mix(in oklch, var(--primary) 45%, white); }
+    .speech-bubble p { font-size: 13px; line-height: 1.65; }
+
+    .scene-dock {
+      position: absolute;
+      z-index: 8;
+      left: 50%; bottom: 18px;
+      transform: translateX(-50%);
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      padding: 8px 10px;
+      border: 1px solid rgba(255,255,255,.74);
+      border-radius: 18px;
+      background: rgba(255,255,255,.46);
+      box-shadow: 0 10px 28px rgba(52,48,111,.12);
+      backdrop-filter: blur(18px);
+    }
+    .dock-button { width: 40px; height: 40px; display: grid; place-items: center; border: 0; border-radius: 13px; background: transparent; cursor: pointer; }
+    .dock-button:hover { color: var(--primary); background: color-mix(in oklch, var(--primary-soft) 75%, transparent); }
+    .dock-separator { width: 1px; height: 24px; background: var(--line); }
+
+    .app-window {
+      width: 470px;
+      height: 760px;
+      position: relative;
+      display: grid;
+      grid-template-rows: 72px 55px minmax(0,1fr) 34px;
+      overflow: hidden;
+      border: 1px solid rgba(255,255,255,.92);
+      border-radius: 26px;
+      background:
+        radial-gradient(circle at 84% 12%, color-mix(in oklch, var(--primary) 13%, transparent), transparent 28%),
+        linear-gradient(155deg, color-mix(in oklch, var(--bg) 80%, white), var(--bg));
+      box-shadow: var(--window-shadow);
+      transition: background .35s, box-shadow .35s;
+      isolation: isolate;
+    }
+    .app-window::before {
+      content: "";
+      position: absolute;
+      z-index: -1;
+      width: 310px; height: 310px;
+      right: -116px; top: 88px;
+      opacity: 0;
+      background: url("../renderer/assets/theme-glass.png") center / contain no-repeat;
+      filter: blur(2px) saturate(.75);
+      transition: opacity .35s, background-image .35s;
+      pointer-events: none;
+    }
+    body[data-theme="healing"] .app-window::before { background-image: url("../renderer/assets/theme-healing.png"); }
+    body[data-dynamic-bg="true"] .app-window::before { opacity: .07; }
+    .titlebar {
+      padding: 0 14px 0 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid rgba(255,255,255,.7);
+      background: color-mix(in oklch, var(--surface) 56%, transparent);
+      backdrop-filter: blur(18px) saturate(140%);
+    }
+    .app-brand { display: flex; align-items: center; gap: 10px; }
+    .app-brand img { width: 40px; height: 40px; filter: drop-shadow(0 5px 9px rgba(70,59,146,.18)); }
+    .app-brand strong { display: block; font: 780 15px/1.05 var(--display); letter-spacing: -.015em; }
+    .app-brand small { display: block; margin-top: 4px; color: var(--muted); font: 9px/1 var(--mono); letter-spacing: .11em; text-transform: uppercase; }
+    .window-actions { display: flex; gap: 2px; }
+    .window-action { width: 32px; height: 32px; display: grid; place-items: center; border: 0; border-radius: 10px; background: transparent; cursor: pointer; }
+    .window-action:hover { background: rgba(255,255,255,.55); }
+    .window-action.close:hover { color: white; background: #c74764; }
+
+    .section-tabs {
+      margin: 8px 14px 6px;
+      padding: 4px;
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 2px;
+      border: 1px solid rgba(255,255,255,.84);
+      border-radius: 17px;
+      background: rgba(255,255,255,.42);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.7);
+    }
+    .section-tab {
+      min-height: 39px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      border: 0;
+      border-radius: 13px;
+      color: var(--muted);
+      background: transparent;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 800;
+      transition: color .2s, background .22s, transform .22s var(--ease);
+    }
+    .section-tab .icon { width: 16px; height: 16px; }
+    .section-tab:hover { color: var(--ink); background: rgba(255,255,255,.42); }
+    .section-tab.active { color: white; background: var(--primary); box-shadow: 0 8px 18px color-mix(in oklch, var(--primary) 28%, transparent); }
+
+    .app-main { min-height: 0; overflow: hidden; position: relative; }
+    .page-scroll { height: 100%; padding: 14px 28px 38px; overflow-y: auto; overscroll-behavior: contain; }
+    .page-head { margin-bottom: 17px; }
+    .eyebrow { color: var(--primary-deep); font: 800 10px/1 var(--mono); letter-spacing: .14em; text-transform: uppercase; }
+    .page-head h2 { margin-top: 7px; font: 780 25px/1.1 var(--display); letter-spacing: -.045em; }
+    .page-head p { margin-top: 7px; max-width: 360px; color: var(--muted); font-size: 11px; line-height: 1.65; }
+    .script-note { float: right; margin-top: -8px; color: color-mix(in oklch, var(--primary) 46%, var(--muted)); font: italic 11px var(--serif); transform: rotate(-3deg); }
+
+    .panel {
+      margin-top: 11px;
+      border: 1px solid rgba(255,255,255,.78);
+      border-radius: 18px;
+      background: color-mix(in oklch, var(--surface) 82%, transparent);
+      box-shadow: 0 10px 24px rgba(63,58,135,.07), inset 0 1px 0 rgba(255,255,255,.72);
+      backdrop-filter: blur(16px) saturate(135%);
+      overflow: hidden;
+    }
+    .panel.flat { background: rgba(255,255,255,.26); box-shadow: none; }
+    .panel-pad { padding: 14px; }
+    .panel-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 14px 15px 11px; }
+    .panel-heading strong { display: block; font-size: 13px; }
+    .panel-heading small { display: block; margin-top: 3px; color: var(--muted); font-size: 9px; line-height: 1.5; }
+    .section-label { margin: 18px 2px 8px; display: flex; align-items: center; gap: 8px; color: var(--ink); font-size: 12px; font-weight: 800; }
+    .section-label::after { content: ""; height: 1px; flex: 1; background: var(--line); }
+    .status-dot { width: 7px; height: 7px; flex: 0 0 auto; border-radius: 50%; background: var(--success); box-shadow: 0 0 0 4px color-mix(in oklch, var(--success) 11%, transparent); }
+    .status-dot.off { background: var(--quiet); box-shadow: none; }
+    .live-status { display: inline-flex; align-items: center; gap: 7px; color: var(--success); font-size: 10px; font-weight: 800; }
+
+    .row {
+      min-height: 52px;
+      padding: 10px 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      border-top: 1px solid var(--line);
+    }
+    .row:first-child { border-top: 0; }
+    .row-copy { min-width: 0; }
+    .row-copy strong { display: block; font-size: 12px; }
+    .row-copy small { display: block; margin-top: 3px; color: var(--muted); font-size: 9px; line-height: 1.45; }
+    .row-action { flex: 0 0 auto; }
+
+    .primary-button, .secondary-button, .quiet-button, .danger-button {
+      min-height: 36px;
+      padding: 0 13px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      border-radius: 12px;
+      cursor: pointer;
+      font-size: 10px;
+      font-weight: 800;
+      transition: transform .2s var(--ease), box-shadow .2s, background .2s;
+    }
+    .primary-button { color: white; border: 1px solid transparent; background: var(--primary); box-shadow: 0 8px 16px color-mix(in oklch, var(--primary) 24%, transparent); }
+    .primary-button:hover { transform: translateY(-1px); background: var(--primary-deep); }
+    .secondary-button { color: var(--primary-deep); border: 1px solid color-mix(in oklch, var(--primary) 24%, transparent); background: var(--primary-soft); }
+    .secondary-button:hover, .quiet-button:hover { background: color-mix(in oklch, var(--primary-soft) 78%, white); }
+    .quiet-button { border: 1px solid var(--line); background: rgba(255,255,255,.45); }
+    .danger-button { color: var(--danger); border: 1px solid color-mix(in oklch, var(--danger) 24%, transparent); background: color-mix(in oklch, var(--danger) 7%, white); }
+    .small-button { min-height: 30px; padding: 0 10px; border-radius: 10px; }
+
+    .switch { position: relative; width: 44px; height: 26px; flex: 0 0 auto; border: 0; border-radius: 999px; background: color-mix(in oklch, var(--quiet) 25%, white); cursor: pointer; box-shadow: inset 0 1px 3px rgba(35,33,76,.15); transition: background .2s; }
+    .switch::after { content: ""; position: absolute; width: 20px; height: 20px; left: 3px; top: 3px; border-radius: 50%; background: white; box-shadow: 0 3px 7px rgba(45,41,86,.22); transition: transform .28s var(--ease); }
+    .switch.on { background: var(--primary); }
+    .switch.on::after { transform: translateX(18px); }
+    .switch.warn.on { background: var(--danger); }
+
+    .segmented { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; padding: 3px; border: 1px solid var(--line); border-radius: 13px; background: rgba(255,255,255,.4); }
+    .segment { min-height: 32px; padding: 0 8px; border: 0; border-radius: 10px; color: var(--muted); background: transparent; cursor: pointer; font-size: 9px; font-weight: 800; white-space: nowrap; }
+    .segment.active { color: white; background: var(--primary); box-shadow: 0 5px 12px color-mix(in oklch, var(--primary) 22%, transparent); }
+
+    .range-wrap { display: grid; grid-template-columns: 1fr auto; gap: 7px 12px; align-items: center; }
+    .range-wrap input[type="range"] { grid-column: 1 / -1; width: 100%; accent-color: var(--primary); }
+    .range-value { color: var(--primary-deep); font: 800 13px var(--mono); }
+    .chip-row { display: flex; flex-wrap: wrap; gap: 6px; }
+    .chip { min-height: 28px; padding: 0 9px; display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); background: rgba(255,255,255,.4); font-size: 9px; font-weight: 800; cursor: pointer; }
+    .chip.active { color: var(--primary-deep); border-color: color-mix(in oklch, var(--primary) 34%, transparent); background: var(--primary-soft); }
+    .chip.success { color: var(--success); background: color-mix(in oklch, var(--success) 8%, white); }
+
+    .model-hero { display: grid; grid-template-columns: 116px 1fr; min-height: 138px; }
+    .mini-pet-stage { position: relative; display: flex; align-items: flex-end; justify-content: center; overflow: hidden; background: linear-gradient(150deg, color-mix(in oklch, var(--primary-soft) 65%, white), rgba(255,255,255,.18)); }
+    .mini-pet-stage video { width: 106px; height: 132px; object-fit: contain; object-position: center bottom; filter: drop-shadow(0 10px 12px rgba(53,48,108,.16)); }
+    .mini-pet-stage .runtime-cover { width: 88px; height: 104px; padding: 12px; display: grid; place-items: center; align-self: center; text-align: center; border: 1px dashed color-mix(in oklch, var(--primary) 34%, transparent); border-radius: 18px; color: var(--muted); background: rgba(255,255,255,.42); font-size: 8px; line-height: 1.55; }
+    .model-summary { padding: 13px 14px; display: flex; flex-direction: column; justify-content: center; }
+    .model-summary h3 { font: 780 19px/1.1 var(--display); letter-spacing: -.03em; }
+    .model-summary .script { margin: 3px 0 9px; color: var(--primary); font: italic 12px var(--serif); }
+    .model-summary .chip-row { margin-bottom: 10px; }
+    .model-actions { display: flex; gap: 6px; }
+
+    .model-list { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; padding: 0 12px 12px; }
+    .model-card { min-width: 0; height: 90px; padding: 7px; position: relative; overflow: hidden; border: 1px solid var(--line); border-radius: 14px; background: rgba(255,255,255,.48); cursor: pointer; text-align: left; }
+    .model-card.active { border-color: var(--primary); box-shadow: 0 0 0 2px color-mix(in oklch, var(--primary) 18%, transparent); }
+    .model-card video { width: 100%; height: 56px; object-fit: contain; }
+    .model-card .cover-placeholder { height: 55px; display: grid; place-items: center; color: var(--quiet); border-radius: 9px; background: color-mix(in oklch, var(--surface-soft) 76%, transparent); font-size: 8px; text-align: center; }
+    .model-card strong { display: block; margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 800 9px var(--display); }
+    .model-card .check { position: absolute; right: 7px; top: 7px; width: 18px; height: 18px; display: none; place-items: center; color: white; border-radius: 50%; background: var(--primary); font-size: 10px; }
+    .model-card.active .check { display: grid; }
+
+    .preset-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 7px; }
+    .preset {
+      min-height: 84px; padding: 11px 10px; border: 1px solid var(--line); border-radius: 15px; background: rgba(255,255,255,.42); cursor: pointer; text-align: left;
+    }
+    .preset strong { display: block; font-size: 11px; }
+    .preset small { display: block; margin-top: 7px; color: var(--muted); font-size: 8px; line-height: 1.5; }
+    .preset.active { border-color: var(--primary); background: var(--primary-soft); box-shadow: 0 7px 15px color-mix(in oklch, var(--primary) 12%, transparent); }
+    .preset-mark { width: 24px; height: 3px; margin-bottom: 9px; border-radius: 99px; background: var(--primary); opacity: .34; }
+    .preset.active .preset-mark { width: 42px; opacity: 1; }
+
+    .interaction-map { width: 100%; border-collapse: collapse; font-size: 9px; }
+    .interaction-map th, .interaction-map td { padding: 10px 4px; border-top: 1px solid var(--line); text-align: left; }
+    .interaction-map th { color: var(--muted); font-weight: 600; }
+    .interaction-map td:last-child { color: var(--primary-deep); font-weight: 800; }
+    .interaction-map select { width: 115px; min-height: 30px; padding: 0 8px; border: 1px solid var(--line); border-radius: 9px; color: var(--ink); background: var(--surface-strong); font-size: 9px; }
+
+    .ability-strip { display: grid; grid-template-columns: repeat(3,1fr); gap: 1px; overflow: hidden; border: 1px solid rgba(255,255,255,.76); border-radius: 16px; background: var(--line); }
+    .ability { min-height: 70px; padding: 11px; background: color-mix(in oklch, var(--surface) 88%, transparent); }
+    .ability small { display: block; color: var(--muted); font-size: 8px; }
+    .ability strong { display: block; margin-top: 7px; font-size: 11px; }
+    .ability .status-dot { margin-top: 8px; }
+
+    .plugin-card { padding: 13px 14px; }
+    .plugin-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .plugin-id { display: flex; align-items: center; gap: 10px; }
+    .plugin-mark { width: 36px; height: 36px; display: grid; place-items: center; color: white; border-radius: 12px; background: var(--primary); font: 800 10px var(--mono); box-shadow: 0 7px 15px color-mix(in oklch, var(--primary) 20%, transparent); }
+    .plugin-id strong { display: block; font-size: 12px; }
+    .plugin-id small { display: block; margin-top: 3px; color: var(--muted); font-size: 8px; }
+    .plugin-config { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+    .field-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
+    .field { min-width: 0; }
+    .field.full { grid-column: 1 / -1; }
+    .field label { display: block; margin: 0 0 5px 2px; color: var(--muted); font-size: 8px; font-weight: 800; }
+    .field input, .field select, .field textarea {
+      width: 100%; min-height: 36px; padding: 0 10px; border: 1px solid var(--line); border-radius: 11px; color: var(--ink); background: rgba(255,255,255,.58); font-size: 10px;
+    }
+    .field textarea { min-height: 64px; padding-top: 9px; resize: vertical; line-height: 1.55; }
+    .field input[type="range"] { padding: 0; accent-color: var(--primary); }
+    .test-state { min-height: 32px; margin-top: 9px; display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 9px; }
+    .test-state.success { color: var(--success); }
+    .spinner { width: 14px; height: 14px; border: 2px solid var(--line); border-top-color: var(--primary); border-radius: 50%; animation: spin .8s linear infinite; }
+
+    .bubble-picker { display: grid; grid-template-columns: repeat(4,1fr); gap: 7px; }
+    .bubble-option { min-height: 56px; padding: 8px 5px; border: 1px solid var(--line); border-radius: 12px; background: rgba(255,255,255,.38); cursor: pointer; text-align: center; }
+    .bubble-option.active { color: var(--primary-deep); border-color: var(--primary); background: var(--primary-soft); }
+    .bubble-sample { width: 38px; height: 20px; margin: 0 auto 7px; border: 1px solid color-mix(in oklch, var(--primary) 45%, transparent); border-radius: 9px 9px 9px 3px; background: white; }
+    .bubble-option[data-value="pixel"] .bubble-sample { border-radius: 2px; box-shadow: 3px 3px 0 var(--primary-soft); }
+    .bubble-option[data-value="sci-fi"] .bubble-sample { border-radius: 1px 8px 1px 8px; background: var(--ink); }
+    .bubble-option span { display: block; font-size: 8px; font-weight: 800; }
+
+    .theme-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; padding: 0 14px 14px; }
+    .theme-card { min-height: 112px; padding: 9px; position: relative; overflow: hidden; border: 1px solid var(--line); border-radius: 15px; background: rgba(255,255,255,.4); cursor: pointer; text-align: left; }
+    .theme-card.active { border-color: var(--primary); box-shadow: 0 0 0 2px color-mix(in oklch, var(--primary) 15%, transparent); }
+    .theme-card img { width: 66px; height: 66px; float: left; margin-right: 8px; object-fit: contain; }
+    .theme-card strong { display: block; margin-top: 15px; font-size: 10px; }
+    .theme-card small { display: block; margin-top: 4px; color: var(--muted); font-size: 8px; }
+
+    .app-footer { padding: 0 16px; display: flex; align-items: center; justify-content: space-between; border-top: 1px solid rgba(255,255,255,.62); color: var(--muted); background: rgba(255,255,255,.28); font: 9px var(--mono); }
+    .app-footer strong { color: var(--ink); }
+
+    .overview-layout { min-height: calc(100vh - 132px); padding: 8px 0 24px; }
+    .overview-head { margin: 0 auto 14px; max-width: 1040px; display: flex; align-items: end; justify-content: space-between; gap: 30px; }
+    .overview-head .eyebrow { margin-bottom: 8px; }
+    .overview-head h1 { font: 780 32px/1 var(--display); letter-spacing: -.04em; }
+    .overview-head p { max-width: 430px; color: var(--muted); font-size: 11px; line-height: 1.7; text-align: right; }
+    .overview-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 520px)); justify-content: center; gap: 18px; }
+    .overview-card { min-height: 410px; overflow: hidden; border: 1px solid rgba(255,255,255,.78); border-radius: 24px; background: color-mix(in oklch, var(--surface) 82%, transparent); box-shadow: 0 16px 44px rgba(56,51,120,.12); backdrop-filter: blur(18px); }
+    .overview-label { height: 50px; padding: 0 16px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line); }
+    .overview-label strong { font: 760 13px var(--display); }
+    .overview-label small { color: var(--muted); font-size: 9px; }
+    .mini-window { min-height: 360px; padding: 15px 18px 18px; position: relative; background: radial-gradient(circle at 92% 0, color-mix(in oklch, var(--primary) 10%, transparent), transparent 36%); }
+    .mini-title { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+    .mini-title > div { display: flex; align-items: center; gap: 8px; }
+    .mini-title img { width: 27px; height: 27px; }
+    .mini-title strong { font-size: 11px; }
+    .mini-tabs { display: grid; grid-template-columns: repeat(4,1fr); gap: 3px; padding: 3px; border-radius: 10px; background: rgba(255,255,255,.45); }
+    .mini-tab { height: 24px; display: grid; place-items: center; border-radius: 7px; color: var(--muted); font-size: 8px; font-weight: 800; }
+    .mini-tab.active { color: white; background: var(--primary); }
+    .mini-content { margin-top: 13px; }
+    .mini-kicker { color: var(--primary-deep); font: 800 8px var(--mono); letter-spacing: .12em; }
+    .mini-content h3 { margin-top: 4px; font: 760 18px/1.1 var(--display); letter-spacing: -.035em; }
+    .mini-content > p { margin-top: 5px; color: var(--muted); font-size: 8px; }
+    .mini-cluster { margin-top: 11px; display: grid; gap: 7px; }
+    .mini-line { min-height: 34px; padding: 7px 9px; display: flex; align-items: center; justify-content: space-between; border-top: 1px solid var(--line); background: rgba(255,255,255,.28); font-size: 8px; }
+    .mini-line:first-child { border-top: 0; }
+    .mini-pill { padding: 4px 7px; border-radius: 999px; color: var(--primary-deep); background: var(--primary-soft); font-size: 7px; font-weight: 800; }
+    .mini-hero { margin-top: 10px; height: 105px; display: grid; grid-template-columns: 88px 1fr; overflow: hidden; border: 1px solid rgba(255,255,255,.8); border-radius: 14px; background: rgba(255,255,255,.32); }
+    .mini-hero video { width: 88px; height: 105px; object-fit: contain; }
+    .mini-hero-copy { padding: 12px; }
+    .mini-hero-copy strong { display: block; font-size: 11px; }
+    .mini-hero-copy p { margin-top: 6px; color: var(--muted); font-size: 8px; line-height: 1.5; }
+    .mini-metrics { display: grid; grid-template-columns: repeat(3,1fr); gap: 6px; margin-top: 10px; }
+    .mini-metric { padding: 9px; border-radius: 10px; background: rgba(255,255,255,.38); }
+    .mini-metric small { display: block; color: var(--muted); font-size: 7px; }
+    .mini-metric strong { display: block; margin-top: 5px; font-size: 9px; }
+
+    .modal-layer { position: fixed; z-index: 100; inset: 0; display: none; place-items: center; padding: 24px; background: rgba(26,25,55,.24); backdrop-filter: blur(12px); }
+    .modal-layer.open { display: grid; animation: fade-in .2s ease; }
+    .modal { width: min(440px, calc(100vw - 48px)); max-height: min(690px, calc(100vh - 48px)); overflow: auto; border: 1px solid rgba(255,255,255,.84); border-radius: 24px; background: color-mix(in oklch, var(--surface-strong) 94%, transparent); box-shadow: 0 34px 90px rgba(27,24,69,.32); backdrop-filter: blur(28px) saturate(150%); animation: modal-in .32s var(--ease); }
+    .modal-head { padding: 18px 20px 14px; display: flex; align-items: flex-start; justify-content: space-between; border-bottom: 1px solid var(--line); }
+    .modal-head h3 { font: 760 18px var(--display); }
+    .modal-head p { margin-top: 4px; color: var(--muted); font-size: 9px; }
+    .modal-close { width: 34px; height: 34px; display: grid; place-items: center; border: 0; border-radius: 11px; background: var(--surface-soft); cursor: pointer; }
+    .modal-body { padding: 18px 20px 20px; }
+    .modal-actions { margin-top: 16px; display: flex; justify-content: flex-end; gap: 8px; }
+    .dropzone { min-height: 160px; padding: 24px; display: grid; place-items: center; border: 1px dashed color-mix(in oklch, var(--primary) 42%, transparent); border-radius: 17px; color: var(--muted); background: var(--surface-soft); text-align: center; }
+    .dropzone strong { display: block; color: var(--ink); font-size: 13px; }
+    .dropzone p { margin-top: 7px; font-size: 9px; line-height: 1.6; }
+
+    .chat-modal { width: min(460px, calc(100vw - 48px)); }
+    .chat-log { height: 250px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
+    .message { max-width: 82%; padding: 10px 12px; border-radius: 16px; font-size: 10px; line-height: 1.65; }
+    .message.user { align-self: flex-end; color: white; border-bottom-right-radius: 4px; background: var(--primary); }
+    .message.assistant { align-self: flex-start; border: 1px solid var(--line); border-bottom-left-radius: 4px; background: var(--surface-soft); }
+    .message-meta { margin-top: 5px; display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 8px; }
+    .chat-compose { margin-top: 13px; display: grid; grid-template-columns: 1fr auto; gap: 8px; }
+    .chat-compose input { min-width: 0; height: 38px; padding: 0 12px; border: 1px solid var(--line); border-radius: 12px; color: var(--ink); background: rgba(255,255,255,.68); }
+
+    .toast { position: fixed; z-index: 140; left: 50%; bottom: 28px; min-width: 240px; max-width: 460px; padding: 12px 16px; display: flex; align-items: center; gap: 9px; color: white; border-radius: 14px; background: color-mix(in oklch, var(--ink) 92%, transparent); box-shadow: 0 16px 36px rgba(28,26,58,.26); opacity: 0; transform: translate(-50%, 18px); pointer-events: none; transition: opacity .25s, transform .35s var(--ease); font-size: 11px; }
+    .toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+    @keyframes pulse-field { 0%,100% { transform: translate(-50%,-50%) scale(.96); opacity: .72; } 50% { transform: translate(-50%,-50%) scale(1.03); opacity: 1; } }
+    @keyframes slow-spin { to { transform: rotate(360deg); } }
+    @keyframes speaking-lift { from { transform: scale(var(--pet-scale,.86)) translateY(0); } to { transform: scale(var(--pet-scale,.86)) translateY(-5px); } }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @keyframes fade-in { from { opacity: 0; } }
+    @keyframes modal-in { from { opacity: 0; transform: translateY(16px) scale(.97); } }
+
+    body[data-reduced="true"] * {
+      animation-duration: .001ms !important;
+      animation-iteration-count: 1 !important;
+      scroll-behavior: auto !important;
+      transition-duration: .001ms !important;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: .001ms !important;
+        animation-iteration-count: 1 !important;
+        scroll-behavior: auto !important;
+        transition-duration: .001ms !important;
+      }
+    }
+
+    @media (max-width: 1240px) {
+      .interactive-layout { grid-template-columns: minmax(520px,1fr) 470px; gap: 24px; padding-inline: 0; }
+      .scene-copy { left: 30px; width: 235px; }
+      .scene-copy h1 { font-size: 32px; }
+      .pet-stage { left: 205px; }
+    }
+  </style>
+</head>
+<body data-theme="glass" data-mode="interactive" data-reduced="false" data-dynamic-bg="true">
+  <svg class="icon-sprite" aria-hidden="true">
+    <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></symbol>
+    <symbol id="i-window" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M7 6.5h.01M10 6.5h.01"/></symbol>
+    <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4.5 21a7.5 7.5 0 0 1 15 0"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><path d="m8 5 11 7-11 7Z"/></symbol>
+    <symbol id="i-spark" viewBox="0 0 24 24"><path d="M12 2.8c.8 5.1 2.1 6.4 7.2 7.2-5.1.8-6.4 2.1-7.2 7.2-.8-5.1-2.1-6.4-7.2-7.2C9.9 9.2 11.2 7.9 12 2.8Z"/><path d="M19 16.2c.3 2.2.9 2.8 3 3.1-2.1.3-2.7.9-3 3-.4-2.1-1-2.7-3.1-3 2.1-.4 2.7-1 3.1-3.1Z"/></symbol>
+    <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.03 1.56V21h-4v-.08A1.7 1.7 0 0 0 9 19.37a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.63 15 1.7 1.7 0 0 0 3.08 14H3v-4h.08A1.7 1.7 0 0 0 4.63 9a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 9 4.63 1.7 1.7 0 0 0 10 3.08V3h4v.08A1.7 1.7 0 0 0 15 4.63a1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.37 9 1.7 1.7 0 0 0 20.92 10H21v4h-.08A1.7 1.7 0 0 0 19.4 15Z"/></symbol>
+    <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20.5 15.3A8.5 8.5 0 0 1 8.7 3.5 8.5 8.5 0 1 0 20.5 15.3Z"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 6v5h-5M4 18v-5h5"/><path d="M18.2 9A7 7 0 0 0 6.3 6.3L4 9m16 6-2.3 2.7A7 7 0 0 1 5.8 15"/></symbol>
+    <symbol id="i-volume" viewBox="0 0 24 24"><path d="M11 5 6 9H3v6h3l5 4Z"/><path d="M15 9a4 4 0 0 1 0 6M18 6a8 8 0 0 1 0 12"/></symbol>
+    <symbol id="i-message" viewBox="0 0 24 24"><path d="M21 14a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4Z"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 24 24"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 6h7l2 2h9v11H3Z"/></symbol>
+    <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 16V3m0 0L7 8m5-5 5 5"/><path d="M4 15v5h16v-5"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+    <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
+    <symbol id="i-reset" viewBox="0 0 24 24"><path d="M4 4v6h6M20 20v-6h-6"/><path d="M6.5 17.5A8 8 0 0 0 20 12M4 12A8 8 0 0 1 17.5 6.5"/></symbol>
+  </svg>
+
+  <div class="prototype">
+    <header class="demo-toolbar" aria-label="原型工具栏">
+      <div class="demo-brand">
+        <img src="../resources/icon@2x.png" alt="Live2D Companion">
+        <div><strong>Live2D Companion</strong><small>Interactive design prototype</small></div>
+      </div>
+      <div class="tool-cluster">
+        <span class="tool-label">视图</span>
+        <button class="tool-button active" type="button" data-action="mode" data-value="interactive"><svg class="icon"><use href="#i-window"/></svg>单窗交互</button>
+        <button class="tool-button" type="button" data-action="mode" data-value="overview"><svg class="icon"><use href="#i-grid"/></svg>四屏总览</button>
+        <span class="tool-label">主题</span>
+        <button class="tool-button active" type="button" data-action="theme" data-value="glass">玻璃</button>
+        <button class="tool-button" type="button" data-action="theme" data-value="healing">治愈</button>
+        <button class="tool-button icon-only" type="button" data-action="reduced" title="减少动态效果" aria-label="减少动态效果" aria-pressed="false"><svg class="icon"><use href="#i-moon"/></svg></button>
+        <button class="tool-button icon-only" type="button" data-action="reset-demo" title="重置演示状态" aria-label="重置演示状态"><svg class="icon"><use href="#i-reset"/></svg></button>
+      </div>
+    </header>
+
+    <main class="workspace">
+      <div class="interactive-layout">
+        <section class="desktop-scene" aria-label="桌面伙伴实时预览">
+          <div class="scene-menubar">
+            <div><span class="scene-wordmark">桌面 · 伙伴空间</span><span>Tuesday, 09:41</span></div>
+            <div><span>LIVE2D</span><span id="menubar-state">自然互动</span><span>85%</span></div>
+          </div>
+          <div class="scene-copy">
+            <div class="scene-kicker">Always by your side</div>
+            <h1>不是设置一个工具，<br>是在了解一个伙伴。</h1>
+            <p>每一次选择都即时作用于桌面角色：她的大小、动作、说话方式，以及与你相处的节奏。</p>
+            <div class="live-status"><span class="status-dot"></span><span id="scene-status">DeepSeek 小蓝鲸 · 正在陪伴</span></div>
+          </div>
+          <div id="desktop-bubble" class="speech-bubble" data-style="glass">
+            <small><span class="status-dot"></span><span id="bubble-speaker">DeepSeek 小蓝鲸</span></small>
+            <p id="bubble-message">欢迎回来。今天也让我安静地陪你一会儿吧。</p>
+          </div>
+          <div class="pet-stage">
+            <div class="pulse-field"></div>
+            <div id="pet-visual" class="pet-visual" style="--pet-scale:.85">
+              <video id="pet-video" autoplay muted loop playsinline src="../models/deepseek-pet/待机呼吸休闲.webm" aria-label="DeepSeek 小蓝鲸真实透明角色动画"></video>
+              <div id="pet-placeholder" class="pet-placeholder"><div><strong>角色实时预览</strong><span>该 Live2D 封面由正式应用运行时生成，独立原型不读取用户缓存。</span></div></div>
+            </div>
+          </div>
+          <div class="scene-dock" aria-label="桌面快捷操作">
+            <button class="dock-button" type="button" data-action="pet-greet" title="打个招呼"><svg class="icon"><use href="#i-spark"/></svg></button>
+            <button class="dock-button" type="button" data-action="open-chat" title="打开聊天"><svg class="icon"><use href="#i-message"/></svg></button>
+            <span class="dock-separator"></span>
+            <button class="dock-button" type="button" data-action="toggle-lock" title="锁定宠物"><svg class="icon"><use href="#i-lock"/></svg></button>
+            <button class="dock-button" type="button" data-action="nav" data-value="system" title="打开设置"><svg class="icon"><use href="#i-gear"/></svg></button>
+          </div>
+        </section>
+
+        <section id="app-window" class="app-window" aria-label="Live2D Companion 设置窗口">
+          <header class="titlebar">
+            <div class="app-brand">
+              <img src="../resources/icon@2x.png" alt="">
+              <div><strong>伙伴控制中心</strong><small>Live2D Companion</small></div>
+            </div>
+            <div class="window-actions" aria-label="窗口控制">
+              <button class="window-action" type="button" data-action="window-min" aria-label="最小化"><svg class="icon"><use href="#i-minus"/></svg></button>
+              <button class="window-action close" type="button" data-action="window-close" aria-label="关闭"><svg class="icon"><use href="#i-close"/></svg></button>
+            </div>
+          </header>
+          <nav class="section-tabs" aria-label="设置分类">
+            <button class="section-tab active" type="button" data-action="nav" data-value="character"><svg class="icon"><use href="#i-user"/></svg>角色</button>
+            <button class="section-tab" type="button" data-action="nav" data-value="behavior"><svg class="icon"><use href="#i-play"/></svg>行为</button>
+            <button class="section-tab" type="button" data-action="nav" data-value="ai"><svg class="icon"><use href="#i-spark"/></svg>AI</button>
+            <button class="section-tab" type="button" data-action="nav" data-value="system"><svg class="icon"><use href="#i-gear"/></svg>系统</button>
+          </nav>
+          <div id="app-main" class="app-main" aria-live="polite"></div>
+          <footer class="app-footer"><span><strong>伙伴在线</strong> · 本地状态</span><span>v1.0.1</span></footer>
+        </section>
+      </div>
+
+      <section class="overview-layout" aria-label="四屏设计总览">
+        <header class="overview-head">
+          <div><div class="eyebrow">System overview</div><h1>伙伴控制中心 · 四个关系切面</h1></div>
+          <p>同一套视觉系统承载角色、互动、智能与系统边界；每一屏都回应桌面上的真实伙伴状态。</p>
+        </header>
+        <div id="overview-grid" class="overview-grid"></div>
+      </section>
+    </main>
+  </div>
+
+  <div id="modal-layer" class="modal-layer" role="presentation"></div>
+  <div id="toast" class="toast" role="status" aria-live="polite"><span class="status-dot"></span><span id="toast-copy">状态已更新</span></div>
+
+  <script>
+    (() => {
+      'use strict';
+
+      const STORAGE_KEY = 'live2d-companion-design-prototype-v1';
+      const sections = ['character', 'behavior', 'ai', 'system'];
+      const sectionNames = { character: '角色', behavior: '行为', ai: 'AI', system: '系统' };
+      const sectionIntent = {
+        character: '选择、认识并照顾你的桌面伙伴',
+        behavior: '定义陪伴节奏与互动边界',
+        ai: '赋予伙伴理解、声音和表达方式',
+        system: '让伙伴与 Windows 桌面自然共处'
+      };
+      const modelData = {
+        deepseek: { name: 'DeepSeek 小蓝鲸', source: 'Video Pet', nickname: '小蓝', video: true },
+        mori: { name: 'mori-suit', source: 'Live2D', nickname: '小森', video: false },
+        hiyori: { name: 'Hiyori', source: 'Live2D', nickname: '日和', video: false }
+      };
+      const presetData = {
+        quiet: { name: '安静陪伴', note: '关闭跟随与特效，保留低频待机。', cursorFollow: false, randomMotion: false, idleEnabled: true, quality: '自动' },
+        natural: { name: '自然互动', note: '近距离跟随，保留轻量点击反馈。', cursorFollow: true, randomMotion: true, idleEnabled: false, quality: '自动' },
+        eco: { name: '省电陪伴', note: '降低帧率与互动采样，长时间陪伴。', cursorFollow: false, randomMotion: false, idleEnabled: true, quality: '省资源' }
+      };
+      const initialState = {
+        mode: 'interactive',
+        theme: 'glass',
+        reduced: false,
+        dynamicBg: true,
+        section: 'character',
+        model: 'deepseek',
+        nickname: '小蓝',
+        scale: 85,
+        position: '右下',
+        preset: 'natural',
+        cursorFollow: true,
+        followStrength: 68,
+        randomMotion: true,
+        idleEnabled: false,
+        sleepy: true,
+        locked: false,
+        backgroundDetection: true,
+        effects: true,
+        bubble: 'glass',
+        autoSpeak: false,
+        muted: true,
+        aiCapability: 'chat',
+        aiTest: 'ready',
+        voice: 'Cherry',
+        voiceModel: 'qwen',
+        updatePhase: 'idle',
+        launchAtLogin: false,
+        alwaysOnTop: true,
+        longScreenshot: false,
+        externalMessages: false
+      };
+
+      const loadState = () => {
+        try {
+          const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+          return { ...initialState, ...saved };
+        } catch (_error) {
+          return { ...initialState };
+        }
+      };
+      let state = loadState();
+      let toastTimer = 0;
+      let actionTimer = 0;
+
+      const icon = (name, className = '') => `<svg class="icon ${className}" aria-hidden="true"><use href="#i-${name}"/></svg>`;
+      const checked = value => value ? 'on' : '';
+      const active = (left, right) => left === right ? 'active' : '';
+      const escapeHtml = value => String(value).replace(/[&<>'"]/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[char]));
+      const saveState = () => {
+        const persistent = { ...state, aiTest: state.aiTest === 'success' ? 'success' : 'ready', updatePhase: 'idle' };
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(persistent));
+      };
+
+      function pageHead(kicker, title, copy, script = '') {
+        return `<header class="page-head"><span class="script-note">${script}</span><div class="eyebrow">${kicker}</div><h2>${title}</h2><p>${copy}</p></header>`;
+      }
+
+      function toggleRow(key, title, copy, warning = false) {
+        return `<div class="row"><div class="row-copy"><strong>${title}</strong><small>${copy}</small></div><button class="switch ${checked(state[key])} ${warning ? 'warn' : ''}" type="button" role="switch" aria-checked="${state[key]}" data-action="toggle" data-key="${key}" aria-label="${title}"></button></div>`;
+      }
+
+      function modelVisual(kind = state.model, small = false) {
+        const model = modelData[kind];
+        if (model.video) {
+          return `<video autoplay muted loop playsinline src="../models/deepseek-pet/待机呼吸休闲.webm" aria-label="${model.name}真实透明角色动画"></video>`;
+        }
+        return `<div class="${small ? 'cover-placeholder' : 'runtime-cover'}">${small ? '运行时封面' : 'Live2D 封面<br>由正式应用运行时生成'}</div>`;
+      }
+
+      function renderCharacter() {
+        const model = modelData[state.model];
+        return `<div class="page-scroll" data-page="character">
+          ${pageHead('Companion profile', '今天陪伴你的，是谁？', '从角色开始建立关系：选择伙伴、调整她在桌面上的存在感，并定义她如何认识自己。', '认识她，也让她认识你')}
+          <section class="panel model-hero">
+            <div class="mini-pet-stage">${modelVisual()}</div>
+            <div class="model-summary">
+              <div class="live-status"><span class="status-dot"></span>${model.source} · 角色运行中</div>
+              <h3>${escapeHtml(state.nickname || model.nickname)}</h3>
+              <div class="script">${model.name}</div>
+              <div class="chip-row"><span class="chip success">对话可用</span><span class="chip success">${model.video ? '透明 WebM' : '动作可用'}</span></div>
+              <div class="model-actions"><button class="primary-button small-button" type="button" data-action="preview-action" data-value="greet">${icon('play')}打个招呼</button><button class="quiet-button small-button" type="button" data-action="open-profile">角色档案</button></div>
+            </div>
+          </section>
+
+          <section class="panel panel-pad">
+            <div class="range-wrap"><div class="row-copy"><strong>角色尺寸</strong><small>每个伙伴分别保存，不改变窗口位置。</small></div><output class="range-value" for="scale-range">${state.scale}%</output><input id="scale-range" type="range" min="50" max="200" step="5" value="${state.scale}" data-range="scale" aria-label="角色尺寸"></div>
+          </section>
+
+          <div class="section-label">选择伙伴 <span style="color:var(--muted);font-size:8px;font-weight:500">3 个示例</span></div>
+          <section class="panel">
+            <div class="panel-heading"><div><strong>伙伴列表</strong><small>用户目录中的同名角色会覆盖内置版本。</small></div><button class="secondary-button small-button" type="button" data-action="import-model">${icon('upload')}导入 ZIP</button></div>
+            <div class="model-list">
+              ${Object.entries(modelData).map(([id, item]) => `<button class="model-card ${active(state.model,id)}" type="button" data-action="model" data-value="${id}" aria-pressed="${state.model === id}">${modelVisual(id, true)}<span class="check">✓</span><strong>${item.name}</strong></button>`).join('')}
+            </div>
+          </section>
+
+          <div class="section-label">在桌面上的位置</div>
+          <div class="segmented" role="group" aria-label="角色窗口位置">
+            ${['左上','右上','中央','左下','右下'].map(value => `<button class="segment ${active(state.position,value)}" type="button" data-action="position" data-value="${value}">${value}</button>`).join('')}
+          </div>
+
+          <section class="panel">
+            <div class="row"><div class="row-copy"><strong>角色昵称</strong><small>昵称按角色单独保存，也会进入 AI 设定。</small></div><div class="row-action" style="display:flex;gap:6px"><input id="nickname-input" value="${escapeHtml(state.nickname)}" maxlength="20" aria-label="角色昵称" style="width:92px;height:34px;padding:0 9px;border:1px solid var(--line);border-radius:10px;background:rgba(255,255,255,.56);color:var(--ink);font-size:10px"><button class="primary-button small-button" type="button" data-action="save-nickname">保存</button></div></div>
+            <div class="row"><div class="row-copy"><strong>角色档案</strong><small>物种、性格、世界观、关系与表达规则。</small></div><button class="quiet-button small-button" type="button" data-action="open-profile">编辑档案</button></div>
+            <div class="row"><div class="row-copy"><strong>模型与封面目录</strong><small>管理用户添加的模型与运行时封面缓存。</small></div><button class="quiet-button small-button" type="button" data-action="open-dir">${icon('folder')}打开目录</button></div>
+          </section>
+        </div>`;
+      }
+
+      function renderBehavior() {
+        return `<div class="page-scroll" data-page="behavior">
+          ${pageHead('Companion rhythm', '克制，但有回应', '先选择一种陪伴节奏，再微调鼠标互动、窗口边界和角色动作。', '她会读懂你的距离')}
+          <div class="preset-grid" aria-label="陪伴预设">
+            ${Object.entries(presetData).map(([id, item]) => `<button class="preset ${active(state.preset,id)}" type="button" data-action="preset" data-value="${id}" aria-pressed="${state.preset === id}"><span class="preset-mark"></span><strong>${item.name}</strong><small>${item.note}</small></button>`).join('')}
+          </div>
+          <section class="panel">
+            ${toggleRow('cursorFollow', '近距离跟随', '指针靠近时，头部、眼睛和身体自然转向。')}
+            <div class="row"><div class="row-copy"><strong>跟随强度</strong><small>只影响原型中的响应幅度。</small></div><div class="row-action" style="width:140px"><input style="width:100%;accent-color:var(--primary)" type="range" min="20" max="100" value="${state.followStrength}" data-range="followStrength" aria-label="跟随强度"></div></div>
+            ${toggleRow('effects', '轻量点击反馈', '保留一次柔和光点，不产生大规模粒子。')}
+            ${toggleRow('randomMotion', '随机动作', '空闲时以低频率播放角色自带动作。')}
+            ${toggleRow('sleepy', '困倦与睡眠', '闲置后逐步进入休息，降低渲染频率。')}
+          </section>
+
+          <div class="section-label">窗口边界</div>
+          <section class="panel">
+            ${toggleRow('locked', '锁定宠物', '完全穿透鼠标；可从系统托盘解除锁定。', true)}
+            ${toggleRow('backgroundDetection', '背景检测', '开启时完整窗口可抓取，关闭后仅角色附近可拖动。')}
+            <div class="row"><div class="row-copy"><strong>性能模式</strong><small>根据可见、互动和休息状态自动调节帧率。</small></div><div class="row-action"><div class="segmented"><button class="segment ${presetData[state.preset].quality === '自动' ? 'active' : ''}">自动</button><button class="segment ${presetData[state.preset].quality === '省资源' ? 'active' : ''}">省资源</button><button class="segment">高质量</button></div></div></div>
+          </section>
+
+          <div class="section-label">动作映射</div>
+          <section class="panel panel-pad">
+            <table class="interaction-map">
+              <thead><tr><th>手势</th><th>角色回应</th><th>气泡文字</th></tr></thead>
+              <tbody>
+                <tr><td>单击头部</td><td><select data-action="mapping"><option>摸头动作</option><option>害羞</option><option>默认</option></select></td><td>好舒服～</td></tr>
+                <tr><td>连续双击</td><td><select data-action="mapping"><option>开心跃动</option><option>微笑</option><option>随机</option></select></td><td>被夸奖了</td></tr>
+                <tr><td>连续三击</td><td><select data-action="mapping"><option>兴奋回应</option><option>挥手</option><option>随机</option></select></td><td>最喜欢你啦</td></tr>
+                <tr><td>拖拽结束</td><td><select data-action="mapping"><option>落地回应</option><option>默认</option><option>随机</option></select></td><td>新位置不错</td></tr>
+              </tbody>
+            </table>
+          </section>
+        </div>`;
+      }
+
+      function renderAI() {
+        const isChat = state.aiCapability === 'chat';
+        const testCopy = state.aiTest === 'testing' ? '<span class="spinner"></span>正在建立安全连接…' : state.aiTest === 'success' ? '<span class="status-dot"></span>连接成功 · 配置已保存在本地安全存储' : '<span class="status-dot"></span>配置已就绪，可以测试连接';
+        return `<div class="page-scroll" data-page="ai">
+          ${pageHead('Companion intelligence', '让伙伴真正听懂你', '对话与声音独立配置；角色档案决定她如何理解、回应和表达情绪。', '声音，是另一种表情')}
+          <div class="ability-strip">
+            <div class="ability"><small>理解</small><strong>DeepSeek</strong><span class="status-dot"></span></div>
+            <div class="ability"><small>声音</small><strong>Qwen TTS</strong><span class="status-dot"></span></div>
+            <div class="ability"><small>角色设定</small><strong>已注入</strong><span class="status-dot"></span></div>
+          </div>
+
+          <section class="panel">
+            <div class="panel-heading"><div><strong>聊天与表达</strong><small>开场白、自动朗读和桌面气泡使用相同状态。</small></div><button class="primary-button small-button" type="button" data-action="open-chat">${icon('message')}打开聊天</button></div>
+            <div class="row"><div class="row-copy"><strong>聊天开场白</strong><small>每个角色没有历史时显示一次。</small></div><button class="quiet-button small-button" type="button" data-action="greeting">编辑</button></div>
+            ${toggleRow('autoSpeak', '新回复自动朗读', '语音可用时合成回复并驱动角色口型。')}
+            <div class="panel-pad" style="border-top:1px solid var(--line)"><div class="bubble-picker">
+              ${[['glass','玻璃'],['sweet','甜美'],['pixel','像素'],['sci-fi','科幻']].map(([id,label]) => `<button class="bubble-option ${active(state.bubble,id)}" type="button" data-action="bubble" data-value="${id}" aria-pressed="${state.bubble === id}"><span class="bubble-sample"></span><span>${label}</span></button>`).join('')}
+            </div></div>
+          </section>
+
+          <div class="section-label">模型能力</div>
+          <div class="segmented" role="tablist" aria-label="AI 能力类型">
+            <button class="segment ${isChat ? 'active' : ''}" type="button" role="tab" aria-selected="${isChat}" data-action="ai-capability" data-value="chat">文本模型</button>
+            <button class="segment ${!isChat ? 'active' : ''}" type="button" role="tab" aria-selected="${!isChat}" data-action="ai-capability" data-value="tts">语音模型</button>
+          </div>
+
+          <section class="panel plugin-card">
+            <div class="plugin-top">
+              <div class="plugin-id"><span class="plugin-mark">${isChat ? 'DS' : state.voiceModel === 'qwen' ? 'QW' : 'GLM'}</span><div><strong>${isChat ? 'DeepSeek' : state.voiceModel === 'qwen' ? '阿里云 Qwen-TTS' : '智谱 GLM-TTS'}</strong><small>${isChat ? '理解与生成文字回复' : '把回复变成声音并驱动口型'}</small></div></div>
+              <span class="chip success">已启用</span>
+            </div>
+            <div class="plugin-config">
+              ${isChat ? `<div class="field-grid">
+                <div class="field"><label>对话模型</label><select><option>deepseek-v4-flash</option><option>deepseek-v4-pro</option></select></div>
+                <div class="field"><label>凭据来源</label><select><option>本机加密保存</option><option>环境变量</option></select></div>
+                <div class="field full"><label>API Key · 原型不会读取真实凭据</label><input id="api-key-input" type="password" value="sk-prototype-only-8A2F" autocomplete="off"></div>
+              </div>` : `<div class="field-grid">
+                <div class="field"><label>语音供应商</label><select data-action="voice-model"><option value="qwen" ${state.voiceModel === 'qwen' ? 'selected' : ''}>Qwen3-TTS Flash</option><option value="glm" ${state.voiceModel === 'glm' ? 'selected' : ''}>GLM-TTS</option></select></div>
+                <div class="field"><label>音色</label><select data-action="voice"><option value="Cherry" ${state.voice === 'Cherry' ? 'selected' : ''}>芊悦 Cherry</option><option value="Serena" ${state.voice === 'Serena' ? 'selected' : ''}>苏瑶 Serena</option><option value="Ethan" ${state.voice === 'Ethan' ? 'selected' : ''}>晨煦 Ethan</option><option value="Momo" ${state.voice === 'Momo' ? 'selected' : ''}>茉兔 Momo</option></select></div>
+                <div class="field"><label>语速</label><input type="range" min="70" max="130" value="100" aria-label="语速"></div>
+                <div class="field"><label>音量</label><input type="range" min="0" max="100" value="86" aria-label="音量"></div>
+              </div>`}
+              <div class="test-state ${state.aiTest === 'success' ? 'success' : ''}">${testCopy}</div>
+              <div style="display:flex;justify-content:flex-end;gap:7px"><button class="quiet-button small-button" type="button" data-action="${isChat ? 'mask-key' : 'voice-preview'}">${isChat ? '查看脱敏值' : `${icon('volume')}试听音色`}</button><button class="primary-button small-button" type="button" data-action="connect-test" ${state.aiTest === 'testing' ? 'disabled' : ''}>保存并测试</button></div>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="row"><div class="row-copy"><strong>插件与扩展</strong><small>用户插件保存在独立数据目录，应用更新不会覆盖。</small></div><button class="quiet-button small-button" type="button" data-action="open-dir">${icon('folder')}插件目录</button></div>
+          </section>
+        </div>`;
+      }
+
+      function renderSystem() {
+        const updateLabel = {
+          idle: '检查更新', checking: '正在检查…', available: '发现 v1.1.0', downloading: '下载 62%', ready: '安装包已就绪'
+        }[state.updatePhase];
+        return `<div class="page-scroll" data-page="system">
+          ${pageHead('Desktop coexistence', '与桌面自然共处', '管理窗口、主题、外部接入和更新，让陪伴停留在刚好的边界内。', '一直在你身边')}
+          <section class="panel">
+            ${toggleRow('alwaysOnTop', '始终置顶', '让角色保持在其他窗口上方。')}
+            ${toggleRow('launchAtLogin', 'Windows 登录时启动', '登录后安静出现，不抢占当前窗口焦点。')}
+            ${toggleRow('dynamicBg', '宠物动态背景', '设置窗口显示当前角色的极淡同步影像。')}
+            <div class="row"><div class="row-copy"><strong>减少动态效果</strong><small>关闭漂浮和弹性过渡，并响应系统偏好。</small></div><button class="switch ${checked(state.reduced)}" type="button" role="switch" aria-checked="${state.reduced}" data-action="reduced" aria-label="减少动态效果"></button></div>
+            ${toggleRow('longScreenshot', 'APP 长截图', '截取当前设置 Tab · Ctrl + Shift + S。')}
+          </section>
+
+          <div class="section-label">页面主题</div>
+          <section class="panel">
+            <div class="panel-heading"><div><strong>伙伴空间的质感</strong><small>只改变设置窗口，不影响桌面角色模型。</small></div></div>
+            <div class="theme-grid">
+              <button class="theme-card ${active(state.theme,'glass')}" type="button" data-action="theme" data-value="glass"><img src="../renderer/assets/theme-glass.png" alt=""><strong>玻璃质感</strong><small>清透柔光</small></button>
+              <button class="theme-card ${active(state.theme,'healing')}" type="button" data-action="theme" data-value="healing"><img src="../renderer/assets/theme-healing.png" alt=""><strong>治愈手账</strong><small>暖白与樱粉</small></button>
+            </div>
+          </section>
+
+          <section class="panel">
+            ${toggleRow('externalMessages', '允许外部消息接入', '通过本机 POST 或 WebSocket 向角色发送消息。')}
+            ${state.externalMessages ? `<div class="row"><div class="row-copy"><strong style="color:var(--success)">服务运行中</strong><small style="font-family:var(--mono)">http://127.0.0.1:17373/api/v1/messages</small></div><button class="quiet-button small-button" type="button" data-action="external-test">打开测试页</button></div>` : ''}
+          </section>
+
+          <section class="panel">
+            <div class="row"><div class="row-copy"><strong>版本更新</strong><small>当前版本 v1.0.1 · 安装包保存到下载目录。</small></div><button class="${state.updatePhase === 'ready' ? 'primary-button' : 'quiet-button'} small-button" type="button" data-action="update" ${['checking','downloading'].includes(state.updatePhase) ? 'disabled' : ''}>${updateLabel}</button></div>
+            ${state.updatePhase === 'downloading' ? '<div style="height:3px;background:var(--line)"><div style="width:62%;height:100%;background:var(--primary)"></div></div>' : ''}
+            <div class="row"><div class="row-copy"><strong>用户数据与目录</strong><small>模型、插件、封面、配置和语音归档。</small></div><button class="quiet-button small-button" type="button" data-action="open-dir">${icon('folder')}打开目录</button></div>
+          </section>
+
+          <div class="section-label">安全边界</div>
+          <section class="panel flat">
+            <div class="row"><div class="row-copy"><strong>恢复默认设置</strong><small>不会删除用户模型和插件，但会重置偏好。</small></div><button class="danger-button small-button" type="button" data-action="reset-settings">恢复默认</button></div>
+            <div class="row"><div class="row-copy"><strong>退出应用</strong><small>停止动画、语音与本机外部消息服务。</small></div><button class="quiet-button small-button" type="button" data-action="window-close">退出</button></div>
+          </section>
+        </div>`;
+      }
+
+      function miniShell(section, inner) {
+        return `<article class="overview-card" data-overview="${section}"><header class="overview-label"><strong>${sectionNames[section]}</strong><small>${sectionIntent[section]}</small></header><div class="mini-window"><div class="mini-title"><div><img src="../resources/icon@2x.png" alt=""><strong>伙伴控制中心</strong></div><span class="live-status"><span class="status-dot"></span>在线</span></div><div class="mini-tabs">${sections.map(item => `<span class="mini-tab ${active(item,section)}">${sectionNames[item]}</span>`).join('')}</div>${inner}</div></article>`;
+      }
+
+      function renderOverview() {
+        const model = modelData[state.model];
+        const character = miniShell('character', `<div class="mini-content"><div class="mini-kicker">COMPANION PROFILE</div><h3>今天陪伴你的，是谁？</h3><p>角色、档案与动作构成持续关系。</p><div class="mini-hero">${modelVisual()}<div class="mini-hero-copy"><strong>${escapeHtml(state.nickname || model.nickname)}</strong><p>${model.name}<br>${state.scale}% · ${state.position}</p><span class="mini-pill">角色运行中</span></div></div><div class="mini-metrics"><div class="mini-metric"><small>对话</small><strong>可用</strong></div><div class="mini-metric"><small>语音</small><strong>可用</strong></div><div class="mini-metric"><small>动作</small><strong>8 组</strong></div></div></div>`);
+        const behavior = miniShell('behavior', `<div class="mini-content"><div class="mini-kicker">COMPANION RHYTHM</div><h3>克制，但有回应</h3><p>从预设到细节，决定伙伴如何感知距离。</p><div class="mini-metrics"><div class="mini-metric"><small>安静</small><strong>低频</strong></div><div class="mini-metric" style="background:var(--primary-soft)"><small>当前</small><strong>${presetData[state.preset].name}</strong></div><div class="mini-metric"><small>省电</small><strong>10 FPS</strong></div></div><div class="mini-cluster"><div class="mini-line"><span>近距离跟随</span><span class="mini-pill">${state.cursorFollow ? '开启' : '关闭'}</span></div><div class="mini-line"><span>随机动作</span><span class="mini-pill">${state.randomMotion ? '低频' : '关闭'}</span></div><div class="mini-line"><span>窗口边界</span><span class="mini-pill">${state.locked ? '已锁定' : '可互动'}</span></div></div></div>`);
+        const ai = miniShell('ai', `<div class="mini-content"><div class="mini-kicker">COMPANION INTELLIGENCE</div><h3>让伙伴真正听懂你</h3><p>理解、声音和角色设定彼此独立。</p><div class="mini-metrics"><div class="mini-metric"><small>理解</small><strong>DeepSeek</strong></div><div class="mini-metric"><small>声音</small><strong>Qwen TTS</strong></div><div class="mini-metric"><small>设定</small><strong>已注入</strong></div></div><div class="mini-cluster"><div class="mini-line"><span>聊天气泡</span><span class="mini-pill">${[['glass','玻璃'],['sweet','甜美'],['pixel','像素'],['sci-fi','科幻']].find(item => item[0] === state.bubble)[1]}</span></div><div class="mini-line"><span>本机安全凭据</span><span class="mini-pill">已脱敏</span></div><div class="mini-line"><span>语音口型联动</span><span class="mini-pill">可用</span></div></div></div>`);
+        const system = miniShell('system', `<div class="mini-content"><div class="mini-kicker">DESKTOP COEXISTENCE</div><h3>与桌面自然共处</h3><p>让陪伴停留在刚好的系统边界内。</p><div class="mini-cluster"><div class="mini-line"><span>始终置顶</span><span class="mini-pill">${state.alwaysOnTop ? '开启' : '关闭'}</span></div><div class="mini-line"><span>宠物动态背景</span><span class="mini-pill">${state.dynamicBg ? '开启' : '关闭'}</span></div><div class="mini-line"><span>减少动态效果</span><span class="mini-pill">${state.reduced ? '开启' : '跟随系统'}</span></div><div class="mini-line"><span>外部消息服务</span><span class="mini-pill">${state.externalMessages ? '运行中' : '未开启'}</span></div><div class="mini-line"><span>当前版本</span><span class="mini-pill">v1.0.1</span></div></div></div>`);
+        document.getElementById('overview-grid').innerHTML = character + behavior + ai + system;
+      }
+
+      function renderApp() {
+        const renderers = { character: renderCharacter, behavior: renderBehavior, ai: renderAI, system: renderSystem };
+        document.getElementById('app-main').innerHTML = renderers[state.section]();
+        document.querySelectorAll('.section-tab').forEach(button => {
+          const isActive = button.dataset.value === state.section;
+          button.classList.toggle('active', isActive);
+          button.setAttribute('aria-current', isActive ? 'page' : 'false');
+        });
+      }
+
+      function updatePet() {
+        const model = modelData[state.model];
+        const video = document.getElementById('pet-video');
+        const placeholder = document.getElementById('pet-placeholder');
+        document.getElementById('pet-visual').style.setProperty('--pet-scale', state.scale / 100);
+        video.style.display = model.video ? 'block' : 'none';
+        placeholder.style.display = model.video ? 'none' : 'grid';
+        document.getElementById('scene-status').textContent = `${state.nickname || model.nickname} · ${state.locked ? '已锁定' : '正在陪伴'}`;
+        document.getElementById('bubble-speaker').textContent = state.nickname || model.nickname;
+        document.getElementById('desktop-bubble').dataset.style = state.bubble;
+        document.getElementById('menubar-state').textContent = presetData[state.preset].name;
+      }
+
+      function renderChrome() {
+        document.body.dataset.theme = state.theme;
+        document.body.dataset.mode = state.mode;
+        document.body.dataset.reduced = String(state.reduced);
+        document.body.dataset.dynamicBg = String(state.dynamicBg);
+        document.querySelectorAll('[data-action="mode"]').forEach(button => button.classList.toggle('active', button.dataset.value === state.mode));
+        document.querySelectorAll('[data-action="theme"]').forEach(button => button.classList.toggle('active', button.dataset.value === state.theme));
+        document.querySelectorAll('[data-action="reduced"]').forEach(button => {
+          button.classList.toggle('active', state.reduced);
+          button.setAttribute('aria-pressed', String(state.reduced));
+          if (button.getAttribute('role') === 'switch') button.setAttribute('aria-checked', String(state.reduced));
+        });
+      }
+
+      function renderAll({ preserveScroll = false } = {}) {
+        const scroller = document.querySelector('.page-scroll');
+        const scrollTop = preserveScroll && scroller ? scroller.scrollTop : 0;
+        renderChrome();
+        renderApp();
+        renderOverview();
+        updatePet();
+        if (preserveScroll) {
+          const nextScroller = document.querySelector('.page-scroll');
+          if (nextScroller) nextScroller.scrollTop = scrollTop;
+        }
+        saveState();
+      }
+
+      function showToast(message) {
+        const toast = document.getElementById('toast');
+        document.getElementById('toast-copy').textContent = message;
+        toast.classList.add('show');
+        clearTimeout(toastTimer);
+        toastTimer = setTimeout(() => toast.classList.remove('show'), 2400);
+      }
+
+      function openModal(content, className = '') {
+        const layer = document.getElementById('modal-layer');
+        layer.innerHTML = `<section class="modal ${className}" role="dialog" aria-modal="true">${content}</section>`;
+        layer.classList.add('open');
+        layer.querySelector('button, input, select, textarea')?.focus();
+      }
+
+      function closeModal() {
+        const layer = document.getElementById('modal-layer');
+        layer.classList.remove('open');
+        layer.innerHTML = '';
+      }
+
+      function modalHeader(title, copy) {
+        return `<header class="modal-head"><div><h3>${title}</h3><p>${copy}</p></div><button class="modal-close" type="button" data-action="close-modal" aria-label="关闭">${icon('close')}</button></header>`;
+      }
+
+      function openProfile() {
+        openModal(`${modalHeader('角色档案', '这些信息会作为当前伙伴的 AI 角色设定。')}<div class="modal-body"><div class="field-grid"><div class="field"><label>昵称</label><input id="profile-nickname" value="${escapeHtml(state.nickname)}"></div><div class="field"><label>物种</label><input value="Q 版蓝发小女仆"></div><div class="field"><label>年龄</label><input value="未设定"></div><div class="field"><label>性格</label><input value="温柔、好奇、有一点小迷糊"></div><div class="field full"><label>喜好</label><input value="听你分享日常、在桌面角落发呆、被摸摸头"></div><div class="field full"><label>世界观</label><textarea>生活在与你相连的桌面世界，能感受到你分享的日常。</textarea></div><div class="field full"><label>与你的关系</label><textarea>住在桌面上的长期伙伴，尊重你的节奏与边界。</textarea></div><div class="field full"><label>表达规则</label><textarea>自然、简短、温暖，不使用生硬的客服口吻。</textarea></div></div><div class="modal-actions"><button class="quiet-button" type="button" data-action="close-modal">取消</button><button class="primary-button" type="button" data-action="save-profile">保存档案</button></div></div>`);
+      }
+
+      function openImport() {
+        openModal(`${modalHeader('导入角色模型', '支持包含 Live2D 或 video-pet-v1 资源的 ZIP 模型包。')}<div class="modal-body"><div class="dropzone"><div>${icon('upload')}<strong>将 ZIP 模型包拖到这里</strong><p>原型不会读取文件。正式应用会在复制前检查格式，失败的模型不会写入用户目录。</p></div></div><div class="modal-actions"><button class="quiet-button" type="button" data-action="close-modal">取消</button><button class="primary-button" type="button" data-action="simulate-import">选择文件</button></div></div>`);
+      }
+
+      function openChat() {
+        openModal(`${modalHeader(`${escapeHtml(state.nickname)}的聊天`, '本地模拟 · 当前角色拥有独立对话历史')}<div class="modal-body"><div class="chip-row" style="margin-bottom:12px"><button class="chip ${state.muted ? 'active' : ''}" type="button" data-action="chat-mute">${icon('volume')}${state.muted ? '已静音' : '自动朗读'}</button><button class="chip" type="button" data-action="chat-clear">清空对话</button><span class="chip success">角色设定已注入</span></div><div id="chat-log" class="chat-log"><div class="message assistant">欢迎回来。今天想聊点什么？<div class="message-meta"><span>温柔</span><span>·</span><button class="chip" type="button" data-action="voice-preview">${icon('volume')}播放</button></div></div><div class="message user">今天有一点累。</div><div class="message assistant">那就先不用急着做很多事。我会安静待在这里，陪你把呼吸慢下来。<div class="message-meta"><span>关心</span><span>·</span><button class="chip" type="button" data-action="voice-preview">${icon('volume')}播放</button></div></div></div><div class="chat-compose"><input id="chat-input" placeholder="和伙伴说点什么…" value=""><button class="primary-button" type="button" data-action="chat-send">发送</button></div></div>`, 'chat-modal');
+      }
+
+      function animatePet(action = 'greet') {
+        const model = modelData[state.model];
+        const visual = document.getElementById('pet-visual');
+        const video = document.getElementById('pet-video');
+        clearTimeout(actionTimer);
+        visual.classList.add('is-speaking');
+        if (model.video) {
+          const file = action === 'sleepy' ? '原地小憩沉眠.webm' : action === 'happy' ? '点击回应-开心跃动.webm' : '点击回应-元气挥手.webm';
+          video.src = `../models/deepseek-pet/${file}`;
+          video.loop = false;
+          video.play().catch(() => {});
+        }
+        actionTimer = setTimeout(() => {
+          visual.classList.remove('is-speaking');
+          if (model.video) {
+            video.src = '../models/deepseek-pet/待机呼吸休闲.webm';
+            video.loop = true;
+            video.play().catch(() => {});
+          }
+        }, 2300);
+      }
+
+      function setBubble(message) {
+        document.getElementById('bubble-message').textContent = message;
+      }
+
+      function applyPreset(id) {
+        const preset = presetData[id];
+        state.preset = id;
+        state.cursorFollow = preset.cursorFollow;
+        state.randomMotion = preset.randomMotion;
+        state.idleEnabled = preset.idleEnabled;
+        setBubble(id === 'quiet' ? '我会把动作放轻一点，安静陪着你。' : id === 'eco' ? '已切换为省资源陪伴，长时间待在桌面也更轻松。' : '自然互动已开启。靠近时，我会看向你。');
+        renderAll({ preserveScroll: true });
+        showToast(`已切换为「${preset.name}」`);
+      }
+
+      function resetDemo() {
+        state = { ...initialState };
+        localStorage.removeItem(STORAGE_KEY);
+        closeModal();
+        setBubble('欢迎回来。今天也让我安静地陪你一会儿吧。');
+        renderAll();
+        showToast('演示状态已重置');
+      }
+
+      async function handleClick(event) {
+        const button = event.target.closest('[data-action]');
+        if (!button) return;
+        const action = button.dataset.action;
+        const value = button.dataset.value;
+
+        if (action === 'mode') { state.mode = value; renderAll(); return; }
+        if (action === 'theme') { state.theme = value; renderAll({ preserveScroll: true }); showToast(value === 'glass' ? '已切换玻璃质感' : '已切换治愈手账'); return; }
+        if (action === 'reduced') { state.reduced = !state.reduced; renderAll({ preserveScroll: true }); showToast(state.reduced ? '已减少非必要动态效果' : '已恢复自然动态效果'); return; }
+        if (action === 'reset-demo') { resetDemo(); return; }
+        if (action === 'nav') { state.mode = 'interactive'; state.section = value; renderAll(); return; }
+        if (action === 'model') {
+          state.model = value;
+          state.nickname = modelData[value].nickname;
+          setBubble(value === 'deepseek' ? '小蓝鲸已经回到桌面，准备好和你打招呼了。' : `${modelData[value].nickname} 已切换。真实封面将在正式应用运行时显示。`);
+          renderAll({ preserveScroll: true });
+          showToast(`已切换伙伴：${modelData[value].name}`);
+          return;
+        }
+        if (action === 'position') { state.position = value; renderAll({ preserveScroll: true }); showToast(`伙伴已移动到屏幕${value}`); return; }
+        if (action === 'save-nickname') {
+          const input = document.getElementById('nickname-input');
+          state.nickname = input && input.value.trim() ? input.value.trim() : modelData[state.model].nickname;
+          renderAll({ preserveScroll: true });
+          showToast('昵称已保存');
+          return;
+        }
+        if (action === 'open-profile') { openProfile(); return; }
+        if (action === 'save-profile') {
+          const input = document.getElementById('profile-nickname');
+          if (input && input.value.trim()) state.nickname = input.value.trim();
+          closeModal(); renderAll({ preserveScroll: true }); showToast('角色档案已保存到原型状态'); return;
+        }
+        if (action === 'import-model') { openImport(); return; }
+        if (action === 'simulate-import') { closeModal(); showToast('原型模式：正式应用会先检查 ZIP 格式'); return; }
+        if (action === 'preview-action' || action === 'pet-greet') { animatePet(value || 'greet'); setBubble('你好呀～今天也请多关照。'); showToast('正在预览「打个招呼」'); return; }
+        if (action === 'preset') { applyPreset(value); return; }
+        if (action === 'toggle') {
+          const key = button.dataset.key;
+          state[key] = !state[key];
+          if (key === 'locked') setBubble(state.locked ? '我现在不会响应鼠标了，可以从托盘把我解锁。' : '已经解锁，又可以和我互动啦。');
+          renderAll({ preserveScroll: true });
+          showToast(key === 'locked' && state.locked ? '宠物已锁定 · 请从托盘解除' : '设置已即时生效');
+          return;
+        }
+        if (action === 'toggle-lock') { state.locked = !state.locked; renderAll({ preserveScroll: true }); showToast(state.locked ? '宠物已锁定 · 请从托盘解除' : '宠物已解锁'); return; }
+        if (action === 'mapping') { showToast('动作映射已更新'); return; }
+        if (action === 'bubble') { state.bubble = value; updatePet(); renderApp(); renderOverview(); saveState(); showToast(`气泡样式已切换为「${button.textContent.trim()}」`); return; }
+        if (action === 'ai-capability') { state.aiCapability = value; state.aiTest = 'ready'; renderAll({ preserveScroll: true }); return; }
+        if (action === 'connect-test') {
+          state.aiTest = 'testing'; renderAll({ preserveScroll: true });
+          setTimeout(() => { state.aiTest = 'success'; renderAll({ preserveScroll: true }); showToast(state.aiCapability === 'chat' ? 'DeepSeek 连接成功' : '语音生成测试成功'); }, 850);
+          return;
+        }
+        if (action === 'mask-key') { showToast('凭据预览：sk-••••••••••••8A2F'); return; }
+        if (action === 'voice-preview') { animatePet('greet'); setBubble('这是当前音色的本地试听状态。正式应用会驱动 Live2D 口型。'); showToast(`正在试听 ${state.voice}`); return; }
+        if (action === 'open-chat') { openChat(); return; }
+        if (action === 'chat-mute') { state.muted = !state.muted; closeModal(); openChat(); updatePet(); saveState(); return; }
+        if (action === 'chat-clear') { const log = document.getElementById('chat-log'); if (log) log.innerHTML = '<div class="message assistant">对话已经清空。想聊的时候，我还在这里。</div>'; showToast('当前角色对话已清空'); return; }
+        if (action === 'chat-send') {
+          const input = document.getElementById('chat-input');
+          const log = document.getElementById('chat-log');
+          const message = input && input.value.trim() ? input.value.trim() : '今天陪我安静一会儿吧。';
+          if (log) {
+            log.insertAdjacentHTML('beforeend', `<div class="message user">${escapeHtml(message)}</div><div class="message assistant">好呀。我会把动作放轻一点，就在桌面这里陪着你。<div class="message-meta"><span>温柔</span><span>·</span><button class="chip" type="button" data-action="voice-preview">${icon('volume')}播放</button></div></div>`);
+            log.scrollTop = log.scrollHeight;
+          }
+          if (input) input.value = '';
+          setBubble('好呀。我会把动作放轻一点，就在桌面这里陪着你。');
+          animatePet('greet');
+          return;
+        }
+        if (action === 'greeting') { showToast('开场白编辑器已在正式应用中提供'); return; }
+        if (action === 'open-dir' || action === 'external-test') { showToast('原型模式：正式应用将在安全边界内打开该入口'); return; }
+        if (action === 'update') {
+          if (state.updatePhase === 'ready') { showToast('安装包已就绪 · 原型不会打开文件'); return; }
+          state.updatePhase = 'checking'; renderAll({ preserveScroll: true });
+          setTimeout(() => { state.updatePhase = 'available'; renderAll({ preserveScroll: true }); }, 650);
+          setTimeout(() => { state.updatePhase = 'downloading'; renderAll({ preserveScroll: true }); }, 1250);
+          setTimeout(() => { state.updatePhase = 'ready'; renderAll({ preserveScroll: true }); showToast('v1.1.0 安装包已准备完成'); }, 2300);
+          return;
+        }
+        if (action === 'reset-settings') {
+          openModal(`${modalHeader('恢复默认设置？', '这会重置窗口、行为、AI 与主题偏好。')}<div class="modal-body"><p style="color:var(--muted);font-size:11px;line-height:1.7">用户模型、插件与语音归档不会被删除。当前页面展示的是原型模拟，不会触及真实应用数据。</p><div class="modal-actions"><button class="quiet-button" type="button" data-action="close-modal">取消</button><button class="danger-button" type="button" data-action="confirm-reset">确认恢复</button></div></div>`);
+          return;
+        }
+        if (action === 'confirm-reset') { resetDemo(); return; }
+        if (action === 'window-min') { showToast('原型模式：窗口最小化反馈'); return; }
+        if (action === 'window-close') { showToast('原型模式：正式应用将在退出前清理渲染与语音状态'); return; }
+        if (action === 'close-modal') { closeModal(); }
+      }
+
+      function handleInput(event) {
+        const target = event.target;
+        if (target.matches('[data-range="scale"]')) {
+          state.scale = Number(target.value);
+          updatePet();
+          const output = document.querySelector('output[for="scale-range"]');
+          if (output) output.textContent = `${state.scale}%`;
+          saveState();
+        }
+        if (target.matches('[data-range="followStrength"]')) {
+          state.followStrength = Number(target.value);
+          saveState();
+        }
+      }
+
+      function handleChange(event) {
+        const target = event.target;
+        if (target.matches('[data-action="voice"]')) { state.voice = target.value; saveState(); showToast(`已选择音色 ${target.options[target.selectedIndex].text}`); }
+        if (target.matches('[data-action="voice-model"]')) { state.voiceModel = target.value; state.aiTest = 'ready'; renderAll({ preserveScroll: true }); }
+        if (target.matches('[data-action="mapping"]')) showToast('动作映射已更新');
+      }
+
+      document.addEventListener('click', handleClick);
+      document.addEventListener('input', handleInput);
+      document.addEventListener('change', handleChange);
+      document.addEventListener('keydown', event => {
+        if (event.key === 'Escape') closeModal();
+        if (event.key === 'Enter' && event.target.id === 'chat-input') document.querySelector('[data-action="chat-send"]')?.click();
+      });
+      document.getElementById('modal-layer').addEventListener('click', event => {
+        if (event.target.id === 'modal-layer') closeModal();
+      });
+
+      window.prototypeAPI = {
+        setMode(value) { state.mode = value; renderAll(); },
+        setSection(value) { if (sections.includes(value)) { state.mode = 'interactive'; state.section = value; renderAll(); } },
+        setTheme(value) { if (['glass','healing'].includes(value)) { state.theme = value; renderAll(); } },
+        setReduced(value) { state.reduced = Boolean(value); renderAll(); },
+        reset: resetDemo,
+        getState() { return JSON.parse(JSON.stringify(state)); },
+        runConnectionTest() { state.section = 'ai'; state.aiCapability = 'chat'; state.aiTest = 'success'; renderAll(); },
+        openChat
+      };
+
+      renderAll();
+      window.__prototypeReady = true;
+    })();
+  </script>
+</body>
+</html>

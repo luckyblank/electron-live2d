@@ -8,6 +8,15 @@ Electron + Live2D desktop Q-version (chibi) pet app. A frameless, transparent, a
 
 The project is **pure JavaScript** (no TypeScript, no Vite, no bundler). Electron loads source files directly.
 
+## Repository Skills
+
+This repository ships two repo-scoped Codex skills under `.agents/skills/`. Codex discovers them when launched from the repository or one of its subdirectories.
+
+- Use [`pet-model-development`](.agents/skills/pet-model-development/SKILL.md) for Cubism 3 or `video-pet-v1` model additions, repairs, motions, expressions, interactions, renderer compatibility, and model QA.
+- Use [`ai-model-development`](.agents/skills/ai-model-development/SKILL.md) for Chat/TTS provider manifests, adapters, model lists, credentials, emotion tags, persistence, audio behavior, settings integration, and AI QA.
+
+Both skills allow implicit invocation and can also be selected explicitly as `$pet-model-development` or `$ai-model-development`. Keep their instructions and references synchronized whenever the corresponding model or AI contracts change. Keep every skill path repository-relative so the skills continue to work after clone.
+
 ## Commands
 
 ```bash

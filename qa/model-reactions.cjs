@@ -1,7 +1,9 @@
 const fs = require('fs')
 const path = require('path')
+const crypto = require('crypto')
 const JSZip = require('jszip')
 const { MODEL_REACTION_PROFILES } = require('../config/model-reactions')
+const { inspectModelDirectory } = require('../model-inspector')
 
 const projectRoot = path.resolve(__dirname, '..')
 const modelsRoot = path.join(projectRoot, 'models')
@@ -18,6 +20,26 @@ function fileStem(fileName, suffix) {
     .replace(suffix, '')
 }
 
+function stableJson(value) {
+  if (Array.isArray(value)) return value.map(stableJson)
+  if (!value || typeof value !== 'object') return value
+  return Object.fromEntries(Object.keys(value).sort().map(key => [key, stableJson(value[key])]))
+}
+
+function assetHash(value) {
+  return crypto.createHash('sha256').update(JSON.stringify(stableJson(value))).digest('hex')
+}
+
+function duplicateGroups(items, key) {
+  const groups = new Map()
+  for (const item of items) {
+    const value = item[key]
+    if (!groups.has(value)) groups.set(value, [])
+    groups.get(value).push(item)
+  }
+  return [...groups.values()].filter(group => group.length > 1)
+}
+
 async function readModelArchive(modelId) {
   const directory = path.join(modelsRoot, modelId)
   const archiveName = fs.readdirSync(directory).find(name => name.toLowerCase().endsWith('.zip'))
@@ -29,20 +51,85 @@ async function readModelArchive(modelId) {
 
   const descriptor = JSON.parse(await archive.file(descriptorName).async('string'))
   const motionGroups = Object.entries(descriptor.FileReferences?.Motions || {})
-  const motionStems = new Set(motionGroups.flatMap(([, items]) => (
-    items.map(item => fileStem(item.File, /\.motion3\.json$/i))
-  )))
-  const expressionStems = new Set((descriptor.FileReferences?.Expressions || []).map(item => (
-    fileStem(item.File, /\.exp3\.json$/i)
-  )))
+  const referencedMotionFiles = motionGroups.flatMap(([, items]) => items.map(item => item.File))
+  const motionStems = new Set(referencedMotionFiles.map(file => fileStem(file, /\.motion3\.json$/i)))
+  const referencedExpressionFiles = (descriptor.FileReferences?.Expressions || []).map(item => item.File)
+  const expressionStems = new Set(referencedExpressionFiles.map(file => fileStem(file, /\.exp3\.json$/i)))
+  const motionAssets = []
+  const expressionAssets = []
 
-  return { archiveName, descriptorName, motionGroups, motionStems, expressionStems }
+  for (const entryName of Object.keys(archive.files)) {
+    if (/\.motion3\.json$/i.test(entryName)) {
+      const value = JSON.parse(await archive.file(entryName).async('string'))
+      motionAssets.push({
+        entryName,
+        stem: fileStem(entryName, /\.motion3\.json$/i),
+        hash: assetHash(value),
+        playable: (Array.isArray(value.Curves) ? value.Curves : []).some(curve => (
+          curve && ['Parameter', 'PartOpacity'].includes(curve.Target) &&
+          Array.isArray(curve.Segments) && curve.Segments.length >= 2
+        )),
+      })
+    } else if (/\.exp3\.json$/i.test(entryName)) {
+      const value = JSON.parse(await archive.file(entryName).async('string'))
+      expressionAssets.push({
+        entryName,
+        stem: fileStem(entryName, /\.exp3\.json$/i),
+        hash: assetHash(value),
+        playable: Array.isArray(value.Parameters) && value.Parameters.length > 0,
+      })
+    }
+  }
+
+  return {
+    archiveName,
+    descriptorName,
+    motionGroups,
+    referencedMotionFiles,
+    referencedExpressionFiles,
+    motionStems,
+    expressionStems,
+    motionAssets,
+    expressionAssets,
+  }
 }
 
 async function validateProfile(modelId, profile) {
   const archive = await readModelArchive(modelId)
   const errors = []
   const generatedExpressionNames = new Set(Object.keys(profile.generatedExpressions || {}))
+  const playableMotionStems = new Set(archive.motionAssets.filter(item => item.playable).map(item => item.stem))
+
+  if (profile.actions?.idle?.length !== 1) {
+    errors.push(`idle must contain exactly one action, found: ${profile.actions?.idle?.length || 0}`)
+  }
+  if (new Set(profile.previewClips || []).size !== (profile.previewClips || []).length) {
+    errors.push('preview list contains duplicate actions')
+  }
+  if (new Set(profile.previewExpressions || []).size !== (profile.previewExpressions || []).length) {
+    errors.push('preview list contains duplicate expressions')
+  }
+  for (const [group, items] of archive.motionGroups) {
+    if (!group.trim()) errors.push('motion group name is empty')
+    if (items.length !== 1) errors.push(`motion group must contain exactly one action: ${group || '(empty)'} (${items.length})`)
+  }
+  for (const group of duplicateGroups(archive.referencedMotionFiles.map(file => ({ file })), 'file')) {
+    errors.push(`motion is referenced more than once: ${group[0].file}`)
+  }
+  for (const group of duplicateGroups(archive.motionAssets, 'hash')) {
+    errors.push(`duplicate motion files: ${group.map(item => item.entryName).join(', ')}`)
+  }
+  for (const group of duplicateGroups(archive.expressionAssets, 'hash')) {
+    errors.push(`duplicate expression files: ${group.map(item => item.entryName).join(', ')}`)
+  }
+  for (const asset of archive.motionAssets) {
+    if (!archive.motionStems.has(asset.stem)) errors.push(`unreferenced motion file: ${asset.entryName}`)
+    if (!asset.playable) errors.push(`motion has no playable curves: ${asset.entryName}`)
+  }
+  for (const asset of archive.expressionAssets) {
+    if (!archive.expressionStems.has(asset.stem)) errors.push(`unreferenced expression file: ${asset.entryName}`)
+    if (!asset.playable) errors.push(`expression has no parameters: ${asset.entryName}`)
+  }
 
   for (const kind of requiredActionKinds) {
     if (!Array.isArray(profile.actions?.[kind]) || !profile.actions[kind].length) {
@@ -54,15 +141,29 @@ async function validateProfile(modelId, profile) {
     for (const candidate of candidates) {
       if (!archive.motionStems.has(candidate.clip)) {
         errors.push(`${kind}: motion not found: ${candidate.clip}`)
+      } else if (!playableMotionStems.has(candidate.clip)) {
+        errors.push(`${kind}: motion has no playable curves: ${candidate.clip}`)
       }
       if (candidate.followUp && !archive.motionStems.has(candidate.followUp.clip)) {
         errors.push(`${kind}: follow-up motion not found: ${candidate.followUp.clip}`)
+      } else if (candidate.followUp && !playableMotionStems.has(candidate.followUp.clip)) {
+        errors.push(`${kind}: follow-up motion has no playable curves: ${candidate.followUp.clip}`)
       }
     }
   }
 
   for (const clip of profile.previewClips || []) {
     if (!archive.motionStems.has(clip)) errors.push(`preview motion not found: ${clip}`)
+  }
+
+  for (const source of profile.previewExpressions || []) {
+    if (
+      !archive.expressionStems.has(source) &&
+      !generatedExpressionNames.has(source) &&
+      !archive.motionStems.has(source)
+    ) {
+      errors.push(`preview expression not found: ${source}`)
+    }
   }
 
   for (const [kind, source] of Object.entries(profile.expressions || {})) {
@@ -92,6 +193,7 @@ async function validateProfile(modelId, profile) {
     descriptorName: archive.descriptorName,
     nativeMotionGroups: archive.motionGroups.map(([name, items]) => ({ name, count: items.length })),
     indexedMotionClips: archive.motionStems.size,
+    motionFiles: archive.motionAssets.length,
     nativeExpressions: archive.expressionStems.size,
     generatedExpressions: generatedExpressionNames.size,
     mappedActionKinds: Object.keys(profile.actions || {}).length,
@@ -103,7 +205,10 @@ async function run() {
   const bundledModelIds = fs.readdirSync(modelsRoot).filter(name => (
     fs.statSync(path.join(modelsRoot, name)).isDirectory()
   ))
-  const missingProfiles = bundledModelIds.filter(modelId => !MODEL_REACTION_PROFILES[modelId])
+  const bundledLive2DModelIds = bundledModelIds.filter(modelId => (
+    inspectModelDirectory(path.join(modelsRoot, modelId))?.cubismVersion === 3
+  ))
+  const missingProfiles = bundledLive2DModelIds.filter(modelId => !MODEL_REACTION_PROFILES[modelId])
   const staleProfiles = Object.keys(MODEL_REACTION_PROFILES).filter(modelId => !bundledModelIds.includes(modelId))
   const models = []
 

@@ -45,6 +45,10 @@
 - 聊天面板支持折叠、静音、单条语音重播和清空当前角色对话。
 - API Key 可来自环境变量，也可通过系统安全存储加密保存在本机；完整 Key 不会回显或写入日志。
 - 生成的 TTS 音频按月份归档到用户数据目录，应用升级不会覆盖。
+- 系统页可按需开启本机外部消息服务；外部系统可通过统一 POST 接口或 WebSocket 发送直连消息、AI问答消息，并独立指定是否语音播报。
+- 外部语音按“文本 + 当前 TTS 插件声明的语音配置”持久缓存：Qwen-TTS 使用模型与音色，GLM-TTS 使用模型、音色、语速与音量；App 内聊天语音仍逐次实时生成。
+- App 内消息与外部系统消息使用 `APP` / `外部` 来源标识；外部消息只以最高优先级占用角色气泡，不弹出、不写入也不改变底部聊天框。App 与外部 AI问答使用独立上下文和请求通道，彼此不会取消或混用。
+- AI 阶段气泡会保持到对应工作完成：`思考中…` 仅在 AI 回复完成后切换，`语音合成中…` 仅在 TTS 完成后切换为正文；两种过程文字都不记入历史。
 
 ## 内置模型
 
@@ -100,6 +104,7 @@ npm run package:win
 | `npm run lint` | 对仓库中的 JavaScript 执行 ESLint |
 | `npm run qa:check` | 检查全部 QA 脚本语法 |
 | `npm run qa:conversation` | 验证逐角色对话持久化、切换和清理 |
+| `npm run qa:external-messages` | 验证外部消息 HTTP、WebSocket、消息历史、归档语音、校验、幂等与串行队列 |
 | `npm run qa:qwen` | 验证 Qwen-TTS 非流式请求、试听清单、下载和本地归档 |
 | `npm run qa:settings` | 验证设置页主题、布局、交互和模型排序 |
 | `npm run qa:chat` | 验证聊天布局、气泡生命周期和滚动稳定性 |
@@ -112,7 +117,27 @@ npm run package:win
 
 运行 `npm run reset:new-user` 前必须退出正式版和开发版应用。脚本不会删除用户数据，而是将 `%APPDATA%\Live2DCompanion\` 移动到 `%APPDATA%\Live2DCompanion-new-user-backups\<时间戳>\`，方便之后手动恢复。
 
-发版与更新发布流程见 [RELEASE.md](RELEASE.md)，模型与 AI 插件开发规范见 [docs/extension-guide.md](docs/extension-guide.md)，QA 脚本说明见 [qa/README.md](qa/README.md)，当前更新日志见 [release/release-notes.md](release/release-notes.md)。
+外部系统接入与测试页说明见 [docs/external-system-integration.md](docs/external-system-integration.md)。发版与更新发布流程见 [RELEASE.md](RELEASE.md)，模型与 AI 插件开发规范见 [docs/extension-guide.md](docs/extension-guide.md)，QA 脚本说明见 [qa/README.md](qa/README.md)，当前更新日志见 [release/release-notes.md](release/release-notes.md)。
+
+## Codex 仓库技能
+
+仓库在 `.agents/skills/` 中提供两项项目级 Codex 技能。它们随 Git 仓库维护，不依赖某位开发者的个人 `$CODEX_HOME`、本机绝对路径或额外插件：
+
+| 技能 | 显式调用 | 适用范围 |
+|---|---|---|
+| [宠物模型开发](.agents/skills/pet-model-development/SKILL.md) | `$pet-model-development` | Cubism 3 Live2D、`video-pet-v1` 透明 WebM、动作、表情、命中、光标跟随、口型、互动映射、封面与模型 QA |
+| [AI 模型开发](.agents/skills/ai-model-development/SKILL.md) | `$ai-model-development` | Chat/TTS 插件清单与适配器、模型和音色、凭据、情绪标签、对话历史、音频归档、设置接入与 AI QA |
+
+clone 后无需安装这两个技能。从仓库根目录或任意子目录启动 Codex，它会向上扫描仓库中的 `.agents/skills`；可以显式输入技能名，也可以用自然语言让 Codex 按技能的 `description` 自动匹配：
+
+```text
+$pet-model-development 帮我接入一个新的 Live2D 角色并验证动作与表情
+$ai-model-development 帮我增加一个新的 TTS 供应商并完成安全与回归检查
+```
+
+两个技能的 `agents/openai.yaml` 均启用了隐式调用。若在已经打开的 Codex 会话中执行 `git pull` 后没有立即看到新技能，重新启动 Codex 即可。官方的目录结构、发现范围和调用方式见 [Build skills](https://developers.openai.com/codex/skills)。
+
+这些技能是仓库开发说明，不是 Electron 应用中的 AI 插件，也不会向模型服务发送请求。要让其他 clone 用户获得它们，提交代码时必须包含完整的 `.agents/skills/` 目录，并确保该目录没有被 `.gitignore` 排除。项目模型或 AI 插件契约发生变化时，应同步更新相应技能及其 `references/`，避免技能继续指导旧接口。
 
 ## 使用方式
 
@@ -126,12 +151,13 @@ npm run package:win
 | 在角色上滚动滚轮 | 调整当前角色尺寸，范围为 50%～200% |
 | 右键角色 | 打开互动、聊天、模型、锁定和设置快捷菜单 |
 | 托盘图标 | 显示或隐藏角色 |
-| 托盘菜单 | 互动、切换角色、暂停动画、锁定、刷新模型、设置或退出 |
+| 托盘菜单 | 互动、切换角色、暂停动画、锁定、刷新模型、设置或退出；开启外部接入后可选择 APP/浏览器调试窗口，开启长截图且设置窗口可见时可截取当前 Tab |
 | `Ctrl+M` | 打开设置的角色页 |
 | `Ctrl+L` | 切换锁定状态 |
 | `Ctrl+I` | 触发一次随机互动 |
+| `Ctrl+Shift+S` | 开启“APP 长截图”后，在设置窗口中截取当前选中的 Tab 页面 |
 
-锁定后宠物窗口会完全穿透鼠标，请从系统托盘菜单解除锁定。快捷键由宠物窗口处理，只有在该窗口能够接收键盘事件时才生效。
+锁定后宠物窗口会完全穿透鼠标，请从系统托盘菜单解除锁定。`Ctrl+M`、`Ctrl+L`、`Ctrl+I` 由宠物窗口处理；`Ctrl+Shift+S` 由设置窗口处理，并且仅在“APP 长截图”已开启时生效。
 
 ## AI 对话与语音
 
@@ -141,7 +167,7 @@ DeepSeek 默认读取 `DEEPSEEK_API_KEY`，智谱默认读取 `ZHIPU_API_KEY`，
 
 每个角色拥有独立的昵称、档案和对话历史。发送消息时，主进程会组合当前角色设定、昵称、最近历史和回复长度限制；回复中的情绪标签不会显示给用户或写入 TTS 文本，而是用于选择相应动作和表情。
 
-智谱与 Qwen-TTS 生成的 WAV/PCM 文件保存在 `%APPDATA%\Live2DCompanion\tts\YYYY-MM\`。Qwen-TTS 使用非流式 HTTP 输出，并会在服务端临时地址失效前下载完整 WAV 留档。聊天默认静音；解除静音后，新回复会自动合成并播放，已生成的消息也可单独重播。
+智谱与 Qwen-TTS 生成的 WAV/PCM 文件保存在 `%APPDATA%\Live2DCompanion\tts\YYYY-MM\`。Qwen-TTS 使用非流式 HTTP 输出，并会在服务端临时地址失效前下载完整 WAV 留档。外部消息还会把完整音频缓存到 `tts\cache-v1\`：缓存键不写入明文消息或 API Key，命中后仍为当前消息创建独立的历史归档。聊天默认静音；解除静音后，新回复会自动合成并播放，已生成的消息也可单独重播。
 
 ## 用户数据目录
 
@@ -149,11 +175,12 @@ DeepSeek 默认读取 `DEEPSEEK_API_KEY`，智谱默认读取 `ZHIPU_API_KEY`，
 
 | 路径 | 内容 |
 |---|---|
-| `config.json` | electron-store 保存的窗口位置、偏好、模型顺序/缩放/昵称/档案、AI 状态和逐角色对话 |
+| `config.json` | electron-store 保存的窗口位置、偏好、模型顺序/缩放/昵称/档案、AI 状态、逐角色对话和最近 200 条外部消息历史 |
 | `models\` | 用户添加的 Live2D 模型；同名模型覆盖内置版本 |
 | `plugins\` | 用户添加的 AI 插件；同名插件覆盖内置版本 |
 | `covers\` | 设置页角色卡片自动生成的封面缓存 |
 | `tts\YYYY-MM\` | 按月份归档的语音文件 |
+| `tts\cache-v1\` | 外部语音内容寻址缓存，最多 200 项 / 256 MiB，超限时优先清理最久未使用项 |
 
 上述目录不属于安装包内容，覆盖安装或应用升级不会重写其中的数据。
 
@@ -161,6 +188,10 @@ DeepSeek 默认读取 `DEEPSEEK_API_KEY`，智谱默认读取 `ZHIPU_API_KEY`，
 
 ```text
 electron-live2d/
+├── .agents/
+│   └── skills/
+│       ├── pet-model-development/ # 宠物模型开发决策、契约与验证流程
+│       └── ai-model-development/  # Chat/TTS 模型插件开发与验证流程
 ├── main.js                 # 窗口、托盘、IPC、持久化、模型发现与更新下载
 ├── model-inspector.js      # 目录/ZIP 模型格式检查
 ├── preload.js              # 宠物窗口桥接 API
@@ -170,7 +201,8 @@ electron-live2d/
 │   ├── defaults.js         # 默认值冻结、迁移初始化辅助
 │   └── bubble-styles.js    # 按主题注册气泡样式
 ├── ai/
-│   └── plugin-manager.js   # AI 插件发现、凭据、启用状态、记忆和语音归档
+│   ├── plugin-manager.js   # AI 插件发现、凭据、启用状态、记忆和语音归档
+│   └── tts-cache.js        # 外部语音的插件配置感知型持久缓存
 ├── plugins/
 │   ├── deepseek/           # DeepSeek 文本对话适配器
 │   ├── zhipu-tts/          # 智谱 GLM-TTS 语音适配器

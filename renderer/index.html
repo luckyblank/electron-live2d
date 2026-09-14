@@ -9,41 +9,90 @@
   <link rel="stylesheet" href="scrollbars.css">
 </head>
 <body>
-  <main id="pet-stage" aria-label="Live2D 桌面伙伴"></main>
-  <canvas id="fx-canvas" aria-hidden="true"></canvas>
-  <pet-speech-bubble id="interaction-bubble" class="interaction-bubble-widget" theme="glass" style-name="glass" role="status" aria-live="polite"></pet-speech-bubble>
-  <section id="ai-chat-panel" class="ai-chat-panel is-collapsed" aria-label="与桌面伙伴对话" hidden>
-    <header class="ai-chat-head">
-      <div class="ai-chat-identity">
-        <span class="ai-chat-meta">
-          <strong id="ai-chat-name">伙伴</strong>
-          <span class="ai-chat-presence"><i aria-hidden="true"></i><em id="ai-chat-presence-text">在线</em></span>
+  <div id="pet-viewport">
+    <main id="pet-stage" aria-label="Live2D 桌面伙伴"></main>
+    <canvas id="fx-canvas" aria-hidden="true"></canvas>
+    <pet-speech-bubble id="interaction-bubble" class="interaction-bubble-widget" theme="glass" style-name="glass" role="status" aria-live="polite"></pet-speech-bubble>
+    <section id="ai-chat-panel" class="ai-chat-panel is-collapsed" aria-label="与桌面伙伴对话" hidden>
+      <header class="ai-chat-head">
+        <div class="ai-chat-identity">
+          <span class="ai-chat-meta">
+            <strong id="ai-chat-name">伙伴</strong>
+            <span class="ai-chat-presence"><i aria-hidden="true"></i><em id="ai-chat-presence-text">在线</em></span>
+          </span>
+        </div>
+        <div class="ai-chat-head-actions">
+          <button id="ai-chat-clear" type="button">清空</button>
+          <button id="ai-chat-close" type="button" aria-label="关闭对话">×</button>
+        </div>
+      </header>
+      <div id="ai-chat-messages" class="ai-chat-messages" role="log" aria-live="polite" aria-relevant="additions"></div>
+      <form id="ai-chat-form" class="ai-chat-form">
+        <button id="ai-chat-toggle" class="ai-chat-toggle" type="button" aria-label="展开对话" aria-expanded="false" aria-controls="ai-chat-messages" title="展开对话">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m6 12 4-4 4 4"/></svg>
+        </button>
+        <textarea id="ai-chat-input" rows="1" maxlength="2000" placeholder="说点什么…" aria-label="对话内容"></textarea>
+        <button id="ai-chat-mute" class="ai-chat-mute is-muted" type="button" aria-label="已静音，点击开启语音" aria-pressed="true" title="已静音，点击开启语音">
+          <svg viewBox="0 0 20 20" aria-hidden="true">
+            <path d="M3.5 8h3L10 5.2v9.6L6.5 12h-3z"/>
+            <path class="ai-chat-volume-waves" d="M13 7.2a4 4 0 0 1 0 5.6M15 5.2a6.8 6.8 0 0 1 0 9.6"/>
+            <path class="ai-chat-volume-slash" d="m13 8 4 4m0-4-4 4"/>
+          </svg>
+        </button>
+        <button id="ai-chat-send" type="submit" aria-label="发送消息" disabled>
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m4 10 11-6-3.8 12-2.1-4.1L4 10Zm5.1 1.9L15 4"/></svg>
+        </button>
+      </form>
+    </section>
+    <div id="status-toast" class="status-toast" role="status" aria-live="polite"></div>
+  </div>
+
+  <section id="long-message-reader" data-side="right" role="dialog" aria-modal="false" aria-labelledby="long-message-title long-message-subtitle" aria-describedby="long-message-reader-body" hidden>
+    <i class="long-message-reader-sheen" aria-hidden="true"></i>
+    <i class="long-message-reader-sparkle long-message-reader-sparkle-top" aria-hidden="true">✦</i>
+    <i class="long-message-reader-petal long-message-reader-petal-left" aria-hidden="true"></i>
+    <i class="long-message-reader-petal long-message-reader-petal-right" aria-hidden="true"></i>
+    <header class="long-message-reader-header">
+      <div class="long-message-reader-identity">
+        <span class="long-message-reader-avatar" aria-hidden="true"><i class="long-message-reader-paw"></i></span>
+        <span class="long-message-reader-heading">
+          <strong id="long-message-title">伙伴</strong>
+          <span class="long-message-reader-meta">
+            <span id="long-message-subtitle">完整消息</span>
+            <span id="long-message-source" aria-label="消息来源：外部消息" title="外部消息" hidden>外部</span>
+          </span>
+        </span>
+        <span class="long-message-reader-tags">
+          <span id="long-message-badge"><i aria-hidden="true">♥</i> 长消息</span>
+          <span id="long-message-audio-kind" data-kind="text">非语音消息</span>
         </span>
       </div>
-      <div class="ai-chat-head-actions">
-        <button id="ai-chat-clear" type="button">清空</button>
-        <button id="ai-chat-close" type="button" aria-label="关闭对话">×</button>
+      <div class="long-message-reader-actions">
+        <button id="long-message-copy" type="button" aria-label="复制完整消息" title="复制完整消息">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 7V5.8A2.8 2.8 0 0 1 10.8 3h6.4A2.8 2.8 0 0 1 20 5.8v8.4a2.8 2.8 0 0 1-2.8 2.8H16"/><rect x="4" y="7" width="12" height="14" rx="2.8"/></svg>
+          <span>复制</span>
+        </button>
+        <button id="long-message-collapse" type="button" aria-label="收起完整消息" title="收起完整消息">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 15 6-6 6 6"/></svg>
+          <span>收起</span>
+        </button>
       </div>
     </header>
-    <div id="ai-chat-messages" class="ai-chat-messages" role="log" aria-live="polite" aria-relevant="additions"></div>
-    <form id="ai-chat-form" class="ai-chat-form">
-      <button id="ai-chat-toggle" class="ai-chat-toggle" type="button" aria-label="展开对话" aria-expanded="false" aria-controls="ai-chat-messages" title="展开对话">
-        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m6 12 4-4 4 4"/></svg>
-      </button>
-      <textarea id="ai-chat-input" rows="1" maxlength="2000" placeholder="说点什么…" aria-label="对话内容"></textarea>
-      <button id="ai-chat-mute" class="ai-chat-mute is-muted" type="button" aria-label="已静音，点击开启语音" aria-pressed="true" title="已静音，点击开启语音">
-        <svg viewBox="0 0 20 20" aria-hidden="true">
-          <path d="M3.5 8h3L10 5.2v9.6L6.5 12h-3z"/>
-          <path class="ai-chat-volume-waves" d="M13 7.2a4 4 0 0 1 0 5.6M15 5.2a6.8 6.8 0 0 1 0 9.6"/>
-          <path class="ai-chat-volume-slash" d="m13 8 4 4m0-4-4 4"/>
-        </svg>
-      </button>
-      <button id="ai-chat-send" type="submit" aria-label="发送消息" disabled>
-        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m4 10 11-6-3.8 12-2.1-4.1L4 10Zm5.1 1.9L15 4"/></svg>
-      </button>
-    </form>
+    <div class="long-message-reader-rule" aria-hidden="true"></div>
+    <div id="long-message-reader-body" tabindex="0"></div>
+    <footer class="long-message-reader-footer">
+      <span id="long-message-status" role="status" aria-live="polite"><i class="long-message-reader-paw" aria-hidden="true"></i>内容已完整显示</span>
+      <span class="long-message-reader-footer-actions">
+        <button id="long-message-audio" type="button" aria-label="播放这条语音" aria-pressed="false" title="播放这条语音" hidden>
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path class="long-message-audio-speaker" d="M5 10h3.2l4.1-3.4v10.8L8.2 14H5z"/>
+            <path class="long-message-audio-waves" d="M15.2 9a4.2 4.2 0 0 1 0 6M18 6.7a7.4 7.4 0 0 1 0 10.6"/>
+          </svg>
+        </button>
+        <span id="long-message-count">0 字</span>
+      </span>
+    </footer>
   </section>
-  <div id="status-toast" class="status-toast" role="status" aria-live="polite"></div>
   <script src="bubble-component.js"></script>
   <script src="app.js"></script>
 </body>

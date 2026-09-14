@@ -111,6 +111,8 @@
     "launchAtLogin": false,
     "reducedMotion": "system",
     "settingsPetBackground": true,
+    "appLongScreenshotEnabled": false,
+    "externalMessagesEnabled": false,
     "settingsTheme": "healing",
     "bubbleStyles": {
       "glass": "glass",

@@ -12,6 +12,7 @@
   "models": ["qwen3-tts-flash"],
   "defaultModel": "qwen3-tts-flash",
   "ttsTuning": false,
+  "ttsCacheKeyFields": ["model", "voice"],
   "voices": [
     { "id": "Cherry", "name": "芊悦", "previewUrl": "https://help-static-aliyun-doc.aliyuncs.com/file-manage-files/zh-CN/20250211/tixcef/cherry.wav" },
     { "id": "Serena", "name": "苏瑶", "previewUrl": "https://help-static-aliyun-doc.aliyuncs.com/file-manage-files/zh-CN/20250211/bxokea/serena.wav" },

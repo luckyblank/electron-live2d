@@ -46,6 +46,8 @@ function createInitialStoreDefaults() {
     ignoredUpdateVersion: '',
     aiPlugins: createInitialAIPluginState(),
     aiConversations: { ...INITIAL_USER_DEFAULTS.ai.conversations },
+    aiExternalConversations: {},
+    externalMessageHistory: [],
     ...PREFERENCE_DEFAULTS,
   }
 }

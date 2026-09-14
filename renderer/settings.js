@@ -2,6 +2,7 @@
   const api = window.settingsAPI
   const captureRenderOnly = new URLSearchParams(window.location.search).get('capture') === '1'
   const elements = {
+    titlebar: document.querySelector('.titlebar'),
     currentModelName: document.getElementById('current-model-name'),
     currentModelNameText: document.getElementById('current-model-name-text'),
     currentModelSource: document.getElementById('current-model-source'),
@@ -78,8 +79,72 @@
     aiConfigTemplate: document.getElementById('ai-config-panel-template'),
     petBackground: document.getElementById('settings-pet-background'),
     petBackgroundCanvas: document.getElementById('settings-pet-background-canvas'),
+    externalMessageService: document.getElementById('external-message-service'),
+    externalMessageServiceStatus: document.getElementById('external-message-service-status'),
+    externalMessageHttpUrl: document.getElementById('external-message-http-url'),
+    externalMessageWebsocketUrl: document.getElementById('external-message-websocket-url'),
+    externalMessageTesterTarget: document.getElementById('external-message-tester-target'),
+    externalMessageOpenTester: document.getElementById('external-message-open-tester'),
     toast: document.getElementById('toast'),
   }
+
+  function bindManualWindowDrag(region, windowAPI) {
+    if (
+      !region || !windowAPI ||
+      typeof windowAPI.startWindowDrag !== 'function' ||
+      typeof windowAPI.moveWindowDrag !== 'function' ||
+      typeof windowAPI.endWindowDrag !== 'function'
+    ) return
+
+    let activePointerId = null
+    const interactiveSelector = 'button, a, input, textarea, select, [contenteditable="true"], [role="button"]'
+    const finishDrag = event => {
+      if (activePointerId === null) return
+      if (event && Number.isInteger(event.pointerId) && event.pointerId !== activePointerId) return
+      const pointerId = activePointerId
+      activePointerId = null
+      region.classList.remove('is-window-dragging')
+      try {
+        if (region.hasPointerCapture(pointerId)) region.releasePointerCapture(pointerId)
+      } catch (error) {}
+      windowAPI.endWindowDrag()
+    }
+
+    region.addEventListener('pointerdown', event => {
+      if (activePointerId !== null || event.isPrimary === false || event.button !== 0) return
+      if (event.target.closest(interactiveSelector)) return
+      event.preventDefault()
+      activePointerId = event.pointerId
+      region.classList.add('is-window-dragging')
+      try { region.setPointerCapture(event.pointerId) } catch (error) {}
+      windowAPI.startWindowDrag(event.screenX, event.screenY)
+    })
+    window.addEventListener('pointermove', event => {
+      if (event.pointerId !== activePointerId) return
+      if (event.pointerType === 'mouse' && (event.buttons & 1) === 0) {
+        finishDrag(event)
+        return
+      }
+      event.preventDefault()
+      windowAPI.moveWindowDrag(event.screenX, event.screenY)
+    }, { passive: false })
+    window.addEventListener('pointerup', finishDrag)
+    window.addEventListener('pointercancel', finishDrag)
+    window.addEventListener('blur', () => finishDrag())
+  }
+
+  if (!captureRenderOnly) bindManualWindowDrag(elements.titlebar, api)
+  const externalMessageTesterTargetPicker = window.SearchSelect.enhance(
+    elements.externalMessageTesterTarget,
+    {
+      searchable: false,
+      density: 'compact',
+      minMenuWidth: 136,
+      maxMenuHeight: 96,
+      showTriggerSecondary: false,
+      showOptionSecondary: false,
+    }
+  )
 
   const qualityDescriptions = {
     auto: '互动时保持流畅，闲置后自动降低资源占用。',
@@ -271,7 +336,9 @@
     petBackgroundFrameQueue = null
     const context = elements.petBackgroundCanvas.getContext('2d')
     context.clearRect(0, 0, elements.petBackgroundCanvas.width, elements.petBackgroundCanvas.height)
-    elements.petBackground.classList.remove('is-ready')
+    elements.petBackground.classList.remove('is-ready', 'is-video-pet')
+    delete elements.petBackground.dataset.modelId
+    delete elements.petBackground.dataset.modelFormat
   }
 
   function petBackgroundFrameHasVisiblePixels(bitmap) {
@@ -296,12 +363,16 @@
         const bitmap = await createImageBitmap(new Blob([queued.frame], { type: 'image/webp' }))
         if (
           queued.sequence === petBackgroundFrameSequence && snapshot &&
-          snapshot.preferences.settingsPetBackground && petBackgroundFrameHasVisiblePixels(bitmap)
+          queued.modelId === snapshot.currentModelId && snapshot.preferences.settingsPetBackground &&
+          petBackgroundFrameHasVisiblePixels(bitmap)
         ) {
           const canvas = elements.petBackgroundCanvas
           const context = canvas.getContext('2d')
           context.clearRect(0, 0, canvas.width, canvas.height)
           context.drawImage(bitmap, 0, 0, canvas.width, canvas.height)
+          elements.petBackground.dataset.modelId = queued.modelId
+          elements.petBackground.dataset.modelFormat = queued.format || ''
+          elements.petBackground.classList.toggle('is-video-pet', queued.format === 'video-pet')
           elements.petBackground.classList.add('is-ready')
         }
         bitmap.close()
@@ -314,13 +385,22 @@
     }
   }
 
-  function queuePetBackgroundFrame(frame) {
-    if (!frame || !snapshot || !snapshot.preferences.settingsPetBackground) {
+  function queuePetBackgroundFrame(payload) {
+    if (payload === null || !snapshot || !snapshot.preferences.settingsPetBackground) {
       clearPetBackgroundFrame()
       return
     }
+    if (
+      !payload || typeof payload !== 'object' || !payload.frame ||
+      typeof payload.modelId !== 'string' || payload.modelId !== snapshot.currentModelId
+    ) return
     const sequence = ++petBackgroundFrameSequence
-    petBackgroundFrameQueue = { frame, sequence }
+    petBackgroundFrameQueue = {
+      frame: payload.frame,
+      format: payload.format,
+      modelId: payload.modelId,
+      sequence,
+    }
     drawQueuedPetBackgroundFrames()
   }
 
@@ -537,6 +617,10 @@
 
   async function saveLongScreenshotFromShortcut() {
     if (longScreenshotPending) return
+    if (!snapshot || !snapshot.preferences || !snapshot.preferences.appLongScreenshotEnabled) {
+      showToast('请先在系统页开启 APP 长截图', 2600)
+      return
+    }
     longScreenshotPending = true
     try {
       const result = await api.captureLongScreenshot(document.documentElement.dataset.settingsView)
@@ -1468,6 +1552,28 @@
     })
   }
 
+  function renderExternalMessageService(service, preferences) {
+    if (!elements.externalMessageService) return
+    const value = service && typeof service === 'object' ? service : {}
+    const enabled = Boolean(preferences && preferences.externalMessagesEnabled)
+    elements.externalMessageService.hidden = !enabled
+    const status = typeof value.status === 'string' ? value.status : 'stopped'
+    const statusCopy = {
+      starting: '正在启动本机接入服务…',
+      running: `运行中 · ${Number(value.websocketClients) || 0} 个 WebSocket 连接`,
+      stopping: '正在停止接入服务…',
+      stopped: enabled ? '服务尚未启动' : '服务未开启',
+      error: value.error ? `启动失败：${value.error}` : '服务启动失败',
+    }
+    elements.externalMessageService.dataset.status = status
+    elements.externalMessageServiceStatus.textContent = statusCopy[status] || statusCopy.stopped
+    elements.externalMessageHttpUrl.textContent = value.messageUrl || 'http://127.0.0.1:17373/api/v1/messages'
+    elements.externalMessageWebsocketUrl.textContent = value.websocketUrl || 'ws://127.0.0.1:17373/api/v1/events'
+    elements.externalMessageTesterTarget.disabled = !value.running
+    externalMessageTesterTargetPicker.refresh()
+    elements.externalMessageOpenTester.disabled = !value.running
+  }
+
   function setAITestStatus(ctx, message, type = '') {
     ctx.els['ai-test-status'].textContent = message
     ctx.els['ai-test-status'].classList.toggle('is-success', type === 'success')
@@ -1903,11 +2009,15 @@
 
   function render(nextSnapshot) {
     const previousModelId = snapshot && snapshot.currentModelId
+    if (previousModelId && previousModelId !== nextSnapshot.currentModelId) {
+      // 模型选择变化时，旧背景帧必须立即消失。后续只有带有相同模型 ID
+      // 的新帧才能重新显示，避免视频宠物残帧套用普通模型的缩放规则。
+      clearPetBackgroundFrame()
+    }
     snapshot = nextSnapshot
     const current = snapshot.models.find(model => model.id === snapshot.currentModelId)
     const preferences = snapshot.preferences
 
-    elements.petBackground.classList.toggle('is-video-pet', current && current.format === 'video-pet')
     renderHeroModelName(current ? current.displayName : '暂无角色')
     elements.heroModelScript.textContent = `${current ? current.displayName : 'Companion'} ♡`
     elements.currentModelSource.textContent = current && current.nickname ? `模型：${current.name}` : ''
@@ -1957,6 +2067,7 @@
     }
     renderCharacterProfile(current)
     renderToggles(preferences)
+    renderExternalMessageService(snapshot.externalMessages, preferences)
     renderBubbleStylePicker(preferences, current)
     renderAI(snapshot.ai)
     if (!previousModelId || previousModelId !== snapshot.currentModelId) {
@@ -2779,6 +2890,12 @@
     })
   })
 
+  elements.externalMessageOpenTester.addEventListener('click', async () => {
+    const target = elements.externalMessageTesterTarget.value === 'browser' ? 'browser' : 'app'
+    const opened = await api.openExternalMessageTester(target)
+    if (!opened) showToast('请先开启外部消息接入')
+  })
+
   document.querySelectorAll('[data-quality]').forEach(button => {
     button.addEventListener('click', () => savePreference({ qualityMode: button.dataset.quality }))
   })
@@ -2970,9 +3087,11 @@
   }
 
   async function checkUpdate() {
+    lastCheck = null
     elements.updateStatus.textContent = '正在检查…'
     elements.updateDot.hidden = true
-    elements.footerUpdate.hidden = false
+    elements.footerUpdate.hidden = true
+    elements.footerUpdate.title = '发现新版本时可在此查看'
     try {
       const result = await api.checkUpdate()
       if (result && result.ok) {
@@ -3022,8 +3141,7 @@
     checkUpdate()
   })
   if (!captureRenderOnly) {
-    // 窗口重新获得焦点时自动重查（用户切回来就能看到最新状态）
-    window.addEventListener('focus', checkUpdate)
+    // 设置页每次加载时静默检查一次；只有发现未忽略的新版本才显示页脚入口。
     checkUpdate()
   }
 

@@ -25,6 +25,40 @@
 
 托盘菜单中的“刷新模型列表”会同时刷新模型缓存和 AI 插件注册表。新增、替换扩展后通常不需要重启应用；但如果插件改变了环境变量、依赖或主进程已缓存的模块行为，仍建议完整退出并重新启动。
 
+### 1.1 Codex 仓库技能
+
+本仓库把模型与 AI 扩展规范同时维护为项目级 Codex 技能，目录位于仓库根的 `.agents/skills/`：
+
+| 技能 | 入口 | 主要职责 |
+|---|---|---|
+| `pet-model-development` | [`.agents/skills/pet-model-development/SKILL.md`](../.agents/skills/pet-model-development/SKILL.md) | 根据素材和目标选择 Cubism 3 或 `video-pet-v1`，执行模型接入、动作/表情设计、兼容性决策和分级 QA |
+| `ai-model-development` | [`.agents/skills/ai-model-development/SKILL.md`](../.agents/skills/ai-model-development/SKILL.md) | 区分新增模型、供应商适配器和宿主协议变更，执行 Chat/TTS 接入、凭据安全、持久化和分级 QA |
+
+显式调用示例：
+
+```text
+$pet-model-development 检查这个角色包并按当前项目规范接入
+$ai-model-development 给现有供应商增加一个兼容模型
+```
+
+两个技能都提供：
+
+- `SKILL.md`：触发范围、决策流程、关键不变量和完成标准；
+- `references/`：按需加载的详细格式契约和验收矩阵；
+- `agents/openai.yaml`：Codex 桌面端显示信息，`allow_implicit_invocation` 为 `true`。
+
+Codex 会从当前工作目录向上扫描到仓库根目录的 `.agents/skills`。因此，其他开发者 clone 仓库后，只要从仓库根目录或其子目录启动 Codex，就能显式调用或通过自然语言自动触发，无需复制到个人技能目录。已经打开的会话在拉取技能文件后若未刷新，可以重启 Codex。发现机制以 [Codex 官方 Skills 文档](https://developers.openai.com/codex/skills) 为准。
+
+为了保持 clone 后可用：
+
+- 必须把两个技能目录中的 `SKILL.md`、`agents/openai.yaml` 和 `references/*.md` 全部提交到 Git；
+- 不得把 `.agents/` 加入 `.gitignore`；
+- 技能只能引用仓库相对路径，不得写入开发者电脑的盘符、用户名或个人技能目录；
+- 技能不得依赖未随仓库提供的私有脚本、密钥或本地服务；
+- 模型格式、反应语义、插件清单、适配器签名、凭据结构、默认配置或 QA 命令变化时，必须同步更新对应技能。
+
+这些技能只服务于开发阶段，不参与 Electron 应用运行，也不等同于 `plugins/` 下的 AI 供应商插件。应用的 `build.files` 会排除 Markdown 文档，因此不要把安装包内是否存在技能当作 clone 场景的验收条件。
+
 ---
 
 ## 2. 增加新的 Live2D 模型
@@ -803,6 +837,7 @@ module.exports = { chat, synthesize }
 - 如需专用交互映射，对 `renderer/app.js` 的小范围修改。
 - 对默认角色、角色档案或迁移的必要配置修改。
 - 加载、动作、表情、口型和切换验证结果。
+- 如果模型协议、反应语义或验证命令发生变化，同步更新 `.agents/skills/pet-model-development/`。
 
 增加插件时，建议一个提交至少包含：
 
@@ -811,6 +846,7 @@ module.exports = { chat, synthesize }
 - 根 `package.json` 中必要的依赖和语法检查命令更新。
 - 如需默认安装，对 `config/defaults.json` 和迁移逻辑的修改。
 - 不含真实 Key、账户信息或测试生成音频的验证记录。
+- 如果插件协议、凭据、情绪、归档或验证命令发生变化，同步更新 `.agents/skills/ai-model-development/`。
 
 ## 5. 兼容性变更原则
 
@@ -822,3 +858,4 @@ module.exports = { chat, synthesize }
 - 不覆盖用户昵称、档案、模型顺序、缩放、插件选择或凭据来源。
 - 用户目录同名覆盖是现有能力，内置扩展不能假设自己一定是最终被加载的版本。
 - 插件清单和入口接口发生不兼容变化时，应提升插件版本，并同步更新宿主校验与本文档。
+- 技能名和目录名一旦被团队使用应保持稳定；确需重命名时，同时更新 README、`AGENTS.md`、扩展文档和调用示例。

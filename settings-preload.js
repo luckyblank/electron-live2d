@@ -26,6 +26,10 @@ contextBridge.exposeInMainWorld('settingsAPI', {
   openModelsFolder: () => ipcRenderer.invoke('window:open-models-folder'),
   openPluginsFolder: () => ipcRenderer.invoke('window:open-plugins-folder'),
   openExternalUrl: url => ipcRenderer.invoke('window:open-external', url),
+  openExternalMessageTester: target => ipcRenderer.invoke(
+    'external-message:open-tester',
+    target === 'browser' ? 'browser' : 'app'
+  ),
   copyText: value => ipcRenderer.invoke('clipboard:write-text', value),
   captureLongScreenshot: section => ipcRenderer.invoke('settings:capture-long-screenshot', section),
   openAIChat: () => ipcRenderer.send('window:open-ai-chat'),
@@ -42,6 +46,9 @@ contextBridge.exposeInMainWorld('settingsAPI', {
   onUpdateProgress: callback => subscribe('update:progress', callback),
   closeWindow: () => ipcRenderer.send('window:settings-close'),
   minimizeWindow: () => ipcRenderer.send('window:settings-minimize'),
+  startWindowDrag: (screenX, screenY) => ipcRenderer.send('window:tool-drag-start', { screenX, screenY }),
+  moveWindowDrag: (screenX, screenY) => ipcRenderer.send('window:tool-drag-move', { screenX, screenY }),
+  endWindowDrag: () => ipcRenderer.send('window:tool-drag-end'),
   quitApp: () => ipcRenderer.send('app:quit'),
   onStateChanged: callback => subscribe('state:changed', callback),
   onNavigate: callback => subscribe('settings:navigate', callback),

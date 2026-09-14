@@ -62,6 +62,9 @@
   -webkit-mask-image: radial-gradient(ellipse 73% 67% at 62% 38%, #000 35%, rgba(0, 0, 0, .66) 68%, transparent 100%);
   mask-image: radial-gradient(ellipse 73% 67% at 62% 38%, #000 35%, rgba(0, 0, 0, .66) 68%, transparent 100%);
   transform: scale(1);
+  /* Video pets use a different fixed presentation scale. Interpolating that
+     scale across model identities briefly enlarges the first Live2D frame. */
+  transition: none;
 }
 
 /* The AI and warm-behaviour posters use a deliberately slimmer navigation
@@ -7271,4 +7274,499 @@ kbd {
   opacity: .32;
   transform: translate(10px, -22px) scale(1.75);
   transform-origin: center;
+}
+
+/* Unified translucent surfaces -------------------------------------------
+   The live pet canvas is shared by every settings view. Keep the content
+   hierarchy readable while giving all four pages one predictable glass
+   contract instead of maintaining unrelated per-card alpha and blur values. */
+:root[data-settings-theme="glass"] {
+  --settings-panel-bg: rgba(255, 255, 255, .34);
+  --settings-panel-bg-soft: rgba(255, 255, 255, .22);
+  --settings-panel-filter: blur(8px) saturate(1.05);
+  --settings-panel-bg-over-pet: linear-gradient(
+    100deg,
+    rgba(255, 255, 255, .31) 0%,
+    rgba(255, 255, 255, .25) 42%,
+    rgba(255, 255, 255, .1) 70%,
+    rgba(255, 255, 255, .06) 100%
+  );
+  --settings-panel-bg-soft-over-pet: linear-gradient(
+    100deg,
+    rgba(255, 255, 255, .18) 0%,
+    rgba(255, 255, 255, .12) 44%,
+    rgba(255, 255, 255, .04) 100%
+  );
+  --settings-panel-filter-over-pet: saturate(1.1) contrast(1.04);
+  --settings-input-bg-idle: linear-gradient(
+    100deg,
+    rgba(255, 255, 255, .58) 0%,
+    rgba(255, 255, 255, .4) 52%,
+    rgba(255, 255, 255, .16) 100%
+  );
+  --settings-input-bg-focus: linear-gradient(
+    100deg,
+    rgba(255, 255, 255, .86) 0%,
+    rgba(255, 255, 255, .76) 58%,
+    rgba(255, 255, 255, .58) 100%
+  );
+  --settings-toggle-row-bg: linear-gradient(100deg, rgba(255, 255, 255, .12), rgba(255, 255, 255, .075) 58%, rgba(255, 255, 255, .025));
+  --settings-toggle-row-bg-hover: linear-gradient(100deg, rgba(255, 255, 255, .18), rgba(255, 255, 255, .12) 58%, rgba(255, 255, 255, .045));
+  --settings-toggle-divider: rgba(105, 104, 153, .14);
+  --settings-toggle-icon-bg: rgba(232, 225, 255, .48);
+  --settings-toggle-off-bg: rgba(111, 107, 129, .2);
+  --settings-toggle-off-bg-hover: rgba(111, 107, 129, .26);
+  --settings-toggle-off-border: rgba(93, 84, 137, .2);
+  --settings-toggle-on-bg: linear-gradient(135deg, rgba(145, 109, 248, .88), rgba(104, 72, 238, .82));
+  --settings-toggle-on-bg-hover: linear-gradient(135deg, rgba(151, 116, 250, .93), rgba(106, 73, 239, .88));
+  --settings-toggle-on-border: rgba(91, 62, 207, .3);
+  --settings-toggle-thumb-bg: rgba(255, 255, 255, .92);
+  --pet-background-opacity: .3;
+}
+
+:root[data-settings-theme="healing"] {
+  --settings-panel-bg: rgba(255, 253, 250, .4);
+  --settings-panel-bg-soft: rgba(255, 250, 248, .27);
+  --settings-panel-filter: blur(8px) saturate(1.03);
+  --settings-panel-bg-over-pet: linear-gradient(
+    100deg,
+    rgba(255, 253, 250, .35) 0%,
+    rgba(255, 251, 249, .28) 42%,
+    rgba(255, 247, 247, .11) 70%,
+    rgba(255, 244, 247, .07) 100%
+  );
+  --settings-panel-bg-soft-over-pet: linear-gradient(
+    100deg,
+    rgba(255, 252, 249, .2) 0%,
+    rgba(255, 248, 247, .13) 44%,
+    rgba(255, 244, 247, .05) 100%
+  );
+  --settings-panel-filter-over-pet: saturate(1.08) contrast(1.035);
+  --settings-input-bg-idle: linear-gradient(
+    100deg,
+    rgba(255, 253, 250, .62) 0%,
+    rgba(255, 251, 249, .43) 52%,
+    rgba(255, 247, 249, .18) 100%
+  );
+  --settings-input-bg-focus: linear-gradient(
+    100deg,
+    rgba(255, 253, 250, .88) 0%,
+    rgba(255, 251, 249, .78) 58%,
+    rgba(255, 247, 249, .6) 100%
+  );
+  --settings-toggle-row-bg: linear-gradient(100deg, rgba(255, 253, 250, .14), rgba(255, 249, 248, .09) 58%, rgba(255, 244, 247, .03));
+  --settings-toggle-row-bg-hover: linear-gradient(100deg, rgba(255, 253, 250, .2), rgba(255, 247, 248, .13) 58%, rgba(255, 240, 246, .05));
+  --settings-toggle-divider: rgba(173, 111, 145, .14);
+  --settings-toggle-icon-bg: rgba(255, 226, 243, .48);
+  --settings-toggle-off-bg: rgba(128, 112, 125, .18);
+  --settings-toggle-off-bg-hover: rgba(128, 112, 125, .24);
+  --settings-toggle-off-border: rgba(151, 105, 137, .19);
+  --settings-toggle-on-bg: linear-gradient(135deg, rgba(240, 112, 188, .87), rgba(199, 91, 225, .82));
+  --settings-toggle-on-bg-hover: linear-gradient(135deg, rgba(244, 120, 194, .93), rgba(202, 94, 228, .88));
+  --settings-toggle-on-border: rgba(197, 75, 166, .3);
+  --settings-toggle-thumb-bg: rgba(255, 253, 252, .93);
+  --pet-background-opacity: .32;
+}
+
+/* Top-level surfaces sit directly above the pet background. */
+:root[data-settings-theme][data-settings-view] .settings-section :is(
+  .companion-control-row,
+  .scale-control,
+  .nickname-control,
+  .model-picker,
+  .character-profile,
+  .models-hint,
+  .position-panel,
+  .setting-list,
+  .interaction-guide,
+  .quality-fieldset,
+  .ai-settings-block,
+  .theme-fieldset,
+  .shortcut-panel,
+  .update-panel,
+  .contact-author-entry
+) {
+  background: var(--settings-panel-bg);
+  -webkit-backdrop-filter: var(--settings-panel-filter);
+  backdrop-filter: var(--settings-panel-filter);
+}
+
+/* Nested panels use a lighter tint and no second blur pass. This avoids
+   compounding two translucent white layers until the pet disappears again. */
+:root[data-settings-theme][data-settings-view] .settings-section :is(
+  .chat-settings-card,
+  .chat-greeting-panel,
+  .bubble-style-selection-panel,
+  .bubble-style-preview-panel,
+  .ai-capability-group,
+  .ai-plugin-card,
+  .plugin-folder-hint
+) {
+  background: var(--settings-panel-bg-soft);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+/* Theme choices remain distinct interactive cards. Only their resting state
+   joins the shared soft surface; the existing selected/hover states still win. */
+:root[data-settings-theme][data-settings-view="system"]
+  .settings-section.system-view .theme-option:not(.is-active) {
+  background: var(--settings-panel-bg-soft);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+/* Directional passthrough glass ------------------------------------------------
+   Chromium cannot conditionally remove a card fill only where a canvas pixel is
+   present. The pet stage is stable, however, so the panels that overlap it use a
+   directional alpha channel: the copy side remains softly filled while the pet
+   side becomes progressively clearer. Removing blur here preserves the character
+   silhouette; saturation and contrast keep it integrated with either theme. */
+:root[data-settings-theme][data-settings-view="characters"]
+  .settings-section.characters-view :is(.companion-control-row, .scale-control, .nickname-control),
+:root[data-settings-theme][data-settings-view="behavior"]
+  .settings-section.behavior-view .setting-list,
+:root[data-settings-theme][data-settings-view="ai"]
+  .settings-section.ai-view > .chat-settings-block,
+:root[data-settings-theme][data-settings-view="system"]
+  .settings-section.system-view .setting-list {
+  background: var(--settings-panel-bg-over-pet);
+  -webkit-backdrop-filter: var(--settings-panel-filter-over-pet);
+  backdrop-filter: var(--settings-panel-filter-over-pet);
+}
+
+:root[data-settings-theme][data-settings-view="ai"]
+  .settings-section.ai-view > .chat-settings-block :is(
+    .chat-settings-card,
+    .chat-greeting-panel,
+    .bubble-style-selection-panel,
+    .bubble-style-preview-panel
+  ) {
+  background: var(--settings-panel-bg-soft-over-pet);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+/* Adaptive input glass --------------------------------------------------------
+   The greeting editor reveals the pet while idle, then becomes nearly opaque
+   as soon as the user starts editing. This keeps the live background present
+   without allowing moving artwork to compete with entered text. */
+:root[data-settings-theme][data-settings-view="ai"]
+  .settings-section.ai-view .chat-settings-card .chat-greeting-panel textarea {
+  background: var(--settings-input-bg-idle);
+  caret-color: var(--accent);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  transition:
+    background 160ms ease,
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    -webkit-backdrop-filter 160ms ease,
+    backdrop-filter 160ms ease;
+}
+
+:root[data-settings-theme][data-settings-view="ai"]
+  .settings-section.ai-view .chat-settings-card .chat-greeting-panel textarea:hover:not(:focus) {
+  background: var(--settings-input-bg-idle);
+}
+
+:root[data-settings-theme][data-settings-view="ai"]
+  .settings-section.ai-view .chat-settings-card .chat-greeting-panel textarea:focus {
+  background: var(--settings-input-bg-focus);
+  -webkit-backdrop-filter: saturate(1.02);
+  backdrop-filter: saturate(1.02);
+}
+
+/* Pet-aware settings switches -----------------------------------------------
+   Behaviour and System are the two views that use the large switch-row
+   component. The row remains a very light directional surface, while the
+   track keeps a crisp edge and an unmistakable on/off state without becoming
+   an opaque pill over the live character. */
+:root[data-settings-theme][data-settings-view]
+  .settings-section:is(.behavior-view, .system-view) .setting-list > .setting-row {
+  border-bottom-color: var(--settings-toggle-divider);
+  background: var(--settings-toggle-row-bg);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  transition:
+    background 150ms ease,
+    border-color 150ms ease;
+}
+
+:root[data-settings-theme][data-settings-view]
+  .settings-section:is(.behavior-view, .system-view) .setting-list > .setting-row:hover {
+  background: var(--settings-toggle-row-bg-hover);
+}
+
+:root[data-settings-theme][data-settings-view]
+  .settings-section:is(.behavior-view, .system-view) .setting-row-icon {
+  background: var(--settings-toggle-icon-bg);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .58);
+}
+
+:root[data-settings-theme][data-settings-view]
+  .settings-section:is(.behavior-view, .system-view) .switch-track {
+  border: 1px solid var(--settings-toggle-off-border);
+  background: var(--settings-toggle-off-bg);
+  box-shadow:
+    inset 0 1px 2px rgba(74, 63, 92, .08),
+    0 2px 7px rgba(72, 58, 107, .06);
+  -webkit-backdrop-filter: saturate(1.08) contrast(1.02);
+  backdrop-filter: saturate(1.08) contrast(1.02);
+  transition:
+    background 150ms ease,
+    border-color 150ms ease,
+    box-shadow 150ms ease,
+    transform 120ms ease;
+}
+
+:root[data-settings-theme][data-settings-view]
+  .settings-section:is(.behavior-view, .system-view) .setting-row:hover
+  .switch-input:not(:checked):not(:disabled) + .switch-track {
+  background: var(--settings-toggle-off-bg-hover);
+}
+
+:root[data-settings-theme][data-settings-view]
+  .settings-section:is(.behavior-view, .system-view) .switch-track::after {
+  border: 1px solid rgba(255, 255, 255, .62);
+  background: var(--settings-toggle-thumb-bg);
+  box-shadow:
+    0 2px 5px rgba(44, 34, 65, .18),
+    inset 0 1px 0 rgba(255, 255, 255, .72);
+}
+
+:root[data-settings-theme][data-settings-view]
+  .settings-section:is(.behavior-view, .system-view) .switch-input:checked + .switch-track {
+  border-color: var(--settings-toggle-on-border);
+  background: var(--settings-toggle-on-bg);
+  box-shadow:
+    0 4px 10px color-mix(in srgb, var(--accent) 20%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, .24);
+}
+
+:root[data-settings-theme][data-settings-view]
+  .settings-section:is(.behavior-view, .system-view) .setting-row:hover
+  .switch-input:checked:not(:disabled) + .switch-track {
+  background: var(--settings-toggle-on-bg-hover);
+}
+
+:root[data-settings-theme][data-settings-view]
+  .settings-section:is(.behavior-view, .system-view) .setting-row:active
+  .switch-input:not(:disabled) + .switch-track {
+  transform: scale(.96);
+}
+
+:root[data-settings-theme][data-settings-view]
+  .settings-section:is(.behavior-view, .system-view) .switch-input:disabled + .switch-track {
+  opacity: .48;
+  box-shadow: none;
+}
+
+:root[data-settings-theme][data-settings-view]
+  .settings-section:is(.behavior-view, .system-view) .setting-row:has(.switch-input:disabled) {
+  cursor: not-allowed;
+}
+
+/* Pet-aware selected pill -----------------------------------------------------
+   Keep the companion preset unmistakably selected without painting an opaque
+   stripe across the character. The translucent colour, crisp edge and text
+   shadow separate the control from both light and dark areas of the pet. */
+:root[data-settings-theme="glass"][data-settings-view="characters"]
+  .settings-section.characters-view .companion-presets button.is-active {
+  border: 1px solid rgba(116, 83, 238, .72);
+  background: linear-gradient(
+    135deg,
+    rgba(161, 139, 255, .62),
+    rgba(116, 79, 242, .67) 58%,
+    rgba(104, 70, 232, .64)
+  );
+  box-shadow:
+    0 6px 15px rgba(99, 65, 219, .24),
+    0 0 13px rgba(137, 111, 247, .18),
+    inset 0 1px 0 rgba(255, 255, 255, .68),
+    inset 0 0 0 1px rgba(255, 255, 255, .18);
+  color: #fff;
+  text-shadow: 0 1px 2px rgba(48, 31, 119, .42);
+  -webkit-backdrop-filter: saturate(1.16) contrast(1.045);
+  backdrop-filter: saturate(1.16) contrast(1.045);
+}
+
+:root[data-settings-theme="healing"][data-settings-view="characters"]
+  .settings-section.characters-view .companion-presets button.is-active {
+  border: 1px solid rgba(213, 78, 184, .68);
+  background: linear-gradient(
+    135deg,
+    rgba(244, 123, 212, .64),
+    rgba(220, 97, 223, .68) 44%,
+    rgba(134, 80, 240, .65)
+  );
+  box-shadow:
+    0 6px 15px rgba(194, 79, 203, .23),
+    0 0 13px rgba(244, 126, 200, .18),
+    inset 0 1px 0 rgba(255, 255, 255, .7),
+    inset 0 0 0 1px rgba(255, 255, 255, .2);
+  color: #fff;
+  text-shadow: 0 1px 2px rgba(95, 42, 126, .4);
+  -webkit-backdrop-filter: saturate(1.14) contrast(1.04);
+  backdrop-filter: saturate(1.14) contrast(1.04);
+}
+
+/* Do not fade an entire page in over the pet. A transform-only entrance keeps
+   the background equally visible before, during and after a tab switch. */
+@keyframes section-enter {
+  from { transform: translateY(4px); }
+  to { transform: translateY(0); }
+}
+
+/* External-message service -------------------------------------------------- */
+.external-message-service {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px 16px;
+  margin: 2px 0 12px;
+  padding: 12px 14px;
+  border: 1px solid rgba(113, 100, 216, .14);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, .4);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .62);
+}
+
+.external-message-service[hidden] {
+  display: none;
+}
+
+.external-message-service-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.external-message-service-head > div {
+  display: grid;
+  gap: 2px;
+}
+
+.external-message-service-head strong {
+  color: #3e3760;
+  font-size: 12px;
+}
+
+.external-message-service-head small {
+  color: rgba(70, 63, 94, .68);
+  font-size: 10px;
+}
+
+.external-message-service-state {
+  width: 9px;
+  height: 9px;
+  border: 2px solid rgba(89, 79, 120, .16);
+  border-radius: 50%;
+  background: rgba(101, 95, 120, .32);
+  box-shadow: 0 0 0 4px rgba(101, 95, 120, .07);
+}
+
+.external-message-service[data-status="running"] .external-message-service-state {
+  border-color: rgba(255, 255, 255, .8);
+  background: #4f9e77;
+  box-shadow: 0 0 0 4px rgba(79, 158, 119, .13);
+}
+
+.external-message-service[data-status="starting"] .external-message-service-state,
+.external-message-service[data-status="stopping"] .external-message-service-state {
+  background: #7b70dd;
+  animation: external-message-service-pulse 1s ease-in-out infinite;
+}
+
+.external-message-service[data-status="error"] .external-message-service-state {
+  background: #b45f68;
+  box-shadow: 0 0 0 4px rgba(180, 95, 104, .12);
+}
+
+.external-message-service-url {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+}
+
+.external-message-service-url > span {
+  color: rgba(70, 63, 94, .62);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+
+.external-message-service code {
+  min-width: 0;
+  padding: 7px 9px;
+  overflow: hidden;
+  border: 1px solid rgba(113, 100, 216, .1);
+  border-radius: 8px;
+  background: rgba(250, 249, 255, .66);
+  color: #524985;
+  font: 10px/1.35 "Cascadia Mono", Consolas, monospace;
+  text-overflow: ellipsis;
+  cursor: text;
+  user-select: text;
+  -webkit-user-select: text;
+  white-space: nowrap;
+}
+
+.external-message-service-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 7px;
+}
+
+.external-message-tester-target {
+  display: block;
+  width: 136px;
+  min-width: 0;
+}
+
+.external-message-tester-target .search-select--compact .search-select-trigger {
+  height: 30px;
+  padding-inline: 10px 8px;
+  border-radius: 9px;
+}
+
+.external-message-tester-target .search-select--compact .search-select-selected-primary {
+  font-size: 9.5px;
+  font-weight: 650;
+}
+
+.external-message-tester-target .search-select--compact .search-select-chevron {
+  width: 14px;
+  height: 14px;
+}
+
+.external-message-service-actions .text-button {
+  min-height: 30px;
+  padding: 0 12px;
+  font-size: 10px;
+}
+
+:root[data-settings-theme="healing"] .external-message-service {
+  border-color: rgba(181, 112, 151, .15);
+  background: rgba(255, 250, 248, .46);
+}
+
+:root[data-settings-theme="healing"] .external-message-service-head strong { color: #593759; }
+:root[data-settings-theme="healing"] .external-message-service code {
+  border-color: rgba(181, 112, 151, .12);
+  background: rgba(255, 252, 249, .7);
+  color: #764f70;
+}
+@keyframes external-message-service-pulse {
+  50% { opacity: .45; transform: scale(.82); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .external-message-service[data-status="starting"] .external-message-service-state,
+  .external-message-service[data-status="stopping"] .external-message-service-state { animation: none; }
 }

@@ -1,0 +1,6 @@
+interface:
+  display_name: "AI 模型开发"
+  short_description: "开发并验证本项目的文字对话、语音合成 AI 模型与供应商接入"
+  default_prompt: "Use $ai-model-development to add or update a chat or TTS model integration according to this repository's plugin, security, and QA contracts."
+policy:
+  allow_implicit_invocation: true

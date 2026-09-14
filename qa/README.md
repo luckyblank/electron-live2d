@@ -7,6 +7,8 @@
 ```bash
 npm run qa:check
 npm run qa:conversation
+npm run qa:external-messages
+npm run qa:external-message-ui
 npm run qa:qwen
 npm run qa:settings
 npm run qa:chat
@@ -18,9 +20,13 @@ npm run qa:directory
 |---|---|---|---|
 | `npm run qa:check` | 全部脚本 | JavaScript 语法检查 | 标准输出 |
 | `npm run qa:conversation` | `conversation-persistence.cjs` | 角色会话隔离、恢复、切换、停用与清理 | 标准输出 JSON |
+| `npm run qa:external-messages` | `external-message-server.cjs` | 外部消息 HTTP/WebSocket、新参数、历史接口、归档语音与 Range 播放、幂等与串行队列 | 标准输出 |
+| `npm run qa:external-message-ui` | `external-message-tester-ui.cjs` | 测试台无边框标题栏、窗口四边无透明留白、舒适的多行消息编辑高度、语音播报默认关闭、AI 参数按模式显隐、事件倒序、requestId 分组/折叠/协议配色/细边框、完整事件数据、事件区细滚动条、HTTP/WS 按钮及快捷键、消息历史分类/搜索/分页/完整数据/外部消息单行折叠与悬停全文/语音试听、API 与窄屏检查 | `%TEMP%\live2d-companion-external-tester-qa-output\` |
+| `npm run qa:tray-menu` | `tray-menu.cjs` | APP 长截图按开关与设置窗口可见性显示；外部消息调试按接入开关显示 APP/浏览器两个入口，并随服务就绪启用 | 标准输出 |
 | `npm run qa:qwen` | `qwen-tts.cjs` | Qwen-TTS 非流式请求、48 个试听地址、WAV 下载与本地归档 | 标准输出 |
+| `npm run qa:tts-cache` | `tts-cache.cjs` | 外部语音专用缓存、Qwen/智谱配置维度、跨重启命中、APP 绕过缓存、独立历史归档与元数据脱敏 | 标准输出 |
 | `npm run qa:settings` | `settings-ui.cjs` | 设置页双主题、布局、交互与模型排序 | `%TEMP%\live2d-companion-qa\` |
-| `npm run qa:chat` | `chat-acceptance.cjs` | 聊天布局、气泡生命周期与滚动稳定性 | `%TEMP%\live2d-chat-acceptance\results.json` |
+| `npm run qa:chat` | `chat-acceptance.cjs` | 聊天布局、三行气泡预览、外部消息独立轻量来源标识、长消息展开/滚动/复制与双主题同高、左右展开的舞台快照交接、展开期间长消息原位更新且短消息自动返回普通气泡、阅读窗外透明边缘/紧凑尾巴/标签留白、长文本外部来源标识、收起后关闭来源气泡、长消息语音标识/重播/停止/收起时清空口型、APP 来源徽标、APP/外部思考与语音阶段的完成边界、外部气泡优先级、聊天框状态隔离与滚动稳定性 | `%TEMP%\live2d-chat-acceptance\results.json` |
 | `npm run qa:background` | `settings-background.cjs` | 宠物到设置页的动态背景链路与恢复 | `%TEMP%\live2d-settings-background-qa\results.json` |
 | `npm run qa:directory` | `directory-model.cjs` | Windows 目录型 Live2D 模型加载 | `%TEMP%\live2d-directory-model-qa\results.json` |
 

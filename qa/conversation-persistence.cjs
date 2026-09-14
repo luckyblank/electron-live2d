@@ -73,10 +73,22 @@ function createPlugin(pluginsDirectory, id, capabilities) {
   fs.writeFileSync(path.join(pluginDirectory, 'index.js'), `
 globalThis.__conversationPersistenceQaCalls ||= []
 
-exports.chat = async function chat({ messages, model }) {
+exports.chat = async function chat({ messages, model, signal }) {
   const copiedMessages = messages.map(message => ({ role: message.role, content: message.content }))
-  globalThis.__conversationPersistenceQaCalls.push({ pluginId: ${JSON.stringify(id)}, messages: copiedMessages })
+  const messageKeys = messages.map(message => Object.keys(message).sort())
+  globalThis.__conversationPersistenceQaCalls.push({ pluginId: ${JSON.stringify(id)}, messages: copiedMessages, messageKeys })
   const latestUserMessage = [...copiedMessages].reverse().find(message => message.role === 'user')
+  if (latestUserMessage && latestUserMessage.content.includes('并发等待')) {
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(resolve, 80)
+      signal.addEventListener('abort', () => {
+        clearTimeout(timer)
+        const error = new Error('aborted')
+        error.name = 'AbortError'
+        reject(error)
+      }, { once: true })
+    })
+  }
   return {
     text: '[平静]${id} 回复：' + (latestUserMessage ? latestUserMessage.content : ''),
     model,
@@ -114,9 +126,25 @@ async function run() {
   createPlugin(pluginsDirectory, 'qa-beta', ['chat'])
 
   const store = createFakeStore()
+  store.set('aiConversations', {
+    'legacy-mixed': {
+      messages: [
+        { role: 'user', content: '旧版 APP 消息', source: 'app', sourceLabel: 'APP' },
+        { role: 'assistant', content: '旧版外部消息', source: 'external', sourceLabel: '外部' },
+      ],
+    },
+  })
   globalThis.__conversationPersistenceQaCalls = []
 
   const firstManager = makeManager(pluginsDirectory, store, ttsDirectory)
+  recordEqual('旧版混合历史恢复时过滤外部消息', firstManager.getConversation('legacy-mixed').messages, [
+    { role: 'user', content: '旧版 APP 消息', source: 'app', sourceLabel: 'APP' },
+  ])
+  record(
+    '旧版外部消息会从 APP 持久化 Store 中迁出',
+    !JSON.stringify(store.dump().aiConversations).includes('旧版外部消息'),
+    store.dump().aiConversations
+  )
   firstManager.install('qa-alpha')
   firstManager.configure('qa-alpha', { apiKey: 'alpha-secret' })
   firstManager.install('qa-beta')
@@ -132,8 +160,8 @@ async function run() {
   const roleAAfterFirstChat = firstManager.getConversation('role-a')
   recordEqual('角色 A 首轮会话记录当前昵称', roleAAfterFirstChat.companionName, '角色 A')
   recordEqual('角色 A 首轮会话写入持久化 Store', roleAAfterFirstChat.messages, [
-    { role: 'user', content: '角色 A 的第一句话' },
-    { role: 'assistant', content: 'qa-alpha 回复：角色 A 的第一句话' },
+    { role: 'user', content: '角色 A 的第一句话', source: 'app', sourceLabel: 'APP' },
+    { role: 'assistant', content: 'qa-alpha 回复：角色 A 的第一句话', source: 'app', sourceLabel: 'APP' },
   ])
   recordEqual('角色 B 初始会话与角色 A 隔离', firstManager.getConversation('role-b').messages, [])
   firstManager.dispose()
@@ -189,6 +217,114 @@ async function run() {
     '角色 B 请求不携带角色 A 的历史',
     !roleBCall.messages.some(message => /角色 A 的第一句话|角色 A 的第二句话/.test(message.content))
   )
+
+  await secondManager.chat({
+    pluginId: 'qa-alpha',
+    text: '外部系统的第一条转述',
+    companionName: '角色 C',
+    modelId: 'role-c',
+    source: 'external',
+    sourceLabel: '外部',
+    sender: 'QA 外部系统',
+    requestId: 'external-1',
+  })
+  await secondManager.chat({
+    pluginId: 'qa-alpha',
+    text: '外部系统的第二条转述',
+    companionName: '角色 C',
+    modelId: 'role-c',
+    source: 'external',
+    sourceLabel: '外部',
+    sender: 'QA 外部系统',
+    requestId: 'external-2',
+  })
+  const externalConversation = store.dump().aiExternalConversations['role-c'].messages
+  record(
+    '外部转述会话持久化到独立 Store 并保留来源',
+    externalConversation.length === 4 && externalConversation.every(message =>
+      message.source === 'external' && message.sourceLabel === '外部' && message.sender === 'QA 外部系统' &&
+      /^external-[12]$/.test(message.requestId)
+    ),
+    externalConversation
+  )
+  recordEqual('App 会话读取接口不返回外部转述', secondManager.getConversation('role-c').messages, [])
+  const externalSecondCall = globalThis.__conversationPersistenceQaCalls.at(-1)
+  record(
+    '第二条外部转述只携带独立外部历史',
+    externalSecondCall.messages.some(message => message.content === '外部系统的第一条转述') &&
+      !externalSecondCall.messages.some(message => /角色 A 的第一句话|角色 B 的独立消息/.test(message.content)),
+    externalSecondCall.messages
+  )
+  record(
+    '宿主来源元数据不会传给 provider adapter',
+    externalSecondCall.messageKeys.every(keys => keys.length === 2 && keys[0] === 'content' && keys[1] === 'role'),
+    externalSecondCall.messageKeys
+  )
+
+  await secondManager.chat({
+    pluginId: 'qa-alpha',
+    text: '无角色设定且不记上下文',
+    companionName: '不应出现的昵称',
+    companionProfile: '不应出现的人设',
+    modelId: 'role-c',
+    source: 'external',
+    sender: 'QA 外部系统',
+    requestId: 'external-stateless',
+    useCurrentCharacterProfile: false,
+    useExternalContext: false,
+  })
+  const statelessExternalCall = globalThis.__conversationPersistenceQaCalls.at(-1)
+  record(
+    '关闭当前角色设定时使用中性外部转述提示',
+    statelessExternalCall.messages.some(message => message.role === 'system' && message.content.includes('外部系统消息转述助手')) &&
+      !statelessExternalCall.messages.some(message => /不应出现的昵称|不应出现的人设/.test(message.content)),
+    statelessExternalCall.messages
+  )
+  record(
+    '关闭外部上下文时不读取旧历史且不写入新记录',
+    !statelessExternalCall.messages.some(message => message.content === '外部系统的第一条转述') &&
+      store.dump().aiExternalConversations['role-c'].messages.length === 4,
+    store.dump().aiExternalConversations['role-c']
+  )
+
+  await secondManager.chat({
+    pluginId: 'qa-alpha',
+    text: '角色 C 的 App 消息',
+    companionName: '角色 C',
+    modelId: 'role-c',
+  })
+  const roleCAppCall = globalThis.__conversationPersistenceQaCalls.at(-1)
+  record(
+    'App 请求不携带外部转述上下文',
+    !roleCAppCall.messages.some(message => /外部系统的第一条转述|外部系统的第二条转述/.test(message.content)),
+    roleCAppCall.messages
+  )
+  record(
+    'App 与外部上下文分别写入各自 Store',
+    store.dump().aiConversations['role-c'].messages.every(message => message.source === 'app') &&
+      store.dump().aiExternalConversations['role-c'].messages.every(message => message.source === 'external')
+  )
+  const concurrentReplies = await Promise.all([
+    secondManager.chat({
+      pluginId: 'qa-alpha',
+      text: 'App 并发等待',
+      companionName: '角色 D',
+      modelId: 'role-d',
+    }),
+    secondManager.chat({
+      pluginId: 'qa-alpha',
+      text: '外部并发等待',
+      companionName: '角色 D',
+      modelId: 'role-d',
+      source: 'external',
+      useExternalContext: false,
+    }),
+  ])
+  record(
+    'App 与外部转述使用独立请求通道且可同时完成',
+    concurrentReplies.length === 2 && concurrentReplies.every(reply => reply.ok),
+    concurrentReplies
+  )
   const roleABeforePluginStateChanges = secondManager.getConversation('role-a').messages
   const roleBBeforePluginStateChanges = secondManager.getConversation('role-b').messages
 
@@ -224,14 +360,21 @@ async function run() {
     '持久化会话中不保存音频、Base64 或音频路径字段',
     !/audioBase64|archivePath|RIFF-qa-audio-binary|UklGRi1xYS1hdWRpby1iaW5hcnk=/.test(serializedConversationStore)
   )
-  const persistedMessages = Object.values(store.dump().aiConversations)
+  const persistedMessages = [store.dump().aiConversations, store.dump().aiExternalConversations]
+    .flatMap(collection => Object.values(collection || {}))
     .flatMap(entry => Array.isArray(entry && entry.messages) ? entry.messages : [])
   record(
-    '持久化消息仅包含 role 与 content',
+    '持久化消息只包含对话与来源元数据，不包含音频或 provider 数据',
     persistedMessages.every(message => {
-      const keys = Object.keys(message).sort()
-      return keys.length === 2 && keys[0] === 'content' && keys[1] === 'role'
+      const allowedKeys = new Set(['role', 'content', 'source', 'sourceLabel', 'sender', 'requestId'])
+      return Object.keys(message).every(key => allowedKeys.has(key)) &&
+        ((message.source === 'app' && message.sourceLabel === 'APP') ||
+          (message.source === 'external' && message.sourceLabel === '外部'))
     })
+  )
+  record(
+    '思考与语音合成中间态不写入持久化会话',
+    persistedMessages.every(message => !/^思考中…?$|^语音合成中…?$/.test(message.content))
   )
 
   secondManager.clearConversation('qa-beta', 'role-a')
