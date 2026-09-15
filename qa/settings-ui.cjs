@@ -474,6 +474,9 @@ async function pageMetrics(theme, section) {
           checked:input.checked,
           rowBackgroundImage:rowStyle.backgroundImage,
           rowBackdropFilter:rowStyle.backdropFilter,
+          rowRect:rect(row),
+          rowPaddingTop:rowStyle.paddingTop,
+          rowPaddingBottom:rowStyle.paddingBottom,
           trackBackgroundColor:trackStyle.backgroundColor,
           trackBackgroundImage:trackStyle.backgroundImage,
           trackBorderWidth:trackStyle.borderTopWidth,
@@ -785,6 +788,39 @@ async function run() {
     },
     outputPath: longScreenshotPath,
   })
+  const aiLongScreenshots = {}
+  for (const theme of ['glass', 'healing']) {
+    snapshot.preferences.settingsTheme = theme
+    screenshotWindow.webContents.send('state:changed', { snapshot: cloneSnapshot() })
+    await new Promise(resolve => setTimeout(resolve, 180))
+    const layout = await screenshotWindow.webContents.executeJavaScript(`(async () => {
+      const geometry = await window.settingsLongScreenshot.prepare({ section: 'ai' })
+      const shell = document.querySelector('.window-shell').getBoundingClientRect()
+      const footer = document.querySelector('.app-footer').getBoundingClientRect()
+      const result = {
+        theme: document.documentElement.dataset.settingsTheme,
+        geometry,
+        shellBottom: shell.bottom,
+        footerBottom: footer.bottom,
+        trailingSpace: geometry.height - footer.bottom,
+      }
+      await window.settingsLongScreenshot.restore()
+      return result
+    })()`)
+    const outputPath = path.join(outDir, `${theme}-ai-long-screenshot.png`)
+    const capture = await captureSettingsPanel({
+      browserWindow: screenshotWindow,
+      section: 'ai',
+      state: { section: 'ai' },
+      outputPath,
+    })
+    const metadata = await sharp(outputPath).metadata()
+    aiLongScreenshots[theme] = {
+      layout,
+      request: { outputPath, ...capture },
+      image: { width: metadata.width, height: metadata.height, format: metadata.format },
+    }
+  }
   screenshotWindow.destroy()
   const screenshotAfter = await win.webContents.executeJavaScript(`(() => {
     const page = document.querySelector('.characters-view')
@@ -812,6 +848,7 @@ async function run() {
       format: longScreenshotMetadata.format,
       opaqueCorners: longScreenshotAlpha && longScreenshotAlpha.corners.every(alpha => alpha === 255),
     } : null,
+    aiPages: aiLongScreenshots,
   }
   shortcutCaptureRequests.length = 0
   await win.webContents.executeJavaScript(`window.dispatchEvent(new KeyboardEvent('keydown', {
@@ -1727,6 +1764,13 @@ async function run() {
     switchPages.flatMap(page => page.theme === theme ? page.switches : []).filter(item => item.checked),
   ]))
   const expectedSwitchCounts = { behavior: 5, system: 6 }
+  const behaviorSwitchSpacingMatchesReference = ['glass', 'healing'].every(theme => {
+    const page = switchPages.find(item => item.theme === theme && item.section === 'behavior')
+    return page && page.switches.length === 5 && page.switches.every(item => (
+      Math.abs(item.rowRect.height - 64) <= .1 &&
+      item.rowPaddingTop === '8px' && item.rowPaddingBottom === '8px'
+    ))
+  })
   const mainSwitchStylesAreTranslucent = switchPages.length === 4 && switchPages.every(page => (
     page.switches.length === expectedSwitchCounts[page.section] && page.switches.every(item => (
       item.rowBackgroundImage.includes('linear-gradient') && item.rowBackgroundImage.includes('rgba') &&
@@ -1790,22 +1834,33 @@ async function run() {
     themeChromeUniformAcrossAllPages: chromeIsUniform,
     petPositionUniformAcrossAllPages: petPositionIsUniform,
     pageEyebrowSizeUniformAcrossAllPages: pageEyebrowSizeIsUniform,
+    behaviorSwitchRowsMatchReferenceSpacing: behaviorSwitchSpacingMatchesReference,
     mainSwitchesUseThemeAwareTranslucentSurfaces: mainSwitchStylesAreTranslucent,
     heroTypographySupportsCjkLatinAndLongNames: heroTypographyIsAdaptive,
     contactAuthorMatchesReferenceAndWorks: contactAuthorIsValid,
     voicePickerSupportsFuzzySearchAndKeyboard: voicePickerIsValid,
     appPanelLongScreenshotWorks: (() => {
       const result = results.interactions.longScreenshot
+      const aiPages = Object.entries(result.aiPages || {})
       return result.request && result.request.section === 'characters' &&
         result.request.profileTab === 'interactions' && result.before.profileTab === 'interactions' &&
-        result.image && result.image.format === 'png' && result.image.width === 470 && result.image.height > 760 && result.image.opaqueCorners &&
+        result.image && result.image.format === 'png' && result.image.width === result.request.width &&
+        result.image.height === result.request.height && result.request.cssHeight > results.window.bounds.height &&
+        Math.abs(result.request.cssWidth - results.window.bounds.width) <= 2 && result.image.opaqueCorners &&
         result.after.captureModeCleared && result.after.titlebarButtonRemoved && result.after.activeSection === 'characters' &&
         result.after.profileTab === result.before.profileTab &&
         Math.abs(result.after.scrollTop - result.before.scrollTop) <= 1 &&
         result.disabledShortcutSections.length === 0 && result.toggle.exists && !result.toggle.before && result.toggle.after &&
         result.toggle.label === 'APP 长截图' && result.toggle.hint.includes('当前选中的 Tab 页面') &&
         result.toggle.hint.includes('Ctrl + Shift + S') && samePatch(result.togglePatch, { appLongScreenshotEnabled: true }) &&
-        result.shortcutSections.join('|') === 'characters'
+        result.shortcutSections.join('|') === 'characters' && aiPages.length === 2 &&
+        aiPages.every(([theme, page]) => (
+          page.layout.theme === theme && page.layout.geometry.section === 'ai' &&
+          Math.abs(page.layout.trailingSpace) <= 2 &&
+          Math.abs(page.layout.shellBottom - page.layout.footerBottom) <= 2 &&
+          page.request.section === 'ai' && page.request.cssHeight === Math.ceil(page.layout.geometry.height) &&
+          page.image.format === 'png' && page.image.width === page.request.width && page.image.height === page.request.height
+        ))
     })(),
     companionChatShortcutRemoved: characterPages.every(page => !page.companion.hasChatShortcut),
     updateIndicatorAppearsOnlyForNewVersion: (() => {

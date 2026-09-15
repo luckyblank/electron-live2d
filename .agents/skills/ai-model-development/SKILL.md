@@ -62,8 +62,9 @@ If `.codegraph/` exists, use CodeGraph before text search as required by `AGENTS
 
 - The host supplies the full key through the adapter argument. Adapters must not read `config.json` or decrypt storage themselves.
 - An environment key is declared by `apiKeyEnv` and must match `^[A-Z][A-Z0-9_]*$`.
-- A locally entered key is encrypted with Electron `safeStorage` and keyed by `credentialId`.
-- The environment credential is preferred unless the user explicitly saved and selected a local key. Switching back to the environment removes the local override for that credential ID.
+- Resolve credentials in this fixed order: a non-empty project-root `.env` value, the same process/system environment variable, then a legacy locally entered key encrypted with Electron `safeStorage` and keyed by `credentialId`.
+- An empty or missing `.env` entry falls back to the process environment. A configured `.env` or process value cannot be overridden by a saved local key; local storage remains only as a compatibility fallback for existing users.
+- Keep real keys out of Git and packages. `.env.example` contains names with empty values; electron-builder excludes only the project-root `.env`, not dependency-owned `.env` files.
 - Never log, return, persist outside the manager, interpolate into a URL, or include a key in an error.
 - Do not store a key in a module-level variable. Use it only for the current request.
 - Do not add a fake-key workaround for unauthenticated providers; extend the host contract deliberately.

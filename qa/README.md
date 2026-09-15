@@ -14,6 +14,8 @@ npm run qa:settings
 npm run qa:chat
 npm run qa:background
 npm run qa:directory
+npm run qa:ai-environment
+npm run qa:release-upload
 ```
 
 | 命令 | 脚本 | 用途 | 主要输出 |
@@ -29,5 +31,7 @@ npm run qa:directory
 | `npm run qa:chat` | `chat-acceptance.cjs` | 聊天布局、三行气泡预览、外部消息独立轻量来源标识、长消息展开/滚动/复制与双主题同高、左右展开的舞台快照交接、展开期间长消息原位更新且短消息自动返回普通气泡、阅读窗外透明边缘/紧凑尾巴/标签留白、长文本外部来源标识、收起后关闭来源气泡、长消息语音标识/重播/停止/收起时清空口型、APP 来源徽标、APP/外部思考与语音阶段的完成边界、外部气泡优先级、聊天框状态隔离与滚动稳定性 | `%TEMP%\live2d-chat-acceptance\results.json` |
 | `npm run qa:background` | `settings-background.cjs` | 宠物到设置页的动态背景链路与恢复 | `%TEMP%\live2d-settings-background-qa\results.json` |
 | `npm run qa:directory` | `directory-model.cjs` | Windows 目录型 Live2D 模型加载 | `%TEMP%\live2d-directory-model-qa\results.json` |
+| `npm run qa:ai-environment` | `ai-environment.cjs` | AI Key 的 `.env` 优先、空值回退系统环境变量、旧版加密值兼容及脱敏来源状态 | 标准输出 |
+| `npm run qa:release-upload` | `release-upload.cjs` | `.env` 解析、版本清单校验、对象 Key/URL 安全和三文件上传计划 | 标准输出 |
 
 `directory-model.cjs` 会从 `models/hiyori/Hiyori.zip` 创建独立临时夹具，测试结束后自动删除，不依赖已经移除的历史模型目录。

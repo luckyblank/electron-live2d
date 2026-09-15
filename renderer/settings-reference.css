@@ -428,8 +428,10 @@
 :root[data-settings-theme="healing"] .settings-section.behavior-view .setting-row {
   grid-template-columns: 32px minmax(0, 1fr) 46px;
   gap: 9px;
-  min-height: 40px;
-  padding: 4px 2px;
+  /* Match the calmer vertical rhythm of the glass behavior list while keeping
+     the warm theme's icon-led composition and compact typography. */
+  min-height: 64px;
+  padding: 8px 2px;
 }
 
 :root[data-settings-theme="healing"] .behavior-view .setting-row-icon {

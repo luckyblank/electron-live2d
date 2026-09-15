@@ -304,6 +304,14 @@ State is stored below `aiPlugins`:
 - encrypted `secrets` keyed by credential ID;
 - `credentialPreferences` keyed by credential ID.
 
+The host resolves a manifest's `apiKeyEnv` in this fixed order:
+
+1. a non-empty value from the project-root `.env`;
+2. the same key in the process/system environment when the file value is empty or missing;
+3. the encrypted local secret for existing-user compatibility.
+
+File and process values always take precedence over a saved local preference. Parsing does not mutate `process.env`, and snapshots expose only a masked preview plus the source label `dotenv`, `environment`, `local`, or `missing`. Restart the application after changing `.env` or the process environment. Keep only empty placeholders in `.env.example`; never commit or package the real project-root `.env`. Electron-builder intentionally does not globally remove `.env` files owned by dependencies.
+
 Related plugins can share a key:
 
 ```json
@@ -320,7 +328,7 @@ Related plugins can share a key:
 }
 ```
 
-Changing or removing the local credential affects every plugin sharing that credential ID. Use a shared ID only for the same service/account credential semantics.
+Changing or removing the local fallback affects every plugin sharing that credential ID. Use a shared ID only for the same service/account credential semantics.
 
 ## 7. Cancellation model
 

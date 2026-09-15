@@ -2,6 +2,7 @@ const crypto = require('crypto')
 const fs = require('fs')
 const path = require('path')
 const { INITIAL_USER_DEFAULTS } = require('../config/defaults')
+const { resolveEnvironmentValue } = require('../config/environment')
 const { createTTSCache } = require('./tts-cache')
 
 const DEFAULT_PERSONA = INITIAL_USER_DEFAULTS.ai.persona
@@ -89,7 +90,14 @@ function normalizeTTSCacheKeyFields(value) {
   return fields.length ? fields : [...DEFAULT_TTS_CACHE_KEY_FIELDS]
 }
 
-function createAIPluginManager({ pluginsDirectories, store, safeStorage, ttsDirectory }) {
+function createAIPluginManager({
+  pluginsDirectories,
+  store,
+  safeStorage,
+  ttsDirectory,
+  fileEnvironment = {},
+  processEnvironment = process.env,
+}) {
   let registry = null
   const loadedPlugins = new Map()
   // APP 对话和外部转述各自拥有独立的持久化空间。两条通道即使使用
@@ -331,10 +339,13 @@ function createAIPluginManager({ pluginsDirectories, store, safeStorage, ttsDire
     return ''
   }
 
+  function environmentCredential(plugin) {
+    if (!plugin.apiKeyEnv) return { value: '', source: 'missing' }
+    return resolveEnvironmentValue(plugin.apiKeyEnv, fileEnvironment, processEnvironment)
+  }
+
   function environmentKey(plugin) {
-    if (!plugin.apiKeyEnv) return ''
-    const value = process.env[plugin.apiKeyEnv]
-    return typeof value === 'string' ? value.trim() : ''
+    return environmentCredential(plugin).value
   }
 
   function decryptLocalKey(state, plugin) {
@@ -349,17 +360,14 @@ function createAIPluginManager({ pluginsDirectories, store, safeStorage, ttsDire
   }
 
   function credentialDetails(state, plugin) {
-    const fromEnvironment = environmentKey(plugin)
+    const fromEnvironment = environmentCredential(plugin)
     const hasLocal = typeof state.secrets[plugin.credentialId] === 'string' && state.secrets[plugin.credentialId].length > 0
-    const legacySettings = state.settings[plugin.id] || {}
-    const prefersLocal = state.credentialPreferences[plugin.credentialId] === 'local' || legacySettings.credentialPreference === 'local'
-    if (prefersLocal && hasLocal) {
-      let preview = '••••••••'
-      try { preview = maskSecret(decryptLocalKey(state, plugin)) || preview } catch { /* 测试连接时显示具体错误 */ }
-      return { source: 'local', preview, environmentAvailable: Boolean(fromEnvironment) }
-    }
-    if (fromEnvironment) {
-      return { source: 'environment', preview: maskSecret(fromEnvironment), environmentAvailable: true }
+    if (fromEnvironment.value) {
+      return {
+        source: fromEnvironment.source,
+        preview: maskSecret(fromEnvironment.value),
+        environmentAvailable: true,
+      }
     }
     if (hasLocal) {
       let preview = '••••••••'
@@ -509,11 +517,11 @@ function createAIPluginManager({ pluginsDirectories, store, safeStorage, ttsDire
     if (patch.credentialPreference === 'environment') {
       if (!environmentKey(plugin)) {
         const name = plugin.apiKeyEnv || 'API Key 环境变量'
-        throw new Error(`未检测到环境变量 ${name}，无法切换`)
+        throw new Error(`未在项目 .env 或系统环境变量中检测到 ${name}，无法切换`)
       }
-      // A manually entered key sets a persistent local preference. Remove that
-      // override when the user explicitly switches back so every plugin sharing
-      // this credential immediately reads the environment value again.
+      // Remove the legacy local fallback when explicitly returning to managed
+      // configuration so every plugin sharing this credential uses .env or the
+      // process environment consistently.
       delete state.secrets[plugin.credentialId]
       state.credentialPreferences[plugin.credentialId] = 'environment'
     } else if (typeof patch.apiKey === 'string' && patch.apiKey.trim()) {
@@ -529,10 +537,10 @@ function createAIPluginManager({ pluginsDirectories, store, safeStorage, ttsDire
 
   function decryptKey(state, plugin) {
     const credential = credentialDetails(state, plugin)
-    if (credential.source === 'environment') return environmentKey(plugin)
+    if (credential.source === 'dotenv' || credential.source === 'environment') return environmentKey(plugin)
     if (credential.source === 'local') return decryptLocalKey(state, plugin)
     if (credential.source === 'missing') {
-      const hint = plugin.apiKeyEnv ? `，或设置环境变量 ${plugin.apiKeyEnv}` : ''
+      const hint = plugin.apiKeyEnv ? `，或在项目 .env / 系统环境变量中设置 ${plugin.apiKeyEnv}` : ''
       throw new Error(`请先填写并保存 API Key${hint}`)
     }
     throw new Error('无法读取 API Key')

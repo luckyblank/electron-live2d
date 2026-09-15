@@ -6,6 +6,17 @@
   <img src="resources/icon.png" width="128" alt="Live2D 桌面伙伴图标">
 </p>
 
+
+## 页面预览
+
+| **角色**（玻璃质感主题） | **行为**（玻璃质感主题） | **AI**（玻璃质感主题） | **系统**（玻璃质感主题） |
+|:---:|:---:|-----|-----|
+| <img src="https://qny.luckyblank.cn/typora/20260728-玻璃质感主题-Live2DCompanion-角色.png" alt="玻璃质感主题-Live2DCompanion-角色" style="zoom: 50%;" /> | <img src="https://qny.luckyblank.cn/typora/20260728-玻璃质感主题-Live2DCompanion-行为.png" alt="玻璃质感主题-Live2DCompanion-行为" style="zoom: 50%;" /> | <img src="https://qny.luckyblank.cn/typora/20260728-玻璃质感主题-Live2DCompanion-AI.png" alt="玻璃质感主题-Live2DCompanion-AI" style="zoom: 50%;" /> | <img src="https://qny.luckyblank.cn/typora/20260728-玻璃质感主题-Live2DCompanion-系统.png" alt="玻璃质感主题-Live2DCompanion-系统" style="zoom: 50%;" /> |
+| **角色**（玻璃质感主题） | **行为**（玻璃质感主题） | AI（玻璃质感主题） | 系统（玻璃质感主题） |
+| <img src="https://qny.luckyblank.cn/typora/20260728-二次元治愈主题-Live2DCompanion-角色.png" alt="二次元治愈主题-Live2DCompanion-角色" style="zoom: 50%;" /> | <img src="https://qny.luckyblank.cn/typora/20260915-二次元治愈主题-Live2DCompanion-行为.png" alt="二次元治愈主题-Live2DCompanion-行为" style="zoom: 50%;" /> | <img src="https://qny.luckyblank.cn/typora/20260728-二次元治愈主题-Live2DCompanion-AI.png" alt="二次元治愈主题-Live2DCompanion-AI" style="zoom: 50%;" /> | <img src="https://qny.luckyblank.cn/typora/20260728-二次元治愈主题-Live2DCompanion-系统.png" alt="二次元治愈主题-Live2DCompanion-系统" style="zoom: 50%;" /> |
+
+预览图展示玻璃拟态与治愈手账两套界面方向；应用内可在系统页切换主题。
+
 ## 功能亮点
 
 ### 桌面宠物与交互
@@ -43,7 +54,7 @@
 - 角色昵称、档案和表达规则会进入系统提示词；模型返回的情绪标签会转换成角色动作和表情。
 - AI 回复可显示在跟随角色位置的聊天面板与气泡中；语音播放时实时驱动 Live2D 口型。
 - 聊天面板支持折叠、静音、单条语音重播和清空当前角色对话。
-- API Key 可来自环境变量，也可通过系统安全存储加密保存在本机；完整 Key 不会回显或写入日志。
+- DeepSeek、智谱和阿里云百炼 API Key 优先从项目根 `.env` 读取，缺项时回退同名系统环境变量；旧版本已保存的本机加密 Key 仅作为最后兼容兜底。完整 Key 不会回显或写入日志。
 - 生成的 TTS 音频按月份归档到用户数据目录，应用升级不会覆盖。
 - 系统页可按需开启本机外部消息服务；外部系统可通过统一 POST 接口或 WebSocket 发送直连消息、AI问答消息，并独立指定是否语音播报。
 - 外部语音按“文本 + 当前 TTS 插件声明的语音配置”持久缓存：Qwen-TTS 使用模型与音色，GLM-TTS 使用模型、音色、语速与音量；App 内聊天语音仍逐次实时生成。
@@ -61,6 +72,16 @@
 - `deepseek-pet`（透明 WebM 动画版 DeepSeek 小蓝鲸）
 
 应用也会扫描安装目录和用户数据目录中的模型。用户目录里的同名模型优先级最高，可以覆盖内置版本。
+
+## 下载体验与历史版本
+
+当前体验版面向 Windows 10/11 x64，可直接下载安装；版本表按最近更新日期倒序排列。
+
+| 版本                | 更新日期   | Windows 安装包                                               | 简要更新说明                                                 | 完整日志                                               |
+| ------------------- | ---------- | ------------------------------------------------------------ | ------------------------------------------------------------ | ------------------------------------------------------ |
+| **1.0.1（当前版）** | 2026-09-15 | [下载 EXE 体验版](https://qny.luckyblank.cn/live2d-pet/Live2DCompanion-Setup-1.0.1.exe) | 重构角色、行为、AI、系统四页设置中心；新增双主题、AI/TTS、外部消息、DeepSeek WebM 桌宠、应用内更新及交互与性能修复。 | [查看 v1.0.1 更新说明](release/release-notes-1.0.1.md) |
+
+更新程序读取的清单为 [`latest.yml`](https://qny.luckyblank.cn/live2d-pet/latest.yml)。如浏览器或安全软件拦截下载，请确认地址域名为 `qny.luckyblank.cn`，并在运行前按需校验文件。
 
 ## 快速开始
 
@@ -124,13 +145,18 @@ npm run package:win
 | `npm run qa:background` | 验证设置页宠物动态背景链路 |
 | `npm run qa:directory` | 验证 Windows 目录型 Live2D 模型加载 |
 | `npm run qa:video` | 冒烟验证透明 WebM 首帧与语义动作切换 |
+| `npm run qa:ai-environment` | 验证 AI Key 按 `.env`、系统环境变量、本机加密值的顺序解析 |
+| `npm run qa:release-upload` | 验证七牛云发版计划、环境变量解析和路径安全检查 |
 | `npm run package:win` | 检查并构建 Windows 安装包 |
-| `npm run release` | 执行当前发版构建流程 |
+| `npm run release:upload:dry-run` | 校验现有构建产物并预览七牛云上传与 CDN 刷新计划，不执行网络写入 |
+| `npm run release:upload` | 将现有版本产物覆盖上传到七牛云并刷新对应 CDN 文件缓存 |
+| `npm run release:upload:no-refresh` | 只覆盖上传现有版本产物，不提交 CDN 刷新；仅用于排障 |
+| `npm run release` | 检查、构建 Windows 安装包、覆盖上传七牛云并刷新 CDN 缓存 |
 | `npm run reset:new-user` | 备份现有用户数据，准备全新用户测试环境 |
 
 运行 `npm run reset:new-user` 前必须退出正式版和开发版应用。脚本不会删除用户数据，而是将 `%APPDATA%\Live2DCompanion\` 移动到 `%APPDATA%\Live2DCompanion-new-user-backups\<时间戳>\`，方便之后手动恢复。
 
-外部系统接入与测试页说明见 [docs/external-system-integration.md](docs/external-system-integration.md)。发版与更新发布流程见 [RELEASE.md](RELEASE.md)，模型与 AI 插件开发规范见 [docs/extension-guide.md](docs/extension-guide.md)，QA 脚本说明见 [qa/README.md](qa/README.md)，当前更新日志见 [release/release-notes.md](release/release-notes.md)。
+外部系统接入与测试页说明见 [docs/external-system-integration.md](docs/external-system-integration.md)。七牛云凭据、上传参数及完整发版流程见 [RELEASE.md](RELEASE.md)，模型与 AI 插件开发规范见 [docs/extension-guide.md](docs/extension-guide.md)，QA 脚本说明见 [qa/README.md](qa/README.md)，当前更新日志见 [release/release-notes.md](release/release-notes.md)。
 
 ## Codex 仓库技能
 
@@ -176,7 +202,7 @@ $ai-model-development 帮我增加一个新的 TTS 供应商并完成安全与�
 
 在设置的“AI”页配置所需服务。文本模型组使用 DeepSeek，语音模型组可选择智谱 `glm-tts` 或阿里云百炼 `qwen3-tts-flash`；两种能力分别维护当前启用的适配器，因此可以只聊天、只停用语音，或独立更换服务。
 
-DeepSeek 默认读取 `DEEPSEEK_API_KEY`，智谱默认读取 `ZHIPU_API_KEY`，阿里云百炼默认读取 `DASHSCOPE_API_KEY`。没有环境变量时，可以在设置页填写 Key；保存后会明确选择本机加密凭据，也可以在检测到环境变量后切回环境变量。Key 由 Electron `safeStorage` 加密，设置页只显示脱敏预览，请求由主进程直接发往服务商。
+复制 `.env.example` 为项目根 `.env`，分别填写 `DEEPSEEK_API_KEY`、`ZHIPU_API_KEY` 和 `DASHSCOPE_API_KEY`。每一项都优先使用 `.env` 中的非空值；该项为空或不存在时读取同名系统环境变量；两者都没有时，才兼容读取旧版本通过 Electron `safeStorage` 保存的本机加密 Key。修改 `.env` 或系统环境变量后需要完整重启应用。设置页只显示脱敏预览，请求由主进程直接发往服务商。
 
 每个角色拥有独立的昵称、档案和对话历史。发送消息时，主进程会组合当前角色设定、昵称、最近历史和回复长度限制；回复中的情绪标签不会显示给用户或写入 TTS 文本，而是用于选择相应动作和表情。
 
@@ -212,6 +238,7 @@ electron-live2d/
 ├── config/
 │   ├── defaults.json       # 新用户设置与内置角色档案的唯一默认源
 │   ├── defaults.js         # 默认值冻结、迁移初始化辅助
+│   ├── environment.js      # .env 解析以及项目配置/系统环境变量优先级
 │   └── bubble-styles.js    # 按主题注册气泡样式
 ├── ai/
 │   ├── plugin-manager.js   # AI 插件发现、凭据、启用状态、记忆和语音归档

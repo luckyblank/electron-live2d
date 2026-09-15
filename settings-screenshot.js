@@ -52,12 +52,12 @@ async function captureSettingsPanel({ browserWindow, section, state, outputPath 
     prepared = true
     let geometry = normalizedGeometry(geometryValue)
     browserWindow.setContentSize(geometry.width, geometry.height, false)
-    const settledValue = await webContents.executeJavaScript('window.settingsLongScreenshot.settle()', true)
-    const settledHeight = Math.ceil(Number(settledValue && settledValue.height) || 0)
-    if (settledHeight > geometry.height && settledHeight <= MAX_SCREENSHOT_EDGE) {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const settledValue = await webContents.executeJavaScript('window.settingsLongScreenshot.settle()', true)
+      const settledHeight = Math.ceil(Number(settledValue && settledValue.height) || 0)
+      if (settledHeight < 1 || settledHeight > MAX_SCREENSHOT_EDGE || settledHeight === geometry.height) break
       geometry = { ...geometry, height: settledHeight }
       browserWindow.setContentSize(geometry.width, geometry.height, false)
-      await webContents.executeJavaScript('window.settingsLongScreenshot.settle()', true)
     }
     webContents.invalidate()
     const image = await webContents.capturePage(

@@ -1,6 +1,9 @@
 node_modules/
 out/
 dist/
+.env
+.env.*
+!.env.example
 *.log
 *.bak
 *.tmp
