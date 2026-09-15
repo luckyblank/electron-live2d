@@ -2772,19 +2772,24 @@
     message.dataset.messageSource = source
     message.dataset.messageSourceLabel = sourceLabel
     if (source === 'external' && metadata.sender) message.dataset.messageSender = String(metadata.sender).slice(0, 60)
-    const origin = document.createElement('span')
-    origin.className = 'ai-message-origin'
-    const badge = document.createElement('b')
-    badge.className = 'ai-message-source'
-    badge.textContent = sourceLabel
-    origin.appendChild(badge)
-    if (source === 'external' && metadata.sender) {
-      const sender = document.createElement('span')
-      sender.className = 'ai-message-sender'
-      sender.textContent = String(metadata.sender).slice(0, 60)
-      origin.appendChild(sender)
+    // APP messages already have an unambiguous side/alignment in the local chat,
+    // so a repeated source badge only adds visual noise. External messages keep
+    // their compact origin row because the sender is meaningful context.
+    if (source === 'external') {
+      const origin = document.createElement('span')
+      origin.className = 'ai-message-origin'
+      const badge = document.createElement('b')
+      badge.className = 'ai-message-source'
+      badge.textContent = sourceLabel
+      origin.appendChild(badge)
+      if (metadata.sender) {
+        const sender = document.createElement('span')
+        sender.className = 'ai-message-sender'
+        sender.textContent = String(metadata.sender).slice(0, 60)
+        origin.appendChild(sender)
+      }
+      message.appendChild(origin)
     }
-    message.appendChild(origin)
     const content = document.createElement('span')
     content.className = 'ai-message-content'
     content.textContent = text

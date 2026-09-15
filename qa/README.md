@@ -28,7 +28,7 @@ npm run qa:release-upload
 | `npm run qa:qwen` | `qwen-tts.cjs` | Qwen-TTS 非流式请求、48 个试听地址、WAV 下载与本地归档 | 标准输出 |
 | `npm run qa:tts-cache` | `tts-cache.cjs` | 外部语音专用缓存、Qwen/智谱配置维度、跨重启命中、APP 绕过缓存、独立历史归档与元数据脱敏 | 标准输出 |
 | `npm run qa:settings` | `settings-ui.cjs` | 设置页双主题、布局、交互与模型排序 | `%TEMP%\live2d-companion-qa\` |
-| `npm run qa:chat` | `chat-acceptance.cjs` | 聊天布局、三行气泡预览、外部消息独立轻量来源标识、长消息展开/滚动/复制与双主题同高、左右展开的舞台快照交接、展开期间长消息原位更新且短消息自动返回普通气泡、阅读窗外透明边缘/紧凑尾巴/标签留白、长文本外部来源标识、收起后关闭来源气泡、长消息语音标识/重播/停止/收起时清空口型、APP 来源徽标、APP/外部思考与语音阶段的完成边界、外部气泡优先级、聊天框状态隔离与滚动稳定性 | `%TEMP%\live2d-chat-acceptance\results.json` |
+| `npm run qa:chat` | `chat-acceptance.cjs` | 聊天布局、三行气泡预览、外部消息独立轻量来源标识、长消息展开/滚动/复制与双主题同高、左右展开的舞台快照交接、展开期间长消息原位更新且短消息自动返回普通气泡、阅读窗外透明边缘/紧凑尾巴/标签留白、长文本外部来源标识、收起后关闭来源气泡、长消息语音标识/重播/停止/收起时清空口型、APP 消息不显示冗余来源徽标、APP/外部思考与语音阶段的完成边界、外部气泡优先级、聊天框状态隔离与滚动稳定性 | `%TEMP%\live2d-chat-acceptance\results.json` |
 | `npm run qa:background` | `settings-background.cjs` | 宠物到设置页的动态背景链路与恢复 | `%TEMP%\live2d-settings-background-qa\results.json` |
 | `npm run qa:directory` | `directory-model.cjs` | Windows 目录型 Live2D 模型加载 | `%TEMP%\live2d-directory-model-qa\results.json` |
 | `npm run qa:ai-environment` | `ai-environment.cjs` | AI Key 的 `.env` 优先、空值回退系统环境变量、旧版加密值兼容及脱敏来源状态 | 标准输出 |

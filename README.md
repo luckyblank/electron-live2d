@@ -6,13 +6,13 @@
   <img src="resources/icon.png" width="128" alt="Live2D 桌面伙伴图标">
 </p>
 
-
 ## 页面预览
 
-| **角色**（玻璃质感主题） | **行为**（玻璃质感主题） | **AI**（玻璃质感主题） | **系统**（玻璃质感主题） |
-|:---:|:---:|-----|-----|
-| <img src="https://qny.luckyblank.cn/typora/20260728-玻璃质感主题-Live2DCompanion-角色.png" alt="玻璃质感主题-Live2DCompanion-角色" style="zoom: 50%;" /> | <img src="https://qny.luckyblank.cn/typora/20260728-玻璃质感主题-Live2DCompanion-行为.png" alt="玻璃质感主题-Live2DCompanion-行为" style="zoom: 50%;" /> | <img src="https://qny.luckyblank.cn/typora/20260915-玻璃质感主题-Live2DCompanion-AI.png" alt="玻璃质感主题-Live2DCompanion-AI" style="zoom: 50%;" /> | <img src="https://qny.luckyblank.cn/typora/20260728-玻璃质感主题-Live2DCompanion-系统.png" alt="玻璃质感主题-Live2DCompanion-系统" style="zoom: 50%;" /> |
-| **角色**（玻璃质感主题） | **行为**（玻璃质感主题） | AI（玻璃质感主题） | 系统（玻璃质感主题） |
+
+|                                                                   **角色**（玻璃质感主题）                                                                   |                                                                   **行为**（玻璃质感主题）                                                                   | **AI**（玻璃质感主题）                                                                                                                                   | **系统**（玻璃质感主题）                                                                                                                                     |
+| :----------------------------------------------------------------------------------------------------------------------------------------------------------: | :----------------------------------------------------------------------------------------------------------------------------------------------------------: | -------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+|   <img src="https://qny.luckyblank.cn/typora/20260728-玻璃质感主题-Live2DCompanion-角色.png" alt="玻璃质感主题-Live2DCompanion-角色" style="zoom: 50%;" />   |   <img src="https://qny.luckyblank.cn/typora/20260728-玻璃质感主题-Live2DCompanion-行为.png" alt="玻璃质感主题-Live2DCompanion-行为" style="zoom: 50%;" />   | <img src="https://qny.luckyblank.cn/typora/20260915-玻璃质感主题-Live2DCompanion-AI.png" alt="玻璃质感主题-Live2DCompanion-AI" style="zoom: 50%;" />     | <img src="https://qny.luckyblank.cn/typora/20260728-玻璃质感主题-Live2DCompanion-系统.png" alt="玻璃质感主题-Live2DCompanion-系统" style="zoom: 50%;" />     |
+|                                                                  **角色**（二次元治愈主题）                                                                  |                                                                  **行为**（二次元治愈主题）                                                                  | AI（二次元治愈主题）                                                                                                                                     | 系统（二次元治愈主题）                                                                                                                                       |
 | <img src="https://qny.luckyblank.cn/typora/20260728-二次元治愈主题-Live2DCompanion-角色.png" alt="二次元治愈主题-Live2DCompanion-角色" style="zoom: 50%;" /> | <img src="https://qny.luckyblank.cn/typora/20260915-二次元治愈主题-Live2DCompanion-行为.png" alt="二次元治愈主题-Live2DCompanion-行为" style="zoom: 50%;" /> | <img src="https://qny.luckyblank.cn/typora/20260728-二次元治愈主题-Live2DCompanion-AI.png" alt="二次元治愈主题-Live2DCompanion-AI" style="zoom: 50%;" /> | <img src="https://qny.luckyblank.cn/typora/20260728-二次元治愈主题-Live2DCompanion-系统.png" alt="二次元治愈主题-Live2DCompanion-系统" style="zoom: 50%;" /> |
 
 预览图展示玻璃拟态与治愈手账两套界面方向；应用内可在系统页切换主题。
@@ -77,8 +77,9 @@
 
 当前体验版面向 Windows 10/11 x64，可直接下载安装；版本表按最近更新日期倒序排列。
 
-| 版本                | 更新日期   | Windows 安装包                                               | 简要更新说明                                                 | 完整日志                                               |
-| ------------------- | ---------- | ------------------------------------------------------------ | ------------------------------------------------------------ | ------------------------------------------------------ |
+
+| 版本                | 更新日期   | Windows 安装包                                                                          | 简要更新说明                                                                                                         | 完整日志                                               |
+| ------------------- | ---------- | --------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
 | **1.0.1（当前版）** | 2026-09-15 | [下载 EXE 体验版](https://qny.luckyblank.cn/live2d-pet/Live2DCompanion-Setup-1.0.1.exe) | 重构角色、行为、AI、系统四页设置中心；新增双主题、AI/TTS、外部消息、DeepSeek WebM 桌宠、应用内更新及交互与性能修复。 | [查看 v1.0.1 更新说明](release/release-notes-1.0.1.md) |
 
 更新程序读取的清单为 [`latest.yml`](https://qny.luckyblank.cn/live2d-pet/latest.yml)。如浏览器或安全软件拦截下载，请确认地址域名为 `qny.luckyblank.cn`，并在运行前按需校验文件。
@@ -130,29 +131,30 @@ npm run package:win
 
 完整的可用命令如下：
 
-| 命令 | 用途 |
-|---|---|
-| `npm start` | 使用 nodemon 启动 Electron，源码变化时自动重启 |
-| `npm run dev` | 同上，并为宠物窗口打开独立 DevTools |
-| `npm run check` | 检查应用核心 JavaScript 文件语法 |
-| `npm run lint` | 对仓库中的 JavaScript 执行 ESLint |
-| `npm run qa:check` | 检查全部 QA 脚本语法 |
-| `npm run qa:conversation` | 验证逐角色对话持久化、切换和清理 |
-| `npm run qa:external-messages` | 验证外部消息 HTTP、WebSocket、消息历史、归档语音、校验、幂等与串行队列 |
-| `npm run qa:qwen` | 验证 Qwen-TTS 非流式请求、试听清单、下载和本地归档 |
-| `npm run qa:settings` | 验证设置页主题、布局、交互和模型排序 |
-| `npm run qa:chat` | 验证聊天布局、气泡生命周期和滚动稳定性 |
-| `npm run qa:background` | 验证设置页宠物动态背景链路 |
-| `npm run qa:directory` | 验证 Windows 目录型 Live2D 模型加载 |
-| `npm run qa:video` | 冒烟验证透明 WebM 首帧与语义动作切换 |
-| `npm run qa:ai-environment` | 验证 AI Key 按 `.env`、系统环境变量、本机加密值的顺序解析 |
-| `npm run qa:release-upload` | 验证七牛云发版计划、环境变量解析和路径安全检查 |
-| `npm run package:win` | 检查并构建 Windows 安装包 |
-| `npm run release:upload:dry-run` | 校验现有构建产物并预览七牛云上传与 CDN 刷新计划，不执行网络写入 |
-| `npm run release:upload` | 将现有版本产物覆盖上传到七牛云并刷新对应 CDN 文件缓存 |
-| `npm run release:upload:no-refresh` | 只覆盖上传现有版本产物，不提交 CDN 刷新；仅用于排障 |
-| `npm run release` | 检查、构建 Windows 安装包、覆盖上传七牛云并刷新 CDN 缓存 |
-| `npm run reset:new-user` | 备份现有用户数据，准备全新用户测试环境 |
+
+| 命令                                | 用途                                                                   |
+| ----------------------------------- | ---------------------------------------------------------------------- |
+| `npm start`                         | 使用 nodemon 启动 Electron，源码变化时自动重启                         |
+| `npm run dev`                       | 同上，并为宠物窗口打开独立 DevTools                                    |
+| `npm run check`                     | 检查应用核心 JavaScript 文件语法                                       |
+| `npm run lint`                      | 对仓库中的 JavaScript 执行 ESLint                                      |
+| `npm run qa:check`                  | 检查全部 QA 脚本语法                                                   |
+| `npm run qa:conversation`           | 验证逐角色对话持久化、切换和清理                                       |
+| `npm run qa:external-messages`      | 验证外部消息 HTTP、WebSocket、消息历史、归档语音、校验、幂等与串行队列 |
+| `npm run qa:qwen`                   | 验证 Qwen-TTS 非流式请求、试听清单、下载和本地归档                     |
+| `npm run qa:settings`               | 验证设置页主题、布局、交互和模型排序                                   |
+| `npm run qa:chat`                   | 验证聊天布局、气泡生命周期和滚动稳定性                                 |
+| `npm run qa:background`             | 验证设置页宠物动态背景链路                                             |
+| `npm run qa:directory`              | 验证 Windows 目录型 Live2D 模型加载                                    |
+| `npm run qa:video`                  | 冒烟验证透明 WebM 首帧与语义动作切换                                   |
+| `npm run qa:ai-environment`         | 验证 AI Key 按`.env`、系统环境变量、本机加密值的顺序解析               |
+| `npm run qa:release-upload`         | 验证七牛云发版计划、环境变量解析和路径安全检查                         |
+| `npm run package:win`               | 检查并构建 Windows 安装包                                              |
+| `npm run release:upload:dry-run`    | 校验现有构建产物并预览七牛云上传与 CDN 刷新计划，不执行网络写入        |
+| `npm run release:upload`            | 将现有版本产物覆盖上传到七牛云并刷新对应 CDN 文件缓存                  |
+| `npm run release:upload:no-refresh` | 只覆盖上传现有版本产物，不提交 CDN 刷新；仅用于排障                    |
+| `npm run release`                   | 检查、构建 Windows 安装包、覆盖上传七牛云并刷新 CDN 缓存               |
+| `npm run reset:new-user`            | 备份现有用户数据，准备全新用户测试环境                                 |
 
 运行 `npm run reset:new-user` 前必须退出正式版和开发版应用。脚本不会删除用户数据，而是将 `%APPDATA%\Live2DCompanion\` 移动到 `%APPDATA%\Live2DCompanion-new-user-backups\<时间戳>\`，方便之后手动恢复。
 
@@ -162,10 +164,11 @@ npm run package:win
 
 仓库在 `.agents/skills/` 中提供两项项目级 Codex 技能。它们随 Git 仓库维护，不依赖某位开发者的个人 `$CODEX_HOME`、本机绝对路径或额外插件：
 
-| 技能 | 显式调用 | 适用范围 |
-|---|---|---|
+
+| 技能                                                          | 显式调用                 | 适用范围                                                                                             |
+| ------------------------------------------------------------- | ------------------------ | ---------------------------------------------------------------------------------------------------- |
 | [宠物模型开发](.agents/skills/pet-model-development/SKILL.md) | `$pet-model-development` | Cubism 3 Live2D、`video-pet-v1` 透明 WebM、动作、表情、命中、光标跟随、口型、互动映射、封面与模型 QA |
-| [AI 模型开发](.agents/skills/ai-model-development/SKILL.md) | `$ai-model-development` | Chat/TTS 插件清单与适配器、模型和音色、凭据、情绪标签、对话历史、音频归档、设置接入与 AI QA |
+| [AI 模型开发](.agents/skills/ai-model-development/SKILL.md)   | `$ai-model-development`  | Chat/TTS 插件清单与适配器、模型和音色、凭据、情绪标签、对话历史、音频归档、设置接入与 AI QA          |
 
 clone 后无需安装这两个技能。从仓库根目录或任意子目录启动 Codex，它会向上扫描仓库中的 `.agents/skills`；可以显式输入技能名，也可以用自然语言让 Codex 按技能的 `description` 自动匹配：
 
@@ -180,21 +183,22 @@ $ai-model-development 帮我增加一个新的 TTS 供应商并完成安全与�
 
 ## 使用方式
 
-| 操作 | 结果 |
-|---|---|
-| 单击头部 | 摸头回应、动作、气泡与轻量特效 |
-| 单击其他部位 | 好奇回应与点击反馈 |
-| 快速双击 / 三击 | 夸奖回应 / 兴奋回应 |
-| 长按约 650 ms | 头部触发摸头，其他部位触发安静陪伴 |
-| 按住并移动约 6 px | 开始拖动宠物窗口，松开后保存位置 |
-| 在角色上滚动滚轮 | 调整当前角色尺寸，范围为 50%～200% |
-| 右键角色 | 打开互动、聊天、模型、锁定和设置快捷菜单 |
-| 托盘图标 | 显示或隐藏角色 |
-| 托盘菜单 | 互动、切换角色、暂停动画、锁定、刷新模型、设置或退出；开启外部接入后可选择 APP/浏览器调试窗口，开启长截图且设置窗口可见时可截取当前 Tab |
-| `Ctrl+M` | 打开设置的角色页 |
-| `Ctrl+L` | 切换锁定状态 |
-| `Ctrl+I` | 触发一次随机互动 |
-| `Ctrl+Shift+S` | 开启“APP 长截图”后，在设置窗口中截取当前选中的 Tab 页面 |
+
+| 操作              | 结果                                                                                                                                    |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| 单击头部          | 摸头回应、动作、气泡与轻量特效                                                                                                          |
+| 单击其他部位      | 好奇回应与点击反馈                                                                                                                      |
+| 快速双击 / 三击   | 夸奖回应 / 兴奋回应                                                                                                                     |
+| 长按约 650 ms     | 头部触发摸头，其他部位触发安静陪伴                                                                                                      |
+| 按住并移动约 6 px | 开始拖动宠物窗口，松开后保存位置                                                                                                        |
+| 在角色上滚动滚轮  | 调整当前角色尺寸，范围为 50%～200%                                                                                                      |
+| 右键角色          | 打开互动、聊天、模型、锁定和设置快捷菜单                                                                                                |
+| 托盘图标          | 显示或隐藏角色                                                                                                                          |
+| 托盘菜单          | 互动、切换角色、暂停动画、锁定、刷新模型、设置或退出；开启外部接入后可选择 APP/浏览器调试窗口，开启长截图且设置窗口可见时可截取当前 Tab |
+| `Ctrl+M`          | 打开设置的角色页                                                                                                                        |
+| `Ctrl+L`          | 切换锁定状态                                                                                                                            |
+| `Ctrl+I`          | 触发一次随机互动                                                                                                                        |
+| `Ctrl+Shift+S`    | 开启“APP 长截图”后，在设置窗口中截取当前选中的 Tab 页面                                                                               |
 
 锁定后宠物窗口会完全穿透鼠标，请从系统托盘菜单解除锁定。`Ctrl+M`、`Ctrl+L`、`Ctrl+I` 由宠物窗口处理；`Ctrl+Shift+S` 由设置窗口处理，并且仅在“APP 长截图”已开启时生效。
 
@@ -212,14 +216,15 @@ $ai-model-development 帮我增加一个新的 TTS 供应商并完成安全与�
 
 应用固定使用 `%APPDATA%\Live2DCompanion\`，开发版与安装版共享这一路径：
 
-| 路径 | 内容 |
-|---|---|
-| `config.json` | electron-store 保存的窗口位置、偏好、模型顺序/缩放/昵称/档案、AI 状态、逐角色对话和最近 200 条外部消息历史 |
-| `models\` | 用户添加的 Live2D 模型；同名模型覆盖内置版本 |
-| `plugins\` | 用户添加的 AI 插件；同名插件覆盖内置版本 |
-| `covers\` | 设置页角色卡片自动生成的封面缓存 |
-| `tts\YYYY-MM\` | 按月份归档的语音文件 |
-| `tts\cache-v1\` | 外部语音内容寻址缓存，最多 200 项 / 256 MiB，超限时优先清理最久未使用项 |
+
+| 路径            | 内容                                                                                                       |
+| --------------- | ---------------------------------------------------------------------------------------------------------- |
+| `config.json`   | electron-store 保存的窗口位置、偏好、模型顺序/缩放/昵称/档案、AI 状态、逐角色对话和最近 200 条外部消息历史 |
+| `models\`       | 用户添加的 Live2D 模型；同名模型覆盖内置版本                                                               |
+| `plugins\`      | 用户添加的 AI 插件；同名插件覆盖内置版本                                                                   |
+| `covers\`       | 设置页角色卡片自动生成的封面缓存                                                                           |
+| `tts\YYYY-MM\`  | 按月份归档的语音文件                                                                                       |
+| `tts\cache-v1\` | 外部语音内容寻址缓存，最多 200 项 / 256 MiB，超限时优先清理最久未使用项                                    |
 
 上述目录不属于安装包内容，覆盖安装或应用升级不会重写其中的数据。
 
@@ -305,11 +310,12 @@ ZIP 必须同时包含 `.model3.json` 和 `.moc3`，且模型文件不能直接�
 
 项目是纯 JavaScript，没有 TypeScript、Vite 或源码打包步骤；Electron 直接加载 `main.js` 和 `renderer/` 下的文件。
 
-| 进程/窗口 | 主要职责 | WebPreferences |
-|---|---|---|
-| 主进程 | 生命周期、窗口、托盘、IPC、模型/插件发现、持久化、网络请求 | Node.js 主进程 |
-| 宠物 renderer | `live2d-renderer`、WebGL、互动、聊天 UI、口型和调度器 | `nodeIntegration: true`、`contextIsolation: false`、`sandbox: false`、`webSecurity: false` |
-| 设置 renderer | 角色、行为、AI、系统设置界面 | `nodeIntegration: false`、`contextIsolation: true`、`sandbox: true`、`webSecurity: true` |
+
+| 进程/窗口     | 主要职责                                                   | WebPreferences                                                                             |
+| ------------- | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| 主进程        | 生命周期、窗口、托盘、IPC、模型/插件发现、持久化、网络请求 | Node.js 主进程                                                                             |
+| 宠物 renderer | `live2d-renderer`、WebGL、互动、聊天 UI、口型和调度器      | `nodeIntegration: true`、`contextIsolation: false`、`sandbox: false`、`webSecurity: false` |
+| 设置 renderer | 角色、行为、AI、系统设置界面                               | `nodeIntegration: false`、`contextIsolation: true`、`sandbox: true`、`webSecurity: true`   |
 
 宠物 renderer 的宽松配置是当前 `live2d-renderer` 直接 `require()`、本地 Cubism Core 与 `file://` 模型资源加载链路的兼容要求。若要收紧这些选项，需要先把 Live2D 加载能力迁移到隔离边界之外；不要只删除单个配置项。
 
