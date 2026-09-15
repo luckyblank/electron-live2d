@@ -503,6 +503,9 @@ async function readState(label) {
         hidden: panel.hidden,
         collapsed: panel.classList.contains('is-collapsed'),
         ariaExpanded: toggle.getAttribute('aria-expanded'),
+        appMessageCount: panel.querySelectorAll('.ai-message[data-message-source="app"]').length,
+        appSourceBadgeCount: panel.querySelectorAll('.ai-message[data-message-source="app"] .ai-message-source').length,
+        appOriginCount: panel.querySelectorAll('.ai-message[data-message-source="app"] .ai-message-origin').length,
         rect: {
           x: +panelRect.x.toFixed(2),
           y: +panelRect.y.toFixed(2),
@@ -1027,6 +1030,9 @@ async function runTheme(theme) {
     opensCollapsed: initial.chat.collapsed && initial.chat.ariaExpanded === 'false' && Math.abs(initial.chat.rect.height - 64) <= 1,
     hoverDoesNotExpand: afterHover.chat.collapsed && Math.abs(afterHover.chat.rect.height - 64) <= 1,
     clickExpands: !expanded.chat.collapsed && expanded.chat.ariaExpanded === 'true' && expanded.chat.rect.height === expectedExpandedHeight,
+    appMessagesDoNotRenderSourceOrigin: expanded.chat.appMessageCount > 0
+      && expanded.chat.appSourceBadgeCount === 0
+      && expanded.chat.appOriginCount === 0,
     expandedFitsWindow: expanded.chat.rect.bottom <= 590,
     pointerLeaveDoesNotCollapse: !afterLeave.chat.collapsed && afterLeave.chat.ariaExpanded === 'true',
     secondClickCollapses: collapsedAgain.chat.collapsed && collapsedAgain.chat.ariaExpanded === 'false',
@@ -2337,7 +2343,7 @@ async function runExternalMessagePriority() {
   aiMockState.chatDelayMs = 0
 
   const assertions = {
-    appMessagesCarryAppMarker: received.appBadges.length > 0 && received.appBadges.every(label => label === 'APP'),
+    appMessagesHideRedundantSourceMarker: received.appBadges.length > 0 && received.appBadges.every(label => label === ''),
     externalMessageNeverEntersChat: received.externalCount === 0 && completed.externalCount === 0,
     externalMessagePreservesBusyChatState: received.inputDisabled
       && received.sendDisabled
