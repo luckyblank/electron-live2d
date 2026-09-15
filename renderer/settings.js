@@ -516,6 +516,21 @@
     })
   }
 
+  function screenshotGeometry() {
+    const shell = document.querySelector('.window-shell')
+    if (!shell) throw new Error('找不到设置面板截图区域')
+    const rect = shell.getBoundingClientRect()
+    // Capture the shell's border box. scrollWidth/scrollHeight also include
+    // intentional decorative overflow such as the glass theme's blurred glow,
+    // which would otherwise become a large blank tail after the footer.
+    return {
+      x: rect.left,
+      y: rect.top,
+      width: rect.width,
+      height: rect.height,
+    }
+  }
+
   window.settingsLongScreenshot = Object.freeze({
     async prepare(requestedState) {
       if (screenshotLayoutState) throw new Error('长截图布局已在准备中')
@@ -561,18 +576,9 @@
       if (document.fonts && document.fonts.ready) await document.fonts.ready
       await afterScreenshotLayout()
 
-      const shell = document.querySelector('.window-shell')
-      const rect = shell.getBoundingClientRect()
+      const geometry = screenshotGeometry()
       return {
-        x: rect.left,
-        y: rect.top,
-        width: rect.width,
-        height: Math.max(
-          rect.height,
-          shell.scrollHeight,
-          document.body.scrollHeight,
-          document.documentElement.scrollHeight
-        ),
+        ...geometry,
         section: targetSection,
         profileTab: activeProfileTab,
         profileCollapsed: profilePanelCollapsed,
@@ -581,17 +587,7 @@
 
     async settle() {
       await afterScreenshotLayout()
-      const shell = document.querySelector('.window-shell')
-      const rect = shell.getBoundingClientRect()
-      return {
-        width: rect.width,
-        height: Math.max(
-          rect.height,
-          shell.scrollHeight,
-          document.body.scrollHeight,
-          document.documentElement.scrollHeight
-        ),
-      }
+      return screenshotGeometry()
     },
 
     async restore() {
@@ -1653,16 +1649,22 @@
     ctx.els['ai-tts-folder-note'].textContent = snapshot && snapshot.ai && snapshot.ai.ttsDirectory
       ? `语音存档：${snapshot.ai.ttsDirectory}`
       : '生成的语音会保存在应用数据目录。'
-    ctx.els['ai-api-key'].disabled = false
+    const usesDotEnv = plugin.credentialSource === 'dotenv'
+    const usesSystemEnvironment = plugin.credentialSource === 'environment'
+    const usesManagedEnvironment = usesDotEnv || usesSystemEnvironment
+    ctx.els['ai-api-key'].disabled = usesManagedEnvironment
     ctx.els['ai-api-key'].type = 'text'
     ctx.els['ai-api-key'].value = plugin.credentialPreview || ''
     ctx.els['ai-api-key'].dataset.preview = plugin.credentialPreview || ''
-    ctx.els['ai-use-environment'].hidden = !(plugin.credentialSource === 'local' && plugin.environmentAvailable)
+    ctx.els['ai-use-environment'].hidden = true
     ctx.els['ai-use-environment'].disabled = false
     ctx.els['ai-use-environment'].textContent = '切回环境变量'
-    if (plugin.credentialSource === 'environment') {
-      ctx.els['ai-api-key'].placeholder = `环境变量 ${plugin.apiKeyEnv}`
-      ctx.els['ai-key-hint'].textContent = `当前使用环境变量 ${plugin.apiKeyEnv}；输入新 Key 后改为本机加密保存。`
+    if (usesDotEnv) {
+      ctx.els['ai-api-key'].placeholder = `项目 .env：${plugin.apiKeyEnv}`
+      ctx.els['ai-key-hint'].textContent = `当前优先使用项目 .env 中的 ${plugin.apiKeyEnv}；修改后请重启应用。`
+    } else if (usesSystemEnvironment) {
+      ctx.els['ai-api-key'].placeholder = `系统环境变量 ${plugin.apiKeyEnv}`
+      ctx.els['ai-key-hint'].textContent = `项目 .env 未配置该项，当前使用系统环境变量 ${plugin.apiKeyEnv}。`
     } else {
       ctx.els['ai-api-key'].placeholder = plugin.credentialSource === 'local'
         ? '输入新 Key 可替换当前配置'
@@ -1671,7 +1673,7 @@
         ? (plugin.environmentAvailable
             ? `当前使用本机加密 Key；环境变量 ${plugin.apiKeyEnv} 可用。`
             : '当前使用本机加密 Key；页面仅显示脱敏预览。')
-        : `未检测到 ${plugin.apiKeyEnv || 'API Key 环境变量'}，请在这里配置。`
+        : `项目 .env 与系统环境变量均未检测到 ${plugin.apiKeyEnv || 'API Key'}，可在这里临时配置。`
     }
     setAITestStatus(ctx, plugin.configured
       ? `配置已就绪，可保存当前设置并测试${isSpeech ? '语音' : '连接'}。`
@@ -1695,7 +1697,7 @@
     if (!plugin) return
     const apiKey = ctx.keyEdited ? ctx.els['ai-api-key'].value.trim() : ''
     if (!apiKey && plugin.credentialSource === 'missing') {
-      setAITestStatus(ctx, `请填写 API Key，或设置环境变量 ${plugin.apiKeyEnv} 后重启应用。`, 'error')
+      setAITestStatus(ctx, `请在项目 .env 中填写 ${plugin.apiKeyEnv}，或设置同名系统环境变量后重启应用。`, 'error')
       ctx.els['ai-api-key'].focus()
       return
     }

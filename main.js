@@ -13,6 +13,7 @@ const {
   createInitialStoreDefaults,
 } = require('./config/defaults')
 const { BUBBLE_THEME_DEFINITIONS, normalizeBubbleStyles } = require('./config/bubble-styles')
+const { readEnvFile } = require('./config/environment')
 const { inspectModelArchive, inspectModelDirectory } = require('./model-inspector')
 const { captureSettingsPanel, normalizedSection } = require('./settings-screenshot')
 const { buildConditionalTrayItems } = require('./tray-menu')
@@ -236,6 +237,15 @@ function pluginDirectories() {
   }
   if (fs.existsSync(userRoot)) roots.push(userRoot)
   return roots
+}
+
+function projectEnvironment() {
+  try {
+    return readEnvFile(path.join(__dirname, '.env')).values
+  } catch (error) {
+    console.warn('Ignoring invalid project .env:', error.message)
+    return {}
+  }
 }
 
 function listModels() {
@@ -3378,6 +3388,7 @@ app.whenReady().then(() => {
     store,
     safeStorage,
     ttsDirectory: userTtsDir(),
+    fileEnvironment: projectEnvironment(),
   })
   externalMessageServer = createExternalMessageServer({
     testerPath: path.join(__dirname, 'renderer', 'external-message-tester.html'),

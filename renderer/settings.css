@@ -247,6 +247,9 @@ textarea:focus-visible {
 }
 
 :root[data-long-screenshot="true"] .window-shell {
+  position: relative !important;
+  inset: auto !important;
+  width: 100% !important;
   height: auto !important;
   min-height: 0 !important;
   overflow: visible !important;

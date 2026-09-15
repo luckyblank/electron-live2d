@@ -123,8 +123,9 @@ Verify the UI can:
 - show/hide tuning controls from `ttsTuning`;
 - save a local key through `safeStorage`;
 - show only a masked credential preview;
-- prefer a saved local key when selected;
-- switch back to an available environment key and clear the local override;
+- prefer a non-empty project `.env` value over both the process environment and a saved local key;
+- fall back from an empty or missing `.env` entry to the process environment, then to the saved local key;
+- distinguish masked `dotenv`, `environment`, `local`, and `missing` sources without exposing the key;
 - activate/deactivate the correct capability;
 - restore installed state, active IDs, settings, and credential preference after restart;
 - share credentials only between intended `credentialId` peers.
