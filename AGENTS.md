@@ -17,6 +17,20 @@ This repository ships two repo-scoped Codex skills under `.agents/skills/`. Code
 
 Both skills allow implicit invocation and can also be selected explicitly as `$pet-model-development` or `$ai-model-development`. Keep their instructions and references synchronized whenever the corresponding model or AI contracts change. Keep every skill path repository-relative so the skills continue to work after clone.
 
+## Design-First UI Development
+
+The files under [`设计稿/`](设计稿/README.md) are the visual source of truth for app UI work. Existing code and product documentation remain the source of truth for behavior, data, security, and platform constraints.
+
+Before an AI agent edits UI code, it must open and inspect the relevant design images, then publish a short **style lock** covering the task scope, selected theme, exact reference files, visual invariants, retained behavior, known gaps, and acceptance screenshots. Implementation may begin only after that lock is recorded. If the target theme is unclear, references conflict, or a material state is unspecified, stop and ask the user to resolve it instead of inventing a hybrid direction.
+
+- Use the most specific same-theme reference: detail image > full-page image > `主设计稿.png` overview.
+- Do not mix glass and healing visual language in one theme. Shared structure and behavior may be reused, but visual tokens and decorative assets must stay theme-scoped.
+- Do not use `design-demos/` or the current UI to override a conflicting image in `设计稿/`; they may only fill gaps that the selected design does not define.
+- Preserve functional behavior and real product copy unless the task explicitly changes them. A mockup omission is not permission to remove functionality.
+- Finish UI work with a same-theme, same-state screenshot comparison at the target window size, plus relevant syntax, lint, and targeted QA checks. Record any intentional deviation.
+
+The complete source-priority, style-lock template, implementation checklist, and visual acceptance gate are defined in [`设计稿/README.md`](设计稿/README.md).
+
 ## Commands
 
 ```bash
@@ -73,7 +87,7 @@ Each subdirectory becomes one tray-selectable model. The `hiyori` model is prior
 
 - No build step for source code - Electron loads `main.js`, `preload.js`, and `renderer/index.html` directly.
 - `npm run package:win` runs `electron-builder` which reads the `build` config from `package.json` and produces an NSIS installer in `dist/`.
-- Reusable QA scripts live in `qa/`. The `build.files` glob excludes `qa/`, `design-demos/`, and other dev-only files (*.bak, *.md, generate-icon.js, build outputs) so they are not shipped.
+- Reusable QA scripts live in `qa/`. The `build.files` glob excludes `qa/`, `design-demos/`, `设计稿/`, and other dev-only files (*.bak, *.md, generate-icon.js, build outputs) so they are not shipped.
 
 ## Interaction Design
 

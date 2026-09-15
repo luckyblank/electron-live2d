@@ -8,6 +8,20 @@ Electron + Live2D desktop Q-version (chibi) pet app. A frameless, transparent, a
 
 The project is **pure JavaScript** (no TypeScript, no Vite, no bundler). Electron loads source files directly.
 
+## Design-First UI Development
+
+The files under [`设计稿/`](设计稿/README.md) are the visual source of truth for app UI work. Existing code and product documentation remain the source of truth for behavior, data, security, and platform constraints.
+
+Before editing UI code, open and inspect the relevant design images and publish a short **style lock** that names the task scope, selected theme, exact reference files, visual invariants, retained behavior, known gaps, and acceptance screenshots. Do not implement until that lock is recorded. If the theme is unclear, references conflict, or a material state is unspecified, ask the user to resolve it rather than inventing a hybrid direction.
+
+- Prefer the most specific same-theme reference: detail image > full-page image > `主设计稿.png` overview.
+- Never mix glass and healing visual language in one theme. Keep theme tokens and decorative assets isolated even when structure and behavior are shared.
+- Treat `design-demos/` and the current UI only as gap-filling context; they do not override a conflicting image in `设计稿/`.
+- Preserve functional behavior and real product copy unless the task explicitly changes them.
+- Complete UI work with a same-theme, same-state screenshot comparison at the target window size, relevant checks, and a record of intentional deviations.
+
+Follow the full workflow in [`设计稿/README.md`](设计稿/README.md).
+
 ## Commands
 
 ```bash
@@ -64,7 +78,7 @@ Each subdirectory becomes one tray-selectable model. The `hiyori` model is prior
 
 - No build step for source code - Electron loads `main.js`, `preload.js`, and `renderer/index.html` directly.
 - `npm run package:win` runs `electron-builder` which reads the `build` config from `package.json` and produces an NSIS installer in `dist/`.
-- Reusable QA scripts live in `qa/`. The `build.files` glob excludes that directory and other dev-only files (*.bak, *.md, generate-icon.js, build outputs) so they are not shipped.
+- Reusable QA scripts live in `qa/`. The `build.files` glob excludes `qa/`, `design-demos/`, `设计稿/`, and other dev-only files (*.bak, *.md, generate-icon.js, build outputs) so they are not shipped.
 
 ## Interaction Design
 

@@ -1,0 +1,20 @@
+---
+description: Require a design-image style lock before any app UI implementation
+alwaysApply: true
+---
+
+# Design-First UI Gate
+
+For every app UI task, treat `设计稿/` as the visual source of truth and `设计稿/README.md` as the required workflow. Existing code and product docs remain authoritative for behavior, data, security, and platform constraints.
+
+Before editing UI source:
+
+1. Open and visually inspect every relevant reference image; filenames alone are insufficient.
+2. Publish a style lock naming scope, theme, exact files, visual invariants, retained behavior, unknowns, and planned acceptance screenshots.
+3. Begin implementation only after the lock is recorded.
+
+Use detail image > same-theme full-page image > `主设计稿.png`. Never combine glass and healing visuals into a third style. `design-demos/` and the current UI may fill unspecified gaps but cannot override `设计稿/`.
+
+If theme, scope, conflicting references, or a material state is ambiguous, ask the user before coding. Re-lock when the user changes the target or references.
+
+Preserve behavior and real product copy unless explicitly changed. Verify the result with same-theme, same-state screenshots at the target window size, relevant checks, and documented intentional deviations.

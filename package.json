@@ -37,6 +37,7 @@
     "files": [
       "**/*",
       "!design-demos/**",
+      "!设计稿/**",
       "!plan/**",
       "!release/**",
       "!**/*.{bak,md}",

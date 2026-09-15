@@ -92,7 +92,20 @@ npm run qa:check
 npm run package:win
 ```
 
-`npm run check` 会检查主进程、两个 preload、模型检查器、AI 插件和两个 renderer 脚本的 JavaScript 语法。`npm run package:win` 会先运行该检查，再通过 electron-builder 生成 x64 NSIS 安装包，产物位于 `dist/`。`design-demos/` 仅用于仓库内的设计原型与视觉验收，已通过 `build.files` 明确排除，不会进入正式应用包。
+`npm run check` 会检查主进程、两个 preload、模型检查器、AI 插件和两个 renderer 脚本的 JavaScript 语法。`npm run package:win` 会先运行该检查，再通过 electron-builder 生成 x64 NSIS 安装包，产物位于 `dist/`。`设计稿/` 与 `design-demos/` 仅用于仓库内的视觉基准、设计原型与验收，已通过 `build.files` 明确排除，不会进入正式应用包。
+
+## 设计与 UI 开发规范
+
+`设计稿/` 是当前 App 界面的视觉事实来源，完整规范见 [`设计稿/README.md`](设计稿/README.md)。现有代码和 `docs/` 继续作为功能、数据、安全与平台约束的事实来源；设计图没有画出的能力不得据此直接删除。
+
+所有 UI 开发，尤其是由 AI 执行的 UI 开发，必须按以下门禁进行：
+
+1. 打开并检查本次范围内的设计图，确定页面、主题、状态和局部详图。
+2. 在改代码前输出“风格锁定”，列出主题、准确的参考文件、不可偏离的视觉特征、保留行为、待确认项和验收截图。
+3. 只按已锁定的单一主题实现；局部详图优先于同主题整页图，整页图优先于 `主设计稿.png`，不得把玻璃质感与二次元治愈风格拼成第三套风格。
+4. 在目标窗口尺寸和相同状态下截图对照，并执行 `npm run check`、`npm run lint` 及受影响范围的 QA。任何有意偏离都要记录原因。
+
+主题、目标页或关键状态不明确时，AI 必须先请用户确认，不能自行补出一套通用 Dashboard 或“AI 风格”界面。
 
 完整的可用命令如下：
 
@@ -217,6 +230,7 @@ electron-live2d/
 │   └── settings.css        # 设置窗口视觉样式
 ├── models/                 # 内置 Live2D 模型（随安装包发货）
 ├── qa/                     # 不进入安装包的回归验证脚本
+├── 设计稿/                 # 不进入安装包的 App 视觉基准、局部详图与开发规范
 ├── design-demos/           # 不进入安装包的设计原型与验收素材
 ├── scripts/
 │   └── reset-new-user.ps1  # 可恢复的全新用户环境重置工具
