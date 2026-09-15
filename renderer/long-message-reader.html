@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="zh-CN" data-long-message-reader-window="true" data-settings-theme="glass">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title></title>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="scrollbars.css">
+</head>
+<body>
+  <section id="long-message-reader" data-side="right" role="dialog" aria-modal="false" aria-labelledby="long-message-title long-message-subtitle" aria-describedby="long-message-reader-body" hidden>
+    <i class="long-message-reader-sheen" aria-hidden="true"></i>
+    <i class="long-message-reader-sparkle long-message-reader-sparkle-top" aria-hidden="true">✦</i>
+    <i class="long-message-reader-petal long-message-reader-petal-left" aria-hidden="true"></i>
+    <i class="long-message-reader-petal long-message-reader-petal-right" aria-hidden="true"></i>
+    <header class="long-message-reader-header">
+      <div class="long-message-reader-identity">
+        <span class="long-message-reader-avatar" aria-hidden="true"><i class="long-message-reader-paw"></i></span>
+        <span class="long-message-reader-heading">
+          <strong id="long-message-title">伙伴</strong>
+          <span class="long-message-reader-meta">
+            <span id="long-message-subtitle">完整消息</span>
+            <span id="long-message-source" aria-label="消息来源：外部消息" title="外部消息" hidden>外部</span>
+          </span>
+        </span>
+        <span class="long-message-reader-tags">
+          <span id="long-message-badge"><i aria-hidden="true">♥</i> 长消息</span>
+          <span id="long-message-audio-kind" data-kind="text">非语音消息</span>
+        </span>
+      </div>
+      <div class="long-message-reader-actions">
+        <button id="long-message-copy" type="button" aria-label="复制完整消息" title="复制完整消息">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 7V5.8A2.8 2.8 0 0 1 10.8 3h6.4A2.8 2.8 0 0 1 20 5.8v8.4a2.8 2.8 0 0 1-2.8 2.8H16"/><rect x="4" y="7" width="12" height="14" rx="2.8"/></svg>
+          <span>复制</span>
+        </button>
+        <button id="long-message-collapse" type="button" aria-label="收起完整消息" title="收起完整消息">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 15 6-6 6 6"/></svg>
+          <span>收起</span>
+        </button>
+      </div>
+    </header>
+    <div class="long-message-reader-rule" aria-hidden="true"></div>
+    <div id="long-message-reader-body" tabindex="0"></div>
+    <footer class="long-message-reader-footer">
+      <span id="long-message-status" role="status" aria-live="polite"><i class="long-message-reader-paw" aria-hidden="true"></i>内容已完整显示</span>
+      <span class="long-message-reader-footer-actions">
+        <button id="long-message-audio" type="button" aria-label="播放这条语音" aria-pressed="false" title="播放这条语音" hidden>
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path class="long-message-audio-speaker" d="M5 10h3.2l4.1-3.4v10.8L8.2 14H5z"/>
+            <path class="long-message-audio-waves" d="M15.2 9a4.2 4.2 0 0 1 0 6M18 6.7a7.4 7.4 0 0 1 0 10.6"/>
+          </svg>
+        </button>
+        <span id="long-message-count">0 字</span>
+      </span>
+    </footer>
+  </section>
+  <script src="long-message-reader.js"></script>
+</body>
+</html>

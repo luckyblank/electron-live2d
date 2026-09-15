@@ -55,4 +55,5 @@ contextBridge.exposeInMainWorld('settingsAPI', {
   onNotice: callback => subscribe('settings:notice', callback),
   onModelPreviewRestored: callback => subscribe('model:preview-restored', callback),
   onPetBackgroundFrame: callback => subscribe('settings:pet-background-frame', callback),
+  acknowledgePetBackgroundFrame: sequence => ipcRenderer.send('settings:pet-background-frame-ack', sequence),
 })

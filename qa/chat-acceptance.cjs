@@ -5,31 +5,39 @@ const path = require('path')
 const { pathToFileURL } = require('url')
 const sharp = require('sharp')
 const { BUBBLE_THEME_DEFINITIONS } = require('../config/bubble-styles')
+const { DEFAULT_LONG_MESSAGE_CHARACTER_THRESHOLD } = require('../config/long-message')
 
 const projectRoot = path.resolve(__dirname, '..')
+const messageOutputOnly = process.argv.includes('--message-output-only')
 
 app.commandLine.appendSwitch('force-device-scale-factor', '1')
-app.setPath('userData', path.join(os.tmpdir(), 'live2d-chat-acceptance-userdata'))
+app.setPath('userData', path.join(os.tmpdir(), messageOutputOnly
+  ? 'live2d-message-output-runtime-userdata'
+  : 'live2d-chat-acceptance-userdata'))
 
-const outputDirectory = path.join(os.tmpdir(), 'live2d-chat-acceptance')
+const outputDirectory = path.join(os.tmpdir(), messageOutputOnly
+  ? 'live2d-message-output-runtime-qa'
+  : 'live2d-chat-acceptance')
 fs.mkdirSync(outputDirectory, { recursive: true })
 
 const modelPath = pathToFileURL(path.join(projectRoot, 'models', 'hiyori', 'Hiyori.zip')).href
 const qaPreloadPath = path.join(outputDirectory, 'qa-chat-preload.cjs')
 const LONG_MESSAGE_READER_WIDTH = 380
-const LONG_MESSAGE_READER_MAX_WIDTH = 420
 const LONG_MESSAGE_READER_GAP = 14
 const LONG_MESSAGE_READER_EDGE = 18
 const PET_VIEWPORT_WIDTH = 400
 const PET_VIEWPORT_HEIGHT = 600
-const LONG_MESSAGE_HOST_GUTTER = LONG_MESSAGE_READER_GAP + LONG_MESSAGE_READER_MAX_WIDTH + LONG_MESSAGE_READER_EDGE
-const PET_HOST_WIDTH = PET_VIEWPORT_WIDTH + LONG_MESSAGE_HOST_GUTTER * 2
+const LONG_MESSAGE_READER_EXTENSION = LONG_MESSAGE_READER_GAP + LONG_MESSAGE_READER_WIDTH + LONG_MESSAGE_READER_EDGE
+const LONG_MESSAGE_READER_WINDOW_WIDTH = LONG_MESSAGE_READER_WIDTH + LONG_MESSAGE_READER_EDGE * 2
+const PET_COLLAPSED_HOST_WIDTH = PET_VIEWPORT_WIDTH
+const PET_EXPANDED_HOST_WIDTH = PET_VIEWPORT_WIDTH + LONG_MESSAGE_READER_EXTENSION
 
 // The production renderer owns the real model lifecycle. This QA-only preload
 // wraps its model class with a deterministic gate so the test can inspect the
 // exact interval after chat opens but before the first valid character frame.
 fs.writeFileSync(qaPreloadPath, `
 require(${JSON.stringify(path.join(projectRoot, 'preload.js'))})
+const { ipcRenderer: qaIpcRenderer } = require('electron')
 const live2dRenderer = require(${JSON.stringify(require.resolve('live2d-renderer'))})
 const OriginalLive2DModel = live2dRenderer.Live2DCubismModel
 let releaseModelLoad
@@ -127,6 +135,40 @@ window.__qaReadLipSyncState = () => {
     rms: controller.rms,
   } : null
 }
+let qaTransitionSampleSignature = ''
+function reportTransitionFrameSample() {
+  const frame = document.querySelector('.pet-stage-transition-frame')
+  const viewport = document.getElementById('pet-viewport')
+  if (!frame || !viewport) return
+  const frameRect = frame.getBoundingClientRect()
+  const viewportRect = viewport.getBoundingClientRect()
+  const sample = {
+    phase: frame.dataset.phase || '',
+    frameLeft: frame.style.left,
+    frameRectX: frameRect.x,
+    frameWidth: frameRect.width,
+    viewportRectX: viewportRect.x,
+    innerWidth: window.innerWidth,
+  }
+  const signature = JSON.stringify(sample)
+  if (signature === qaTransitionSampleSignature) return
+  qaTransitionSampleSignature = signature
+  qaIpcRenderer.send('qa:pet-stage-transition-frame-sample', sample)
+}
+window.addEventListener('DOMContentLoaded', () => {
+  const observer = new MutationObserver(records => {
+    if (records.some(record => (
+      (record.target instanceof Element && record.target.classList.contains('pet-stage-transition-frame'))
+      || [...record.addedNodes].some(node => node instanceof Element && node.classList.contains('pet-stage-transition-frame'))
+    ))) queueMicrotask(reportTransitionFrameSample)
+  })
+  observer.observe(document.documentElement, {
+    subtree: true,
+    childList: true,
+    attributes: true,
+    attributeFilter: ['style', 'data-phase'],
+  })
+})
 Object.defineProperty(live2dRenderer, 'Live2DCubismModel', {
   configurable: true,
   enumerable: true,
@@ -187,6 +229,11 @@ const snapshot = {
     settingsTheme: 'glass',
     bubbleStyles: { glass: 'glass', healing: 'glass' },
     chatGreeting: '你好呀～今天想聊点什么？',
+    longMessageCharacterThreshold: DEFAULT_LONG_MESSAGE_CHARACTER_THRESHOLD,
+    appLongMessageAutoExpand: false,
+    externalLongMessageAutoExpand: false,
+    appMessageStreamingOutput: false,
+    externalMessageStreamingOutput: false,
   },
   ai: {
     ready: true,
@@ -207,6 +254,10 @@ const snapshot = {
 }
 
 let petWindow
+let detachedReaderWindow = null
+let detachedReaderFixture = null
+const detachedReaderRenderedRevisions = []
+const detachedReaderActions = []
 let lastHitBounds = null
 let lastModelStatus = null
 let lastLongMessageBounds = null
@@ -216,6 +267,7 @@ let committedLongMessageLayout = null
 const longMessageBoundsReports = []
 const longMessageLayoutCalls = []
 const longMessageTransitionCalls = []
+const longMessageTransitionFrameSamples = []
 const copiedTexts = []
 const aiMockState = {
   chatDelayMs: 0,
@@ -261,11 +313,11 @@ function registerIPC() {
           mode: longMessageLayoutSide,
           readerWidth: LONG_MESSAGE_READER_WIDTH,
           gap: LONG_MESSAGE_READER_GAP,
-          stageOffsetX: LONG_MESSAGE_HOST_GUTTER,
+          stageOffsetX: longMessageLayoutSide === 'left' ? LONG_MESSAGE_READER_EXTENSION : 0,
           readerOffsetX: longMessageLayoutSide === 'left'
-            ? LONG_MESSAGE_HOST_GUTTER - LONG_MESSAGE_READER_GAP - LONG_MESSAGE_READER_WIDTH
-            : LONG_MESSAGE_HOST_GUTTER + PET_VIEWPORT_WIDTH + LONG_MESSAGE_READER_GAP,
-          outerWidth: PET_HOST_WIDTH,
+            ? LONG_MESSAGE_READER_EDGE
+            : PET_VIEWPORT_WIDTH + LONG_MESSAGE_READER_GAP,
+          outerWidth: PET_EXPANDED_HOST_WIDTH,
           outerHeight: PET_VIEWPORT_HEIGHT,
           stageWidth: PET_VIEWPORT_WIDTH,
           stageHeight: PET_VIEWPORT_HEIGHT,
@@ -277,9 +329,9 @@ function registerIPC() {
           mode: 'collapsed',
           readerWidth: 0,
           gap: LONG_MESSAGE_READER_GAP,
-          stageOffsetX: LONG_MESSAGE_HOST_GUTTER,
+          stageOffsetX: 0,
           readerOffsetX: 0,
-          outerWidth: PET_HOST_WIDTH,
+          outerWidth: PET_COLLAPSED_HOST_WIDTH,
           outerHeight: PET_VIEWPORT_HEIGHT,
           stageWidth: PET_VIEWPORT_WIDTH,
           stageHeight: PET_VIEWPORT_HEIGHT,
@@ -348,10 +400,37 @@ function registerIPC() {
     })
     event.returnValue = Boolean(active)
   })
+  ipcMain.on('qa:pet-stage-transition-frame-sample', (event, sample) => {
+    if (!petWindow || petWindow.isDestroyed() || event.sender.id !== petWindow.webContents.id) return
+    longMessageTransitionFrameSamples.push({
+      ...structuredClone(sample),
+      nativeBounds: petWindow.getBounds(),
+      layout: committedLongMessageLayout ? structuredClone(committedLongMessageLayout) : null,
+    })
+  })
   ipcMain.handle('clipboard:write-text', (_event, value) => {
     if (typeof value !== 'string' || !value) return false
     copiedTexts.push(value)
     return true
+  })
+  ipcMain.on('long-message-reader:request-state', event => {
+    if (
+      !detachedReaderWindow || detachedReaderWindow.isDestroyed() ||
+      event.sender.id !== detachedReaderWindow.webContents.id || !detachedReaderFixture
+    ) return
+    detachedReaderWindow.webContents.send('long-message-reader:state', structuredClone(detachedReaderFixture))
+  })
+  ipcMain.on('long-message-reader:rendered', (event, revision) => {
+    if (
+      detachedReaderWindow && !detachedReaderWindow.isDestroyed() &&
+      event.sender.id === detachedReaderWindow.webContents.id
+    ) detachedReaderRenderedRevisions.push(Number(revision))
+  })
+  ipcMain.on('long-message-reader:action', (event, action) => {
+    if (
+      detachedReaderWindow && !detachedReaderWindow.isDestroyed() &&
+      event.sender.id === detachedReaderWindow.webContents.id
+    ) detachedReaderActions.push(String(action || ''))
   })
   ipcMain.on('pet:hit-bounds', (_event, bounds) => { lastHitBounds = bounds })
   ipcMain.on('pet:long-message-bounds', (_event, bounds) => {
@@ -587,6 +666,7 @@ async function readBubble(label) {
       styleName: bubble.getAttribute('style-name'),
       visible: bubble.classList.contains('is-visible'),
       text: text.textContent,
+      fullText: bubble.fullMessage,
       titleText: titleText.textContent,
       source: bubble.source || '',
       sourceText: sourceMarker.textContent.trim(),
@@ -688,6 +768,26 @@ async function waitForBubbleText(expectedText, timeoutMs = 3000) {
   return { ...state, waitedMs: Date.now() - startedAt }
 }
 
+async function waitForBubblePayload(expectedText, timeoutMs = 3000) {
+  const startedAt = Date.now()
+  let state = await readBubble(`wait-payload:${expectedText}:initial`)
+  while ((!state.visible || state.fullText !== expectedText) && Date.now() - startedAt < timeoutMs) {
+    await wait(20)
+    state = await readBubble(`wait-payload:${expectedText}:${Date.now() - startedAt}`)
+  }
+  return { ...state, waitedMs: Date.now() - startedAt }
+}
+
+async function waitForBubbleMessage(expectedText, timeoutMs = 3000) {
+  const startedAt = Date.now()
+  let state = await readBubble(`wait-message:${expectedText}:initial`)
+  while (state.text !== expectedText && Date.now() - startedAt < timeoutMs) {
+    await wait(25)
+    state = await readBubble(`wait-message:${expectedText}:${Date.now() - startedAt}`)
+  }
+  return { ...state, waitedMs: Date.now() - startedAt }
+}
+
 async function waitForBubbleExpandable(expandable = true, timeoutMs = 3000) {
   const startedAt = Date.now()
   let state = await readBubble(`wait-expandable:${expandable}:initial`)
@@ -755,7 +855,11 @@ async function readLongMessageState(label) {
       },
       reader: {
         hidden: reader.hidden,
-        visible: !reader.hidden && reader.classList.contains('is-visible'),
+        visible: !reader.hidden
+          && readerStyle.display !== 'none'
+          && readerRect.width > 0
+          && readerRect.height > 0,
+        visibleClass: reader.classList.contains('is-visible'),
         role: reader.getAttribute('role'),
         ariaModal: reader.getAttribute('aria-modal'),
         side: reader.dataset.side || '',
@@ -823,6 +927,7 @@ async function readLongMessageState(label) {
         copiedClass: copy.classList.contains('is-copied'),
         collapseLabel: collapse.textContent.trim(),
         focusedBody: document.activeElement === body,
+        activeElementId: document.activeElement && document.activeElement.id || '',
         audio: {
           kindExists: Boolean(audioKind),
           kindText: audioKind ? audioKind.textContent.trim() : '',
@@ -878,7 +983,7 @@ async function waitForLongMessageReady(timeoutMs = 4000) {
       state.reader.visible
       && Math.abs(state.reader.rect.width - LONG_MESSAGE_READER_WIDTH) <= 1
       && Math.abs(state.reader.rect.height - 520) <= 1
-      && state.windowSize.width === PET_HOST_WIDTH
+      && state.windowSize.width === PET_EXPANDED_HOST_WIDTH
       && revision > 0
       && boundsRevision === revision
     ) return { ...state, waitedMs: Date.now() - startedAt }
@@ -910,7 +1015,7 @@ async function waitForLongMessageClosed(layoutCallStart, boundsReportStart, time
     if (
       state.reader.hidden
       && !state.reader.visible
-      && state.windowSize.width === PET_HOST_WIDTH
+      && state.windowSize.width === PET_COLLAPSED_HOST_WIDTH
       && closeRequested
       && reports.length > 0
       && reports.at(-1) === null
@@ -919,6 +1024,28 @@ async function waitForLongMessageClosed(layoutCallStart, boundsReportStart, time
     await wait(40)
   }
   return { ...(state || {}), waitedMs: Date.now() - startedAt }
+}
+
+async function waitForLongMessageTransitionSettled(callStart, timeoutMs = 2000) {
+  const startedAt = Date.now()
+  let calls = []
+  while (Date.now() - startedAt < timeoutMs) {
+    calls = longMessageTransitionCalls.slice(callStart)
+    if (calls.some(call => call.active) && calls.at(-1).active === false) return calls
+    await wait(20)
+  }
+  return calls
+}
+
+async function waitForLongMessageTransitionFrameSamples(sampleStart, minimum = 4, timeoutMs = 2000) {
+  const startedAt = Date.now()
+  let samples = []
+  while (Date.now() - startedAt < timeoutMs) {
+    samples = longMessageTransitionFrameSamples.slice(sampleStart)
+    if (samples.length >= minimum) return samples
+    await wait(20)
+  }
+  return samples
 }
 
 async function readScaleStatus(label) {
@@ -1009,8 +1136,8 @@ async function runTheme(theme) {
     }
     frameScreenshot = await capture(`${theme}-single-detection-frame.png`)
     detectionFrameAlpha = await alphaAtImagePoints(frameScreenshot, {
-      borderEdge: [LONG_MESSAGE_HOST_GUTTER, 300],
-      emptyInterior: [LONG_MESSAGE_HOST_GUTTER + 3, 300],
+      borderEdge: [0, 300],
+      emptyInterior: [3, 300],
     })
     if (detectionFrameAlpha.borderEdge === 0) await wait(120)
   }
@@ -1153,7 +1280,7 @@ async function runBubbleThemeFidelity() {
 
   const glass = states.glass.glass
   const healing = states.healing.glass
-  const centered = state => Math.abs(state.rect.x + state.rect.width / 2 - (LONG_MESSAGE_HOST_GUTTER + 200)) <= 1
+  const centered = state => Math.abs(state.rect.x + state.rect.width / 2 - 200) <= 1
   const titleIsAttached = state => state.titleRect.y >= 0
     && state.titleRect.y < state.rect.y
     && state.titleRect.bottom > state.rect.y
@@ -1163,7 +1290,7 @@ async function runBubbleThemeFidelity() {
     && a.x < b.right && a.right > b.x && a.y < b.bottom && a.bottom > b.y
   const styleGeometryValid = allStates.every(state => state.visible && centered(state)
     && Math.abs(state.rect.width - expectedWidths[state.styleName]) <= 1
-    && Math.abs(state.rect.y - 20) <= 1 && state.rect.right <= LONG_MESSAGE_HOST_GUTTER + 394
+    && Math.abs(state.rect.y - 20) <= 1 && state.rect.right <= 394
     && state.textLineClamp === '3' && titleIsAttached(state))
   const selectionsApplied = ['glass', 'healing'].every(theme => styleIds.every(styleId => (
     states[theme][styleId].theme === theme
@@ -1188,14 +1315,14 @@ async function runBubbleThemeFidelity() {
         && !boxesOverlap(state.sourceRect, state.messageRect)),
     glassGeometryMatchesReference: glass.visible && centered(glass)
       && Math.abs(glass.rect.width - 270) <= 1 && Math.abs(glass.rect.y - 20) <= 1
-      && glass.rect.height >= 70 && glass.rect.right <= LONG_MESSAGE_HOST_GUTTER + 388,
+      && glass.rect.height >= 70 && glass.rect.right <= 388,
     glassLabelMatchesReference: glass.titleText === 'hiyori' && titleIsAttached(glass)
       && glass.titleTransform !== 'none' && glass.titleHeartDisplay === 'none',
     glassDecorMatchesReference: glass.secondaryPawDisplay === 'none'
       && glass.tailBottom === '-11px' && glass.textLineClamp === '3',
     healingGeometryMatchesReference: healing.visible && centered(healing)
       && Math.abs(healing.rect.width - 270) <= 1 && Math.abs(healing.rect.y - 20) <= 1
-      && healing.rect.height >= 70 && healing.rect.right <= LONG_MESSAGE_HOST_GUTTER + 388,
+      && healing.rect.height >= 70 && healing.rect.right <= 388,
     healingLabelMatchesReference: healing.titleText === 'hiyori' && titleIsAttached(healing)
       && healing.titleTransform === 'none' && healing.titleHeartDisplay !== 'none',
     healingDecorMatchesReference: healing.secondaryPawDisplay !== 'none'
@@ -1525,6 +1652,438 @@ async function runLongMessageAudio() {
   }
 }
 
+async function runLongMessageAutoExpand() {
+  const appText = Array.from({ length: 7 }, (_, index) => (
+    `APP 自动展开验收第${index + 1}段：这是一条会超出宠物气泡三行高度的最终回复，用来确认 APP 开关只影响应用内对话。`
+  )).join('\n\n')
+  const externalText = Array.from({ length: 7 }, (_, index) => (
+    `外部自动展开验收第${index + 1}段：这是一条来自外部接口的长消息，用来确认外部开关不会改变 APP 回复的展示策略。`
+  )).join('\n\n')
+  const shortExternalText = '外部短消息不需要展开。'
+  const shortVoiceText = '你好哇主人～我是大肥鱼，今天也会乖乖守在桌边陪你，要不要一起聊聊天？'
+  const originalAIState = { ...aiMockState }
+  const states = {}
+  const screenshots = {}
+  let externalSequence = 0
+
+  const capacityCalibration = await petWindow.webContents.executeJavaScript(`(async () => {
+    if (document.fonts && document.fonts.ready) await document.fonts.ready
+    const viewport = document.getElementById('pet-viewport')
+    const capacities = []
+    for (const theme of ['glass', 'healing']) {
+      for (const styleName of ['glass', 'sweet', 'pixel', 'sci-fi']) {
+        const probe = document.createElement('pet-speech-bubble')
+        probe.className = 'interaction-bubble-widget'
+        probe.setAttribute('theme', theme)
+        probe.setAttribute('style-name', styleName)
+        probe.style.visibility = 'hidden'
+        probe.style.pointerEvents = 'none'
+        viewport.appendChild(probe)
+        let capacity = 0
+        for (let characterCount = 1; characterCount <= 120; characterCount += 1) {
+          probe.message = '测'.repeat(characterCount)
+          if (probe.measureOverflow()) break
+          capacity = characterCount
+        }
+        capacities.push({ theme, styleName, capacity })
+        probe.remove()
+      }
+    }
+    return {
+      capacities,
+      minimum: Math.min(...capacities.map(item => item.capacity)),
+    }
+  })()`)
+
+  const sendExternal = async (text, label) => {
+    externalSequence += 1
+    const message = {
+      id: `qa-auto-expand-${externalSequence}`,
+      requestId: `qa-auto-expand-request-${externalSequence}`,
+      type: 'relay',
+      content: `QA ${label}`,
+      speak: false,
+      sender: 'QA 外部来源',
+      source: 'external',
+      sourceLabel: '外部',
+      receivedAt: new Date().toISOString(),
+    }
+    await petWindow.webContents.executeJavaScript(`(() => {
+      if (window.__qaAutoExpandObserver) window.__qaAutoExpandObserver.disconnect()
+      const bubble = document.getElementById('interaction-bubble')
+      window.__qaAutoExpandVisibilitySamples = []
+      const record = () => window.__qaAutoExpandVisibilitySamples.push({
+        text: bubble.message || '',
+        visible: bubble.classList.contains('is-visible'),
+      })
+      window.__qaAutoExpandObserver = new MutationObserver(record)
+      window.__qaAutoExpandObserver.observe(bubble, {
+        attributes: true,
+        attributeFilter: ['class', 'message'],
+      })
+      record()
+    })()`)
+    petWindow.webContents.send('external-message:event', {
+      phase: 'received',
+      stage: 'thinking',
+      progressText: '思考中…',
+      transient: true,
+      message,
+    })
+    await waitForBubbleText('思考中…', 1200)
+    const received = await readLongMessageState(`${label}:received`)
+    petWindow.webContents.send('external-message:event', {
+      phase: 'completed',
+      message,
+      result: {
+        text,
+        emotion: 'calm',
+        aiGenerated: true,
+        speech: { requested: false, status: 'disabled' },
+        completedAt: new Date().toISOString(),
+      },
+    })
+    const bubble = await waitForBubbleMessage(text, 1800)
+    const expandable = await waitForBubbleExpandable(text !== shortExternalText, 1800)
+    const visibilitySamples = await petWindow.webContents.executeJavaScript(`(() => {
+      if (window.__qaAutoExpandObserver) window.__qaAutoExpandObserver.disconnect()
+      window.__qaAutoExpandObserver = null
+      return structuredClone(window.__qaAutoExpandVisibilitySamples || [])
+    })()`)
+    return { message, received, bubble, expandable, visibilitySamples }
+  }
+
+  const sendDirectExternal = async (text, label, expectLongMessage = true) => {
+    externalSequence += 1
+    const message = {
+      id: `qa-auto-expand-direct-${externalSequence}`,
+      requestId: `qa-auto-expand-direct-request-${externalSequence}`,
+      type: 'direct',
+      content: text,
+      speak: false,
+      sender: 'QA 外部直发来源',
+      source: 'external',
+      sourceLabel: '外部',
+      receivedAt: new Date().toISOString(),
+    }
+    await petWindow.webContents.executeJavaScript(`(() => {
+      if (window.__qaAutoExpandObserver) window.__qaAutoExpandObserver.disconnect()
+      const bubble = document.getElementById('interaction-bubble')
+      window.__qaAutoExpandVisibilitySamples = []
+      const record = () => window.__qaAutoExpandVisibilitySamples.push({
+        text: bubble.message || '',
+        visible: bubble.classList.contains('is-visible'),
+      })
+      window.__qaAutoExpandObserver = new MutationObserver(record)
+      window.__qaAutoExpandObserver.observe(bubble, {
+        attributes: true,
+        attributeFilter: ['class', 'message'],
+      })
+      record()
+    })()`)
+    petWindow.webContents.send('external-message:event', {
+      phase: 'received',
+      stage: 'display',
+      progressText: '',
+      transient: false,
+      message,
+    })
+    const bubble = await waitForBubbleMessage(text, 1800)
+    const expandable = await waitForBubbleExpandable(expectLongMessage, 1800)
+    const openedAtReceived = expectLongMessage
+      ? await waitForLongMessageReady(4000)
+      : await readLongMessageState(`${label}:received-short`)
+    petWindow.webContents.send('external-message:event', {
+      phase: 'completed',
+      message,
+      result: {
+        text,
+        emotion: '',
+        aiGenerated: false,
+        speech: { requested: false, status: 'disabled' },
+        completedAt: new Date().toISOString(),
+      },
+    })
+    let completed
+    if (expectLongMessage) {
+      completed = await waitForLongMessageBodyText(text, 2400)
+    } else {
+      await wait(100)
+      completed = await readLongMessageState(`${label}:completed-short`)
+    }
+    const visibilitySamples = await petWindow.webContents.executeJavaScript(`(() => {
+      if (window.__qaAutoExpandObserver) window.__qaAutoExpandObserver.disconnect()
+      window.__qaAutoExpandObserver = null
+      return structuredClone(window.__qaAutoExpandVisibilitySamples || [])
+    })()`)
+    return { message, bubble, expandable, openedAtReceived, completed, visibilitySamples }
+  }
+
+  const submitApp = async (prompt, text) => {
+    aiMockState.chatDelayMs = 0
+    aiMockState.speechDelayMs = 0
+    aiMockState.replyText = text
+    await petWindow.webContents.executeJavaScript(`(() => {
+      if (window.__qaAutoExpandObserver) window.__qaAutoExpandObserver.disconnect()
+      const bubble = document.getElementById('interaction-bubble')
+      window.__qaAutoExpandVisibilitySamples = []
+      const record = () => window.__qaAutoExpandVisibilitySamples.push({
+        text: bubble.message || '',
+        visible: bubble.classList.contains('is-visible'),
+      })
+      window.__qaAutoExpandObserver = new MutationObserver(record)
+      window.__qaAutoExpandObserver.observe(bubble, {
+        attributes: true,
+        attributeFilter: ['class', 'message'],
+      })
+      record()
+      const input = document.getElementById('ai-chat-input')
+      input.value = ${JSON.stringify(prompt)}
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+      document.getElementById('ai-chat-form').requestSubmit()
+    })()`)
+    const bubble = await waitForBubbleMessage(text, 2200)
+    const expandable = await waitForBubbleExpandable(true, 1800)
+    const visibilitySamples = await petWindow.webContents.executeJavaScript(`(() => {
+      if (window.__qaAutoExpandObserver) window.__qaAutoExpandObserver.disconnect()
+      window.__qaAutoExpandObserver = null
+      return structuredClone(window.__qaAutoExpandVisibilitySamples || [])
+    })()`)
+    return { bubble, expandable, visibilitySamples }
+  }
+
+  const closeReader = async label => {
+    const layoutCallStart = longMessageLayoutCalls.length
+    const boundsReportStart = longMessageBoundsReports.length
+    await petWindow.webContents.executeJavaScript(`document.getElementById('long-message-collapse').click()`)
+    return waitForLongMessageClosed(layoutCallStart, boundsReportStart, 4000).then(closed => ({ ...closed, label }))
+  }
+
+  const manuallyOpenAndClose = async label => {
+    await petWindow.webContents.executeJavaScript(`document.getElementById('interaction-bubble').shadowRoot.querySelector('.message-expand').click()`)
+    const opened = await waitForLongMessageReady(4000)
+    const closed = await closeReader(label)
+    return { opened, closed }
+  }
+
+  await setSnapshot({
+    settingsTheme: 'glass',
+    interactionMode: 'smart',
+    longMessageCharacterThreshold: DEFAULT_LONG_MESSAGE_CHARACTER_THRESHOLD,
+    appLongMessageAutoExpand: false,
+    externalLongMessageAutoExpand: false,
+  })
+  petWindow.webContents.send('ai:chat-visibility', false)
+  await wait(140)
+
+  states.defaultExternal = await sendExternal(externalText, 'default-external')
+  await wait(360)
+  states.defaultExternal.afterFinal = await readLongMessageState('default-external:after-final')
+  states.defaultExternal.manual = await manuallyOpenAndClose('default-external:manual-close')
+
+  await setSnapshot({ appLongMessageAutoExpand: false, externalLongMessageAutoExpand: true })
+  states.externalEnabled = await sendExternal(externalText, 'external-enabled')
+  states.externalEnabled.opened = await waitForLongMessageReady(4000)
+  screenshots.externalEnabled = await capture('long-message-auto-external.png')
+  states.externalEnabled.closed = await closeReader('external-enabled:close')
+
+  states.directExternalFirst = await sendDirectExternal(externalText, 'direct-external-first')
+  screenshots.directExternalGlass = await capture('long-message-auto-direct-external-glass.png')
+  states.directExternalFirst.closed = await closeReader('direct-external-first:close')
+
+  await setSnapshot({
+    settingsTheme: 'healing',
+    appLongMessageAutoExpand: false,
+    externalLongMessageAutoExpand: true,
+  })
+  await wait(140)
+  states.directExternalAfterCollapse = await sendDirectExternal(externalText, 'direct-external-after-collapse')
+  screenshots.directExternalHealing = await capture('long-message-auto-direct-external-healing-after-collapse.png')
+  states.directExternalAfterCollapse.closed = await closeReader('direct-external-after-collapse:close')
+  await setSnapshot({ settingsTheme: 'glass' })
+  await wait(140)
+
+  const exactThresholdText = '测'.repeat(DEFAULT_LONG_MESSAGE_CHARACTER_THRESHOLD)
+  const raisedThresholdText = `${'测'.repeat(DEFAULT_LONG_MESSAGE_CHARACTER_THRESHOLD)}高`
+  const overThresholdText = `${'测'.repeat(DEFAULT_LONG_MESSAGE_CHARACTER_THRESHOLD)}界`
+  states.exactThreshold = await sendDirectExternal(exactThresholdText, 'exact-threshold', false)
+  await setSnapshot({ longMessageCharacterThreshold: DEFAULT_LONG_MESSAGE_CHARACTER_THRESHOLD + 15 })
+  states.raisedThreshold = await sendDirectExternal(raisedThresholdText, 'raised-threshold', false)
+  await setSnapshot({ longMessageCharacterThreshold: DEFAULT_LONG_MESSAGE_CHARACTER_THRESHOLD })
+  states.overThreshold = await sendDirectExternal(overThresholdText, 'over-threshold')
+  screenshots.thresholdBoundary = await capture('long-message-auto-threshold-boundary.png')
+  states.overThreshold.closed = await closeReader('over-threshold:close')
+
+  petWindow.webContents.send('ai:chat-visibility', false)
+  await wait(100)
+  petWindow.webContents.send('ai:chat-visibility', true)
+  await wait(180)
+  states.appDisabled = await submitApp('请返回 APP 长消息，但不要自动展开', appText)
+  await wait(360)
+  states.appDisabled.afterFinal = await readLongMessageState('app-disabled:after-final')
+  states.appDisabled.manual = await manuallyOpenAndClose('app-disabled:manual-close')
+
+  await setSnapshot({ appLongMessageAutoExpand: true, externalLongMessageAutoExpand: false })
+  states.appEnabled = await submitApp('请返回会自动展开的 APP 长消息', appText)
+  states.appEnabled.opened = await waitForLongMessageReady(4000)
+  screenshots.appEnabled = await capture('long-message-auto-app.png')
+
+  await setControlledAudioPlayback(true)
+  const shortVoiceAudioBaseline = await readQAAudioPlaybackState()
+  await petWindow.webContents.executeJavaScript(`(() => {
+    const mute = document.getElementById('ai-chat-mute')
+    if (mute.getAttribute('aria-pressed') === 'true') mute.click()
+  })()`)
+  aiMockState.chatDelayMs = 360
+  aiMockState.speechDelayMs = 420
+  aiMockState.replyText = shortVoiceText
+  const replacementLayoutCallStart = longMessageLayoutCalls.length
+  const replacementBoundsReportStart = longMessageBoundsReports.length
+  await petWindow.webContents.executeJavaScript(`(() => {
+    const input = document.getElementById('ai-chat-input')
+    input.value = '长消息窗口打开时，请回复一条带语音的短消息'
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    document.getElementById('ai-chat-form').requestSubmit()
+  })()`)
+  states.appEnabled.replacementClosed = await waitForLongMessageClosed(
+    replacementLayoutCallStart,
+    replacementBoundsReportStart,
+    4000
+  )
+  states.appEnabled.thinking = await waitForBubbleText('思考中…', 1200)
+  states.appEnabled.synthesizing = await waitForBubbleText('语音合成中…', 2400)
+  states.appEnabled.shortFinal = await waitForBubbleText(shortVoiceText, 3000)
+  states.appEnabled.shortExpandable = await waitForBubbleExpandable(false, 1800)
+  states.appEnabled.shortFinalReader = await readLongMessageState('app-enabled:short-final')
+  states.appEnabled.shortVoiceAudio = await waitForQAAudioState(
+    state => state.inputCalls.length >= shortVoiceAudioBaseline.inputCalls.length + 1 && state.pending,
+    3000
+  )
+  screenshots.appShortVoice = await capture('long-message-auto-app-short-voice-stays-bubble.png')
+  await setControlledAudioPlayback(false)
+  await petWindow.webContents.executeJavaScript(`(() => {
+    const mute = document.getElementById('ai-chat-mute')
+    if (mute.getAttribute('aria-pressed') === 'false') mute.click()
+  })()`)
+  await waitForBubbleVisibility(false, 3500)
+
+  states.externalDisabled = await sendExternal(externalText, 'external-disabled')
+  await wait(360)
+  states.externalDisabled.afterFinal = await readLongMessageState('external-disabled:after-final')
+  states.externalDisabled.manual = await manuallyOpenAndClose('external-disabled:manual-close')
+
+  const collapsedBeforeFullChat = await readState('auto-expand:before-full-chat')
+  if (collapsedBeforeFullChat.chat.collapsed) {
+    await petWindow.webContents.executeJavaScript(`document.getElementById('ai-chat-toggle').click()`)
+    await wait(220)
+  }
+  states.fullChatApp = await submitApp('完整聊天记录中不要重复展开', appText)
+  await wait(360)
+  states.fullChatApp.afterFinal = await readLongMessageState('full-chat-app:after-final')
+  states.fullChatApp.chat = await readState('full-chat-app:chat-state')
+  screenshots.fullChatApp = await capture('long-message-auto-app-full-chat-suppressed.png')
+  states.fullChatApp.manual = await manuallyOpenAndClose('full-chat-app:manual-close')
+
+  await setSnapshot({ appLongMessageAutoExpand: true, externalLongMessageAutoExpand: true })
+  states.externalWithFullChat = await sendExternal(externalText, 'external-with-full-chat')
+  states.externalWithFullChat.opened = await waitForLongMessageReady(4000)
+  screenshots.externalWithFullChat = await capture('long-message-auto-external-with-full-chat.png')
+  states.externalWithFullChat.closed = await closeReader('external-with-full-chat:close')
+
+  states.shortExternal = await sendExternal(shortExternalText, 'short-external')
+  await wait(360)
+  states.shortExternal.afterFinal = await readLongMessageState('short-external:after-final')
+  const cleanup = await waitForBubbleVisibility(false, 3500)
+
+  petWindow.webContents.send('ai:chat-visibility', false)
+  await setSnapshot({ appLongMessageAutoExpand: false, externalLongMessageAutoExpand: false })
+  Object.assign(aiMockState, originalAIState)
+
+  const assertions = {
+    defaultsRemainOptIn: states.defaultExternal.afterFinal.reader.hidden
+      && states.defaultExternal.afterFinal.bubble.expandable
+      && states.defaultExternal.manual.opened.reader.visible
+      && states.defaultExternal.manual.closed.reader.hidden,
+    externalOpensOnlyAfterFinalResult: states.externalEnabled.received.reader.hidden
+      && states.externalEnabled.opened.reader.visible
+      && states.externalEnabled.opened.reader.bodyText === externalText
+      && states.externalEnabled.opened.reader.source.value === 'external'
+      && !states.externalEnabled.opened.reader.focusedBody
+      && !states.externalEnabled.visibilitySamples.some(sample => sample.text === externalText && sample.visible)
+      && states.externalEnabled.closed.reader.hidden,
+    directExternalLongMessageOpensAtReceivedWithoutBubble: states.directExternalFirst.openedAtReceived.reader.visible
+      && states.directExternalFirst.openedAtReceived.reader.bodyText === externalText
+      && states.directExternalFirst.openedAtReceived.reader.source.value === 'external'
+      && !states.directExternalFirst.visibilitySamples.some(sample => sample.text === externalText && sample.visible)
+      && states.directExternalFirst.closed.reader.hidden,
+    directExternalLongMessageStillBypassesBubbleAfterCollapse: states.directExternalAfterCollapse.openedAtReceived.reader.visible
+      && states.directExternalAfterCollapse.openedAtReceived.reader.bodyText === externalText
+      && states.directExternalAfterCollapse.openedAtReceived.theme === 'healing'
+      && !states.directExternalAfterCollapse.visibilitySamples.some(sample => (
+        sample.text === externalText && sample.visible
+      ))
+      && states.directExternalAfterCollapse.closed.reader.hidden,
+    defaultThresholdMatchesSmallestBubbleCapacity: capacityCalibration.minimum === DEFAULT_LONG_MESSAGE_CHARACTER_THRESHOLD,
+    thresholdBoundaryAndSettingControlClassification: states.exactThreshold.bubble.visible
+      && !states.exactThreshold.expandable.expandable
+      && states.exactThreshold.openedAtReceived.reader.hidden
+      && states.raisedThreshold.bubble.visible
+      && !states.raisedThreshold.expandable.expandable
+      && states.raisedThreshold.openedAtReceived.reader.hidden
+      && states.overThreshold.expandable.expandable
+      && states.overThreshold.openedAtReceived.reader.visible
+      && states.overThreshold.openedAtReceived.reader.bodyText === overThresholdText
+      && !states.overThreshold.visibilitySamples.some(sample => sample.text === overThresholdText && sample.visible)
+      && states.overThreshold.closed.reader.hidden,
+    externalSwitchDoesNotEnableAppReplies: states.appDisabled.afterFinal.reader.hidden
+      && states.appDisabled.afterFinal.bubble.expandable
+      && states.appDisabled.manual.opened.reader.visible
+      && states.appDisabled.manual.closed.reader.hidden,
+    appSwitchOpensCollapsedChatReplyWithoutStealingFocus: states.appEnabled.opened.reader.visible
+      && states.appEnabled.opened.reader.bodyText === appText
+      && states.appEnabled.opened.reader.source.value === ''
+      && !states.appEnabled.opened.reader.focusedBody
+      && states.appEnabled.opened.reader.activeElementId === 'ai-chat-input'
+      && !states.appEnabled.visibilitySamples.some(sample => sample.text === appText && sample.visible),
+    appNewRequestClosesOldReaderAndKeepsProgressInBubble: states.appEnabled.replacementClosed.reader.hidden
+      && states.appEnabled.thinking.visible
+      && states.appEnabled.thinking.text === '思考中…'
+      && states.appEnabled.synthesizing.visible
+      && states.appEnabled.synthesizing.text === '语音合成中…',
+    shortVoiceReplyNeverEntersLongMessageReader: states.appEnabled.shortFinal.visible
+      && states.appEnabled.shortFinal.text === shortVoiceText
+      && !states.appEnabled.shortExpandable.expandable
+      && states.appEnabled.shortFinalReader.reader.hidden
+      && states.appEnabled.shortFinalReader.reader.bodyText !== shortVoiceText
+      && states.appEnabled.shortVoiceAudio.pending,
+    appSwitchDoesNotEnableExternalMessages: states.externalDisabled.afterFinal.reader.hidden
+      && states.externalDisabled.afterFinal.bubble.expandable
+      && states.externalDisabled.manual.opened.reader.visible
+      && states.externalDisabled.manual.closed.reader.hidden,
+    expandedAppChatAvoidsRedundantReader: !states.fullChatApp.chat.chat.collapsed
+      && states.fullChatApp.afterFinal.reader.hidden
+      && states.fullChatApp.afterFinal.bubble.expandable
+      && states.fullChatApp.manual.opened.reader.visible
+      && states.fullChatApp.manual.closed.reader.hidden,
+    externalSwitchStillWorksWhileAppChatIsExpanded: states.externalWithFullChat.received.reader.hidden
+      && states.externalWithFullChat.opened.reader.visible
+      && states.externalWithFullChat.opened.reader.bodyText === externalText
+      && states.externalWithFullChat.opened.reader.source.value === 'external'
+      && states.externalWithFullChat.closed.reader.hidden,
+    shortMessagesNeverOpenReader: !states.shortExternal.expandable.expandable
+      && states.shortExternal.afterFinal.reader.hidden
+      && !cleanup.visible,
+  }
+  return {
+    capacityCalibration,
+    states,
+    screenshots,
+    cleanup,
+    assertions,
+    passed: Object.values(assertions).every(Boolean),
+  }
+}
+
 async function runLongMessageReader() {
   const referenceText = Array.from({ length: 14 }, (_, index) => (
     `第${index + 1}段：小狐狸去买奶茶，店员问要几分糖。它认真地说：“全加吧，我糖分免疫力很强。”`
@@ -1617,36 +2176,6 @@ async function runLongMessageReader() {
     const replacementCompleted = await waitForLongMessageBodyText(referenceText)
     const replacementWindowBoundsAfter = petWindow.getBounds()
     const replacementLayoutCalls = longMessageLayoutCalls.slice(replacementLayoutCallStart)
-    let appReplacement = null
-    if (theme === 'glass') {
-      const previousReplyText = aiMockState.replyText
-      const previousChatDelay = aiMockState.chatDelayMs
-      aiMockState.replyText = referenceText
-      aiMockState.chatDelayMs = 260
-      petWindow.webContents.send('ai:chat-visibility', true)
-      await wait(80)
-      const appLayoutCallStart = longMessageLayoutCalls.length
-      const appWindowBounds = petWindow.getBounds()
-      await petWindow.webContents.executeJavaScript(`(() => {
-        const input = document.getElementById('ai-chat-input')
-        input.value = '长文本展开时发送新的 APP 消息'
-        input.dispatchEvent(new Event('input', { bubbles: true }))
-        document.getElementById('ai-chat-form').requestSubmit()
-      })()`)
-      const thinkingState = await waitForLongMessageBodyText('思考中…')
-      const completedState = await waitForLongMessageBodyText(referenceText, 3000)
-      const appWindowBoundsAfter = petWindow.getBounds()
-      appReplacement = {
-        thinkingState,
-        completedState,
-        layoutCalls: longMessageLayoutCalls.slice(appLayoutCallStart),
-        windowBounds: appWindowBounds,
-        windowBoundsAfter: appWindowBoundsAfter,
-      }
-      petWindow.webContents.send('ai:chat-visibility', false)
-      aiMockState.replyText = previousReplyText
-      aiMockState.chatDelayMs = previousChatDelay
-    }
     await petWindow.webContents.executeJavaScript(`document.getElementById('long-message-reader').dataset.side = 'left'`)
     const leftSideTail = await readLongMessageState(`long-message:${theme}:left-side-tail`)
     await petWindow.webContents.executeJavaScript(`document.getElementById('long-message-reader').dataset.side = 'right'`)
@@ -1734,19 +2263,6 @@ async function runLongMessageReader() {
         && ['x', 'y', 'width', 'height'].every(key => (
           replacementWindowBoundsAfter[key] === replacementWindowBounds[key]
         )),
-      appMessageAlsoUpdatesOpenReaderWithoutWindowResize: theme !== 'glass' || (
-        appReplacement
-        && appReplacement.thinkingState.reader.visible
-        && appReplacement.thinkingState.reader.bodyText === '思考中…'
-        && appReplacement.completedState.reader.visible
-        && appReplacement.completedState.reader.bodyText === referenceText
-        && appReplacement.completedState.reader.source.value === ''
-        && appReplacement.completedState.reader.source.hidden
-        && appReplacement.layoutCalls.length === 0
-        && ['x', 'y', 'width', 'height'].every(key => (
-          appReplacement.windowBoundsAfter[key] === appReplacement.windowBounds[key]
-        ))
-      ),
       nonSpeechMessageHidesPlaybackControl: opened.reader.audio.kindExists
         && opened.reader.audio.kindText === '非语音消息'
         && opened.reader.audio.buttonExists
@@ -1768,14 +2284,15 @@ async function runLongMessageReader() {
         && opened.layoutMode === 'right'
         && opened.viewport.rect.width === PET_VIEWPORT_WIDTH
         && opened.viewport.rect.height === PET_VIEWPORT_HEIGHT
-        && opened.windowSize.width === PET_HOST_WIDTH
+        && opened.windowSize.width === PET_EXPANDED_HOST_WIDTH
         && opened.windowSize.height === PET_VIEWPORT_HEIGHT
         && Math.abs(opened.reader.rect.x - opened.viewport.rect.right - LONG_MESSAGE_READER_GAP) <= 1,
-      nativeWindowStaysFixedWithoutMovingStage: expandedWindowBounds.width === PET_HOST_WIDTH
+      nativeWindowExpandsRightWithoutMovingStage: expandedWindowBounds.width === PET_EXPANDED_HOST_WIDTH
         && expandedWindowBounds.height === PET_VIEWPORT_HEIGHT
         && expandedWindowBounds.x === initialWindowBounds.x
         && expandedWindowBounds.y === initialWindowBounds.y
-        && opened.viewport.rect.x === LONG_MESSAGE_HOST_GUTTER,
+        && opened.viewport.rect.x === 0
+        && expandedWindowBounds.x + opened.viewport.rect.x === initialWindowBounds.x,
       readerReportsInteractionBounds: validBounds(reportedOpenBounds)
         && Math.abs(reportedOpenBounds.width - opened.reader.rect.width) <= 1
         && Math.abs(reportedOpenBounds.height - opened.reader.rect.height) <= 1,
@@ -1825,15 +2342,16 @@ async function runLongMessageReader() {
         && !closed.bubble.expanded
         && closed.bubble.expandAriaExpanded === 'false'
         && closed.bubble.text === referenceText,
-      collapseKeepsStableNativeWindow: collapsedWindowBounds.width === PET_HOST_WIDTH
+      collapseRestoresCompactNativeWindow: collapsedWindowBounds.width === PET_COLLAPSED_HOST_WIDTH
         && collapsedWindowBounds.height === PET_VIEWPORT_HEIGHT
         && collapsedWindowBounds.x === initialWindowBounds.x
         && collapsedWindowBounds.y === initialWindowBounds.y
         && expandedWindowBounds.x === collapsedWindowBounds.x
         && expandedWindowBounds.y === collapsedWindowBounds.y
-        && expandedWindowBounds.width === collapsedWindowBounds.width
+        && expandedWindowBounds.width === PET_EXPANDED_HOST_WIDTH
+        && expandedWindowBounds.width !== collapsedWindowBounds.width
         && expandedWindowBounds.height === collapsedWindowBounds.height
-        && closed.windowSize.width === PET_HOST_WIDTH
+        && closed.windowSize.width === PET_COLLAPSED_HOST_WIDTH
         && closed.windowSize.height === PET_VIEWPORT_HEIGHT
         && closed.viewport.rect.width === PET_VIEWPORT_WIDTH
         && closed.viewport.rect.height === PET_VIEWPORT_HEIGHT,
@@ -1843,7 +2361,7 @@ async function runLongMessageReader() {
         && !closed.reader.audio.playing
         && closed.reader.audio.ariaPressed === 'false'
         && closed.layoutMode === 'collapsed'
-        && closed.viewport.offsetX === `${LONG_MESSAGE_HOST_GUTTER}px`,
+        && closed.viewport.offsetX === '0px',
       layoutBridgeReceivesOpenAndClose: layoutCalls.length >= 2
         && layoutCalls.some(call => call.payload.open === true && call.payload.preferredWidth === LONG_MESSAGE_READER_WIDTH)
         && layoutCalls.some(call => call.payload.open === false)
@@ -1856,7 +2374,7 @@ async function runLongMessageReader() {
       staleLayoutEventCannotReopenReader: afterStaleLayout.reader.hidden
         && !afterStaleLayout.reader.visible
         && afterStaleLayout.layoutMode === 'collapsed'
-        && afterStaleLayout.viewport.offsetX === `${LONG_MESSAGE_HOST_GUTTER}px`
+        && afterStaleLayout.viewport.offsetX === '0px'
         && Number(afterStaleLayout.reader.layoutRevision) > Number(openLayout && openLayout.revision),
     }
     themes.push({
@@ -1866,7 +2384,6 @@ async function runLongMessageReader() {
         opened,
         replacementReceived,
         replacementCompleted,
-        appReplacement,
         leftSideTail,
         scrolled,
         copied,
@@ -1933,10 +2450,11 @@ async function runLongMessageReader() {
   await waitForBubbleVisibility(false, 5000)
 
   // Force the left-side geometry used when the pet is close to the right edge
-  // of a display. The stable host must keep both BrowserWindow bounds and the
-  // renderer stage origin unchanged through open and collapse.
+  // of a display. The native host grows to the left while the renderer offsets
+  // the 400px stage by the same amount, preserving its screen coordinate.
   longMessageLayoutSide = 'left'
   const leftTransitionCallStart = longMessageTransitionCalls.length
+  const leftTransitionFrameSampleStart = longMessageTransitionFrameSamples.length
   const leftLayoutCallStart = longMessageLayoutCalls.length
   const leftBoundsReportStart = longMessageBoundsReports.length
   const leftMessage = {
@@ -1953,11 +2471,12 @@ async function runLongMessageReader() {
   })()`)
   const leftOpened = await waitForLongMessageReady(5000)
   const leftExpandedBounds = petWindow.getBounds()
+  const leftReaderScreenshot = await capture('long-message-left-reader.png')
   await petWindow.webContents.executeJavaScript(`document.getElementById('long-message-collapse').click()`)
   const leftClosed = await waitForLongMessageClosed(leftLayoutCallStart, leftBoundsReportStart, 5000)
   const leftRestoredBounds = petWindow.getBounds()
-  await wait(120)
-  const leftTransitionCalls = longMessageTransitionCalls.slice(leftTransitionCallStart)
+  const leftTransitionCalls = await waitForLongMessageTransitionSettled(leftTransitionCallStart)
+  const leftTransitionFrameSamples = await waitForLongMessageTransitionFrameSamples(leftTransitionFrameSampleStart)
   longMessageLayoutSide = 'right'
   const glass = themes.find(result => result.theme === 'glass')
   const healing = themes.find(result => result.theme === 'healing')
@@ -1977,31 +2496,42 @@ async function runLongMessageReader() {
     themeTextColorsRemainDistinct: glass.states.opened.reader.bodyColor !== healing.states.opened.reader.bodyColor,
     everyCopyContainsTheFullMessage: copiedTexts.slice(-2).length === 2
       && copiedTexts.slice(-2).every(text => text === referenceText),
-    shortMessageRemainsUnchanged: shortBubble.visible
-      && shortBubble.text === shortText
+    shortMessageRemainsUnchanged: shortBubble.text === shortText
       && !shortBubble.expandable
       && shortBubble.expandHidden
       && shortBubble.expandDisplay === 'none'
       && shortReader.reader.hidden,
     shortMessageClosesAnAlreadyOpenReader: beforeShortReader.reader.visible
-      && beforeShortBounds.width === PET_HOST_WIDTH
+      && beforeShortBounds.width === PET_EXPANDED_HOST_WIDTH
       && shortReader.reader.hidden
       && shortReader.layoutMode === 'collapsed'
       && afterShortBounds.x === beforeShortBounds.x
       && afterShortBounds.y === beforeShortBounds.y
-      && afterShortBounds.width === beforeShortBounds.width
+      && afterShortBounds.width === PET_COLLAPSED_HOST_WIDTH
       && afterShortBounds.height === PET_VIEWPORT_HEIGHT
       && shortReplacementLayoutCalls.some(call => call.payload.open === false),
     leftSideLayoutKeepsThePetAtOneScreenPosition: leftOpened.reader.visible
       && leftOpened.reader.side === 'left'
       && leftOpened.layoutMode === 'left'
-      && leftExpandedBounds.x + leftOpened.viewport.rect.x === leftCollapsedBounds.x + LONG_MESSAGE_HOST_GUTTER
-      && leftRestoredBounds.x + leftClosed.viewport.rect.x === leftCollapsedBounds.x + LONG_MESSAGE_HOST_GUTTER
-      && leftExpandedBounds.x === leftCollapsedBounds.x
+      && leftExpandedBounds.x + leftOpened.viewport.rect.x === leftCollapsedBounds.x
+      && leftRestoredBounds.x + leftClosed.viewport.rect.x === leftCollapsedBounds.x
+      && leftExpandedBounds.x === leftCollapsedBounds.x - LONG_MESSAGE_READER_EXTENSION
       && leftRestoredBounds.x === leftCollapsedBounds.x
-      && leftExpandedBounds.width === PET_HOST_WIDTH
-      && leftRestoredBounds.width === PET_HOST_WIDTH,
-    leftSideLayoutAvoidsNativeSurfaceTransition: leftTransitionCalls.length === 0,
+      && leftExpandedBounds.width === PET_EXPANDED_HOST_WIDTH
+      && leftRestoredBounds.width === PET_COLLAPSED_HOST_WIDTH,
+    leftSideLayoutUsesAtomicStageHandoff: leftTransitionCalls.length >= 4
+      && leftTransitionCalls.filter(call => call.active).length === 2
+      && leftTransitionCalls.at(-1).active === false
+      && leftTransitionFrameSamples.length >= 4
+      && leftTransitionFrameSamples.every(sample => (
+        Math.abs(sample.nativeBounds.x + sample.frameRectX - leftCollapsedBounds.x) <= 1
+        && Math.abs(sample.frameWidth - PET_VIEWPORT_WIDTH) <= 1
+      ))
+      && [false, true].every(expanded => (
+        ['prepared', 'committed'].every(phase => leftTransitionFrameSamples.some(sample => (
+          sample.phase === phase && Boolean(sample.layout && sample.layout.expanded) === expanded
+        )))
+      )),
   }
 
   return {
@@ -2025,6 +2555,8 @@ async function runLongMessageReader() {
       expandedBounds: leftExpandedBounds,
       restoredBounds: leftRestoredBounds,
       transitionCalls: leftTransitionCalls,
+      transitionFrameSamples: leftTransitionFrameSamples,
+      screenshot: leftReaderScreenshot,
     },
     crossThemeAssertions,
     passed: themes.every(theme => theme.passed) && Object.values(crossThemeAssertions).every(Boolean),
@@ -2114,7 +2646,9 @@ async function runBubbleLifecycle() {
     interactionCannotOverwriteVoice: voiceAfterCompetingInteraction.visible
       && voiceAfterCompetingInteraction.text === expectedVoiceText,
     voiceBubbleEndsWithPlayback: !voiceEnded.visible,
-    voiceLeaseHasPlaybackDuration: voiceVisibleForMs >= 650 && voiceVisibleForMs <= 2200,
+    // The final text now remains for two seconds after the voice/typewriter
+    // finishes instead of disappearing at the audio completion boundary.
+    voiceLeaseHasPlaybackDuration: voiceVisibleForMs >= 1800 && voiceVisibleForMs <= 3200,
   }
 
   return {
@@ -2143,6 +2677,127 @@ async function runBubbleLifecycle() {
     },
     screenshots: { firstScreenshot, voiceScreenshot },
     assertions,
+    passed: Object.values(assertions).every(Boolean),
+  }
+}
+
+async function runTypewriterLifecycle() {
+  const originalPreferences = {
+    settingsTheme: snapshot.preferences.settingsTheme,
+    externalLongMessageAutoExpand: snapshot.preferences.externalLongMessageAutoExpand,
+    externalMessageStreamingOutput: snapshot.preferences.externalMessageStreamingOutput,
+  }
+  const screenshots = {}
+  const themes = []
+  petWindow.webContents.send('ai:chat-visibility', false)
+  await waitForBubbleVisibility(false, 4000)
+  await petWindow.webContents.executeJavaScript('window.__PET_QA_TYPEWRITER_INTERVAL_MS = 55')
+
+  for (const theme of ['glass', 'healing']) {
+    await setSnapshot({
+      settingsTheme: theme,
+      externalLongMessageAutoExpand: false,
+      externalMessageStreamingOutput: true,
+    })
+    const text = `${theme === 'glass' ? '玻璃' : '治愈'}主题正在逐字打印这条外部消息。`
+    const message = {
+      id: `qa-typewriter-${theme}`,
+      requestId: `qa-typewriter-${theme}-request`,
+      type: 'direct',
+      content: text,
+      speak: false,
+      sender: '打印机效果验收',
+      source: 'external',
+      sourceLabel: '外部',
+      receivedAt: new Date().toISOString(),
+    }
+    petWindow.webContents.send('external-message:event', { phase: 'received', message })
+    await wait(180)
+    const partial = await readBubble(`typewriter:${theme}:partial`)
+    screenshots[theme] = await capture(`typewriter-${theme}-partial.png`)
+    const completed = await waitForBubbleText(text, 3000)
+    await wait(1450)
+    const held = await readBubble(`typewriter:${theme}:held`)
+    const dismissed = await waitForBubbleVisibility(false, 1000)
+    themes.push({ theme, text, partial, completed, held, dismissed })
+  }
+
+  await setSnapshot({
+    settingsTheme: 'healing',
+    externalLongMessageAutoExpand: false,
+    externalMessageStreamingOutput: true,
+  })
+  await petWindow.webContents.executeJavaScript('window.__PET_QA_TYPEWRITER_INTERVAL_MS = 100')
+  const longText = '展开长消息以后，阅读器应当保留已经打印的内容，并从当前位置继续展示，而不是重新从第一个字开始计时。'
+  const longMessage = {
+    id: 'qa-typewriter-long-reader',
+    requestId: 'qa-typewriter-long-reader-request',
+    type: 'direct',
+    content: longText,
+    speak: false,
+    sender: '打印机效果验收',
+    source: 'external',
+    sourceLabel: '外部',
+    receivedAt: new Date().toISOString(),
+  }
+  petWindow.webContents.send('external-message:event', { phase: 'received', message: longMessage })
+  await wait(240)
+  const beforeExpand = await readBubble('typewriter:reader:before-expand')
+  const layoutCallStart = longMessageLayoutCalls.length
+  const boundsReportStart = longMessageBoundsReports.length
+  await petWindow.webContents.executeJavaScript(`(() => {
+    document.getElementById('interaction-bubble').shadowRoot.querySelector('.message-expand').click()
+  })()`)
+  const opened = await waitForLongMessageReady(4000)
+  screenshots.readerTyping = await capture('typewriter-reader-partial.png')
+  await waitForLongMessageBodyText(longText, 6000)
+  await wait(80)
+  const readerCompleted = await readLongMessageState('typewriter:reader:completed')
+  screenshots.readerCompleted = await capture('typewriter-reader-completed.png')
+  await petWindow.webContents.executeJavaScript(`document.getElementById('long-message-collapse').click()`)
+  const readerClosed = await waitForLongMessageClosed(layoutCallStart, boundsReportStart, 4000)
+
+  await petWindow.webContents.executeJavaScript('window.__PET_QA_TYPEWRITER_INTERVAL_MS = 1')
+  await setSnapshot(originalPreferences)
+
+  const plainTextAssertions = themes.map(result => ({
+    theme: result.theme,
+    partialStartsImmediately: result.partial.visible
+      && result.partial.text.length > 0
+      && result.partial.text.length < result.text.length
+      && result.text.startsWith(result.partial.text),
+    completePayloadStaysAvailable: result.partial.fullText === result.text,
+    completesInOrder: result.completed.visible && result.completed.text === result.text,
+    remainsForTwoSecondHold: result.held.visible && result.held.text === result.text,
+    dismissesAfterHold: !result.dismissed.visible,
+  }))
+  const expectedLongCount = Array.from(longText.replace(/\s/gu, '')).length
+  const assertions = {
+    bothThemesPrintProgressively: plainTextAssertions.every(result => result.partialStartsImmediately),
+    bothThemesRetainCompletePayload: plainTextAssertions.every(result => result.completePayloadStaysAvailable),
+    bothThemesFinishInOrder: plainTextAssertions.every(result => result.completesInOrder),
+    bothThemesHoldForTwoSeconds: plainTextAssertions.every(result => result.remainsForTwoSecondHold),
+    bothThemesDismissAfterHold: plainTextAssertions.every(result => result.dismissesAfterHold),
+    longMessageIsExpandableBeforeTypingFinishes: beforeExpand.visible
+      && beforeExpand.expandable
+      && beforeExpand.fullText === longText
+      && beforeExpand.text.length < longText.length,
+    readerContinuesFromExistingPrefix: opened.reader.visible
+      && opened.reader.bodyText.startsWith(beforeExpand.text)
+      && opened.reader.bodyText.length >= beforeExpand.text.length
+      && opened.reader.bodyText.length < longText.length
+      && opened.reader.status === '文字展示中…',
+    readerUsesFullCountWhileTyping: opened.reader.count === `${expectedLongCount} 字`,
+    readerCompletesWithoutRestarting: readerCompleted.reader.bodyText === longText
+      && readerCompleted.reader.status !== '文字展示中…',
+    expandedReaderWaitsForExplicitCollapse: readerCompleted.reader.visible && readerClosed.reader.hidden,
+  }
+  return {
+    themes,
+    longMessage: { beforeExpand, opened, readerCompleted, readerClosed },
+    plainTextAssertions,
+    assertions,
+    screenshots,
     passed: Object.values(assertions).every(Boolean),
   }
 }
@@ -2445,7 +3100,7 @@ async function dispatchScaleWheel(deltaY = -120) {
     stage.dispatchEvent(new WheelEvent('wheel', {
       bubbles: true,
       cancelable: true,
-      clientX: ${LONG_MESSAGE_HOST_GUTTER + 16},
+      clientX: 16,
       clientY: 240,
       deltaY: ${Number(deltaY)},
     }))
@@ -2705,11 +3360,378 @@ async function runScrollBottomStability() {
   }
 }
 
+async function waitForDetachedReaderRevision(revision, timeoutMs = 3000) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < timeoutMs) {
+    if (detachedReaderRenderedRevisions.includes(revision)) return true
+    await wait(25)
+  }
+  return false
+}
+
+async function readDetachedReaderState() {
+  return detachedReaderWindow.webContents.executeJavaScript(`(() => {
+    const reader = document.getElementById('long-message-reader')
+    const body = document.getElementById('long-message-reader-body')
+    const audio = document.getElementById('long-message-audio')
+    const source = document.getElementById('long-message-source')
+    const rect = reader.getBoundingClientRect()
+    const tail = getComputedStyle(reader, '::before')
+    return {
+      hidden: reader.hidden,
+      side: reader.dataset.side,
+      theme: document.documentElement.dataset.settingsTheme,
+      title: document.getElementById('long-message-title').textContent,
+      text: body.textContent,
+      count: document.getElementById('long-message-count').textContent,
+      sourceHidden: source.hidden,
+      sourceText: source.textContent,
+      audioHidden: audio.hidden,
+      audioPlaying: audio.classList.contains('is-playing'),
+      scrollable: reader.classList.contains('is-scrollable'),
+      rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+      layout: {
+        x: reader.offsetLeft,
+        y: reader.offsetTop,
+        width: reader.offsetWidth,
+        height: reader.offsetHeight,
+      },
+      tail: { left: tail.left, right: tail.right, clipPath: tail.clipPath },
+    }
+  })()`)
+}
+
+async function sendDetachedReaderFixture(fixture) {
+  detachedReaderFixture = structuredClone(fixture)
+  detachedReaderWindow.webContents.send('long-message-reader:state', structuredClone(fixture))
+  return waitForDetachedReaderRevision(fixture.revision)
+}
+
+async function captureDetachedReader(name) {
+  const image = await detachedReaderWindow.capturePage()
+  const target = path.join(outputDirectory, name)
+  fs.writeFileSync(target, image.toPNG())
+  return target
+}
+
+async function runDetachedLongMessageReader() {
+  const petBoundsBefore = petWindow.getBounds()
+  const copiedTextStart = copiedTexts.length
+  const longText = Array.from({ length: 24 }, (_, index) => (
+    `独立窗口验收第${index + 1}段：阅读器出现和消失时，宠物透明宿主的原生边界必须保持完全不变。`
+  )).join('\n')
+  detachedReaderFixture = {
+    open: true,
+    text: longText,
+    label: '独立阅读器',
+    source: 'external',
+    theme: 'glass',
+    hasVoice: true,
+    playing: true,
+    side: 'right',
+    readerWidth: LONG_MESSAGE_READER_WIDTH,
+    offsetX: LONG_MESSAGE_READER_EDGE,
+    top: 40,
+    height: 520,
+    revision: 901,
+  }
+  detachedReaderWindow = new BrowserWindow({
+    x: petBoundsBefore.x + PET_VIEWPORT_WIDTH + LONG_MESSAGE_READER_GAP - LONG_MESSAGE_READER_EDGE,
+    y: petBoundsBefore.y,
+    width: LONG_MESSAGE_READER_WINDOW_WIDTH,
+    height: PET_VIEWPORT_HEIGHT,
+    show: false,
+    frame: false,
+    transparent: true,
+    backgroundColor: '#00000000',
+    resizable: false,
+    hasShadow: false,
+    webPreferences: {
+      preload: path.join(projectRoot, 'long-message-preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      webSecurity: true,
+      backgroundThrottling: false,
+    },
+  })
+
+  try {
+    await detachedReaderWindow.loadFile(path.join(projectRoot, 'renderer', 'long-message-reader.html'))
+    const rightRendered = await waitForDetachedReaderRevision(901)
+    const rightState = await readDetachedReaderState()
+    const rightBounds = detachedReaderWindow.getBounds()
+    const rightCardScreenX = rightBounds.x + rightState.layout.x
+    const rightScreenshot = await captureDetachedReader('long-message-detached-glass-right.png')
+    await detachedReaderWindow.webContents.executeJavaScript("document.getElementById('long-message-copy').click()")
+    await wait(40)
+    await detachedReaderWindow.webContents.executeJavaScript("document.getElementById('long-message-audio').click(); document.getElementById('long-message-collapse').click()")
+    await wait(40)
+    const petBoundsAfterRight = petWindow.getBounds()
+
+    const leftFixture = {
+      ...detachedReaderFixture,
+      theme: 'healing',
+      side: 'left',
+      playing: false,
+      revision: 902,
+    }
+    detachedReaderWindow.setBounds({
+      x: petBoundsBefore.x - LONG_MESSAGE_READER_GAP - LONG_MESSAGE_READER_WIDTH - LONG_MESSAGE_READER_EDGE,
+      y: petBoundsBefore.y,
+      width: LONG_MESSAGE_READER_WINDOW_WIDTH,
+      height: PET_VIEWPORT_HEIGHT,
+    }, false)
+    const leftRendered = await sendDetachedReaderFixture(leftFixture)
+    const leftState = await readDetachedReaderState()
+    const leftBounds = detachedReaderWindow.getBounds()
+    const leftCardScreenRight = leftBounds.x + leftState.layout.x + leftState.layout.width
+    const leftScreenshot = await captureDetachedReader('long-message-detached-healing-left.png')
+    const petBoundsAfterLeft = petWindow.getBounds()
+
+    const closedFixture = { ...leftFixture, open: false, revision: 903 }
+    detachedReaderFixture = structuredClone(closedFixture)
+    detachedReaderWindow.webContents.send('long-message-reader:state', closedFixture)
+    await wait(50)
+    const closedState = await readDetachedReaderState()
+    const petBoundsAfterClose = petWindow.getBounds()
+    const sameBounds = (left, right) => ['x', 'y', 'width', 'height'].every(key => left[key] === right[key])
+    const copied = copiedTexts.slice(copiedTextStart)
+    const assertions = {
+      rightReaderRendersBeforeReveal: rightRendered && !rightState.hidden,
+      leftReaderRendersBeforeReveal: leftRendered && !leftState.hidden,
+      productionReaderUsesExactCardGeometry: [rightState, leftState].every(state => (
+        Math.abs(state.layout.x - LONG_MESSAGE_READER_EDGE) <= 1 &&
+        Math.abs(state.layout.y - 40) <= 1 &&
+        Math.abs(state.layout.width - LONG_MESSAGE_READER_WIDTH) <= 1 &&
+        Math.abs(state.layout.height - 520) <= 1
+      )),
+      rightReaderKeepsFourteenPixelPetGap: Math.abs(
+        rightCardScreenX - (petBoundsBefore.x + PET_VIEWPORT_WIDTH + LONG_MESSAGE_READER_GAP)
+      ) <= 1,
+      leftReaderKeepsFourteenPixelPetGap: Math.abs(
+        leftCardScreenRight - (petBoundsBefore.x - LONG_MESSAGE_READER_GAP)
+      ) <= 1,
+      petNativeBoundsNeverChange: [petBoundsAfterRight, petBoundsAfterLeft, petBoundsAfterClose]
+        .every(bounds => sameBounds(bounds, petBoundsBefore)) &&
+        petBoundsBefore.width === PET_VIEWPORT_WIDTH && petBoundsBefore.height === PET_VIEWPORT_HEIGHT,
+      fullTextAndMetadataSurviveProcessBoundary: rightState.text === longText &&
+        rightState.title === '独立阅读器' && !rightState.sourceHidden &&
+        rightState.count === `${Array.from(longText.replace(/\s/gu, '')).length} 字`,
+      themesAndTailsStayScoped: rightState.theme === 'glass' && rightState.side === 'right' &&
+        leftState.theme === 'healing' && leftState.side === 'left' &&
+        rightState.tail.left === '-10px' && leftState.tail.right === '-10px',
+      speechStateAndActionsBridgeBack: !rightState.audioHidden && rightState.audioPlaying &&
+        !leftState.audioHidden && !leftState.audioPlaying &&
+        detachedReaderActions.includes('audio') && detachedReaderActions.includes('collapse'),
+      copyUsesCompleteText: copied.includes(longText),
+      closeHidesOnlyReaderSurface: closedState.hidden && sameBounds(petBoundsAfterClose, petBoundsBefore),
+    }
+    return {
+      assertions,
+      passed: Object.values(assertions).every(Boolean),
+      petBounds: {
+        before: petBoundsBefore,
+        afterRight: petBoundsAfterRight,
+        afterLeft: petBoundsAfterLeft,
+        afterClose: petBoundsAfterClose,
+      },
+      readerBounds: { right: rightBounds, left: leftBounds },
+      states: { right: rightState, left: leftState, closed: closedState },
+      actions: detachedReaderActions.slice(),
+      screenshots: { rightScreenshot, leftScreenshot },
+    }
+  } finally {
+    if (detachedReaderWindow && !detachedReaderWindow.isDestroyed()) detachedReaderWindow.destroy()
+    detachedReaderWindow = null
+    detachedReaderFixture = null
+  }
+}
+
+async function captureFocusedMessageOutput(name) {
+  await wait(60)
+  await petWindow.webContents.executeJavaScript(
+    'new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))'
+  )
+  return capture(name)
+}
+
+async function runFocusedAppMessage({ name, text, appStreaming, externalStreaming, theme }) {
+  await setSnapshot({
+    settingsTheme: theme,
+    appMessageStreamingOutput: appStreaming,
+    externalMessageStreamingOutput: externalStreaming,
+    appLongMessageAutoExpand: false,
+    externalLongMessageAutoExpand: false,
+  })
+  aiMockState.chatDelayMs = 0
+  aiMockState.speechDelayMs = 0
+  aiMockState.replyText = text
+  const messageStartedAt = Date.now()
+  await petWindow.webContents.executeJavaScript(`(() => {
+    const mute = document.getElementById('ai-chat-mute')
+    if (mute.getAttribute('aria-pressed') === 'false') mute.click()
+    const input = document.getElementById('ai-chat-input')
+    input.value = ${JSON.stringify('定向验证消息输出方式')}
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    document.getElementById('ai-chat-form').requestSubmit()
+  })()`)
+  const payload = await waitForBubblePayload(text, 2500)
+  await wait(120)
+  const sampled = await readBubble(`${name}:sampled`)
+  let completed = sampled
+  let completionObservedAt = Date.now()
+  const screenshot = await captureFocusedMessageOutput(`${name}.png`)
+  if (appStreaming) {
+    completed = await waitForBubbleText(text, 5000)
+    completionObservedAt = Date.now()
+  }
+  const dismissed = await waitForBubbleVisibility(false, 7500)
+  const completionHoldMs = Date.now() - completionObservedAt
+  const visibleLifetimeMs = Date.now() - messageStartedAt
+  return {
+    name,
+    preferences: { appStreaming, externalStreaming, theme },
+    text,
+    payload,
+    sampled,
+    completed,
+    dismissed,
+    completionHoldMs,
+    visibleLifetimeMs,
+    screenshot,
+  }
+}
+
+async function runFocusedExternalMessage({ name, text, appStreaming, externalStreaming, theme }) {
+  await setSnapshot({
+    settingsTheme: theme,
+    appMessageStreamingOutput: appStreaming,
+    externalMessageStreamingOutput: externalStreaming,
+    appLongMessageAutoExpand: false,
+    externalLongMessageAutoExpand: false,
+  })
+  const message = {
+    id: `qa-${name}`,
+    requestId: `qa-${name}-request`,
+    type: 'direct',
+    content: text,
+    speak: false,
+    sender: '消息输出方式定向验收',
+    source: 'external',
+    sourceLabel: '外部',
+    receivedAt: new Date().toISOString(),
+  }
+  const messageStartedAt = Date.now()
+  petWindow.webContents.send('external-message:event', { phase: 'received', message })
+  const payload = await waitForBubblePayload(text, 2500)
+  await wait(120)
+  const sampled = await readBubble(`${name}:sampled`)
+  let completed = sampled
+  let completionObservedAt = Date.now()
+  const screenshot = await captureFocusedMessageOutput(`${name}.png`)
+  if (externalStreaming) {
+    completed = await waitForBubbleText(text, 5000)
+    completionObservedAt = Date.now()
+  }
+  const dismissed = await waitForBubbleVisibility(false, 7500)
+  const completionHoldMs = Date.now() - completionObservedAt
+  const visibleLifetimeMs = Date.now() - messageStartedAt
+  return {
+    name,
+    preferences: { appStreaming, externalStreaming, theme },
+    text,
+    payload,
+    sampled,
+    completed,
+    dismissed,
+    completionHoldMs,
+    visibleLifetimeMs,
+    screenshot,
+  }
+}
+
+async function runMessageOutputRuntimeFocused(modelReady) {
+  await petWindow.webContents.executeJavaScript('window.__PET_QA_TYPEWRITER_INTERVAL_MS = 110')
+  petWindow.webContents.send('ai:chat-visibility', true)
+  await wait(220)
+
+  const appDirect = await runFocusedAppMessage({
+    name: 'app-direct-output',
+    text: 'APP关闭流式输出后，这条回复应立即完整显示。',
+    appStreaming: false,
+    externalStreaming: true,
+    theme: 'glass',
+  })
+  const appStreaming = await runFocusedAppMessage({
+    name: 'app-streaming-output',
+    text: 'APP开启流式输出后，这条回复正在逐字显示。',
+    appStreaming: true,
+    externalStreaming: false,
+    theme: 'glass',
+  })
+  const externalDirect = await runFocusedExternalMessage({
+    name: 'external-direct-output',
+    text: '外部开关关闭后，这条输入消息应立即完整显示。',
+    appStreaming: true,
+    externalStreaming: false,
+    theme: 'healing',
+  })
+  const externalStreaming = await runFocusedExternalMessage({
+    name: 'external-streaming-output',
+    text: '外部开关开启后，这条输入消息正在逐字显示。',
+    appStreaming: false,
+    externalStreaming: true,
+    theme: 'healing',
+  })
+  petWindow.webContents.send('ai:chat-visibility', false)
+
+  const directStateIsComplete = result => result.payload.visible
+    && result.sampled.text === result.text
+    && result.sampled.fullText === result.text
+  const streamingStateIsPartial = result => result.payload.visible
+    && result.sampled.text.length > 0
+    && result.sampled.text.length < result.text.length
+    && result.text.startsWith(result.sampled.text)
+    && result.sampled.fullText === result.text
+  const assertions = {
+    modelReady: Boolean(modelReady),
+    appOffDisplaysCompleteTextImmediately: directStateIsComplete(appDirect),
+    appOnDisplaysTextProgressively: streamingStateIsPartial(appStreaming)
+      && appStreaming.completed.text === appStreaming.text,
+    externalOffDisplaysCompleteTextImmediately: directStateIsComplete(externalDirect),
+    externalOnDisplaysTextProgressively: streamingStateIsPartial(externalStreaming)
+      && externalStreaming.completed.text === externalStreaming.text,
+    appAndExternalPreferencesAreIndependent: appDirect.preferences.externalStreaming
+      && !appDirect.preferences.appStreaming
+      && appStreaming.preferences.appStreaming
+      && !appStreaming.preferences.externalStreaming
+      && externalDirect.preferences.appStreaming
+      && !externalDirect.preferences.externalStreaming
+      && !externalStreaming.preferences.appStreaming
+      && externalStreaming.preferences.externalStreaming,
+    everyFinalBubbleKeepsItsFullPayload: [appDirect, appStreaming, externalDirect, externalStreaming]
+      .every(result => result.payload.fullText === result.text),
+    everyFinalBubbleStillUsesTheCompletionHold: [appDirect, externalDirect]
+      .every(result => !result.dismissed.visible && result.visibleLifetimeMs >= 1850)
+      && [appStreaming, externalStreaming]
+        .every(result => !result.dismissed.visible && result.completionHoldMs >= 1700),
+  }
+  return {
+    generatedAt: new Date().toISOString(),
+    outputDirectory,
+    scenarios: { appDirect, appStreaming, externalDirect, externalStreaming },
+    assertions,
+    passed: Object.values(assertions).every(Boolean),
+  }
+}
+
 async function run() {
   registerIPC()
   await app.whenReady()
+  if (messageOutputOnly) snapshot.preferences.chatGreeting = ''
   petWindow = new BrowserWindow({
-    width: PET_HOST_WIDTH,
+    width: PET_COLLAPSED_HOST_WIDTH,
     height: 600,
     show: false,
     frame: false,
@@ -2738,6 +3760,43 @@ async function run() {
   // thinking dots live on .is-thinking::after, keep their own animation, and
   // each theme test verifies that animation is active before sampling.
   await petWindow.webContents.insertCSS('.ai-chat-panel,.ai-message,#long-message-reader{animation:none!important}.interaction-bubble-widget,.status-toast,#pet-stage::after{transition:none!important}#pet-stage.qa-force-detection-frame::after{opacity:1!important}')
+  if (messageOutputOnly) {
+    const modelLoadStarted = await waitForModelLoadStarted()
+    await petWindow.webContents.executeJavaScript('window.__qaReleaseModelLoad()')
+    const modelReady = await waitForModel()
+    petWindow.showInactive()
+    await wait(120)
+    const report = await runMessageOutputRuntimeFocused(modelReady)
+    report.modelLoadStarted = modelLoadStarted
+    report.lastModelStatus = lastModelStatus
+    const reportPath = path.join(outputDirectory, 'message-output-runtime.json')
+    fs.writeFileSync(reportPath, JSON.stringify(report, null, 2))
+    process.stdout.write(JSON.stringify({
+      reportPath,
+      passed: report.passed,
+      assertions: report.assertions,
+      completionHoldMs: Object.fromEntries(Object.entries(report.scenarios).map(
+        ([name, result]) => [name, result.completionHoldMs]
+      )),
+      visibleLifetimeMs: Object.fromEntries(Object.entries(report.scenarios).map(
+        ([name, result]) => [name, result.visibleLifetimeMs]
+      )),
+      screenshots: Object.fromEntries(Object.entries(report.scenarios).map(
+        ([name, result]) => [name, result.screenshot]
+      )),
+    }, null, 2))
+    petWindow.destroy()
+    if (!report.passed) {
+      app.exit(1)
+      return
+    }
+    app.quit()
+    return
+  }
+  // Keep the full acceptance suite fast even when it feeds the reader messages
+  // close to the 2,000-character contract limit. Voice fixtures still use the
+  // real WAV duration and therefore exercise audio-synchronised pacing.
+  await petWindow.webContents.executeJavaScript('window.__PET_QA_TYPEWRITER_INTERVAL_MS = 1')
   const greetingModelReadiness = await runGreetingModelReadiness()
   const modelLoaded = greetingModelReadiness.modelLoaded
   const nicknameChatSync = await runNicknameChatSync()
@@ -2746,13 +3805,16 @@ async function run() {
   const themeSwitch = await runExpandedThemeSwitch()
   const bubbleThemeFidelity = await runBubbleThemeFidelity()
   const bubbleLifecycle = await runBubbleLifecycle()
+  const typewriterLifecycle = await runTypewriterLifecycle()
   const longMessageAudio = await runLongMessageAudio()
   const scaleToastPlacement = await runScaleToastPlacement()
   const scrollBottomStability = await runScrollBottomStability()
   const externalMessagePriority = await runExternalMessagePriority()
+  const longMessageAutoExpand = await runLongMessageAutoExpand()
   // Keep the visual reader coverage last so its expanded native-window geometry
   // cannot interfere with the compact bubble scenarios above if a failure occurs.
   const longMessageReader = await runLongMessageReader()
+  const detachedLongMessageReader = await runDetachedLongMessageReader()
 
   const report = {
     generatedAt: new Date().toISOString(),
@@ -2765,22 +3827,28 @@ async function run() {
     themeSwitch,
     bubbleThemeFidelity,
     bubbleLifecycle,
+    typewriterLifecycle,
     longMessageAudio,
     scaleToastPlacement,
     scrollBottomStability,
     externalMessagePriority,
+    longMessageAutoExpand,
     longMessageReader,
+    detachedLongMessageReader,
     passed: greetingModelReadiness.passed
       && nicknameChatSync.passed
       && results.every(result => result.passed)
       && themeSwitch.passed
       && bubbleThemeFidelity.passed
       && bubbleLifecycle.passed
+      && typewriterLifecycle.passed
       && longMessageAudio.passed
       && scaleToastPlacement.passed
       && scrollBottomStability.passed
       && externalMessagePriority.passed
-      && longMessageReader.passed,
+      && longMessageAutoExpand.passed
+      && longMessageReader.passed
+      && detachedLongMessageReader.passed,
   }
   const reportPath = path.join(outputDirectory, 'results.json')
   fs.writeFileSync(reportPath, JSON.stringify(report, null, 2))
@@ -2803,6 +3871,12 @@ async function run() {
       screenshots: bubbleThemeFidelity.screenshots,
     },
     bubbleLifecycle: { passed: bubbleLifecycle.passed, assertions: bubbleLifecycle.assertions, metrics: bubbleLifecycle.metrics, screenshots: bubbleLifecycle.screenshots },
+    typewriterLifecycle: {
+      passed: typewriterLifecycle.passed,
+      assertions: typewriterLifecycle.assertions,
+      plainTextAssertions: typewriterLifecycle.plainTextAssertions,
+      screenshots: typewriterLifecycle.screenshots,
+    },
     longMessageAudio: {
       passed: longMessageAudio.passed,
       assertions: longMessageAudio.assertions,
@@ -2815,6 +3889,11 @@ async function run() {
     },
     scaleToastPlacement: { passed: scaleToastPlacement.passed, assertions: scaleToastPlacement.assertions, screenshots: scaleToastPlacement.screenshots },
     externalMessagePriority,
+    longMessageAutoExpand: {
+      passed: longMessageAutoExpand.passed,
+      assertions: longMessageAutoExpand.assertions,
+      screenshots: longMessageAutoExpand.screenshots,
+    },
     longMessageReader: {
       passed: longMessageReader.passed,
       expectedCharacterCount: longMessageReader.expectedCharacterCount,
@@ -2829,6 +3908,7 @@ async function run() {
         screenshots: theme.screenshots,
       })),
     },
+    detachedLongMessageReader,
     scrollBottomStability: {
       passed: scrollBottomStability.passed,
       themes: scrollBottomStability.themes.map(theme => ({

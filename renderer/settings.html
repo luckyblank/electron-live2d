@@ -475,7 +475,13 @@
           <section id="bubble-style-customizer" class="bubble-style-customizer" aria-labelledby="bubble-style-title">
             <div class="bubble-style-selection-panel">
               <div class="bubble-customizer-heading">
-                <span class="bubble-heading-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 5.5h16v11H9l-5 3z"/><path d="M8 10h8M8 13h5"/></svg></span>
+                <span class="bubble-heading-icon ai-heading-icon" data-ai-heading-icon="bubble-style" aria-hidden="true">
+                  <svg viewBox="0 0 24 24">
+                    <path d="M8 5h9a3 3 0 0 1 3 3v4.5a3 3 0 0 1-3 3h-4l-3.5 2.7v-2.7H8a3 3 0 0 1-3-3V8a3 3 0 0 1 3-3Z"/>
+                    <path class="icon-secondary-stroke" d="M5 8.4a2.8 2.8 0 0 0-2 2.7v3.1A2.8 2.8 0 0 0 5.8 17H7v2.2L10 17"/>
+                    <path d="M11.5 9.3h4.8M11.5 12.2h3.2"/>
+                  </svg>
+                </span>
                 <h3 id="bubble-style-title">气泡样式</h3>
                 <p id="bubble-style-description">选择聊天时伙伴说话的气泡样式，让对话更有个性。</p>
                 <span class="bubble-carousel-hint" aria-hidden="true">← 左右滑动查看更多气泡样式 →</span>
@@ -495,7 +501,13 @@
 
             <div class="bubble-style-preview-panel">
               <div class="bubble-preview-heading">
-                <span class="bubble-preview-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M2.8 12s3.3-5.3 9.2-5.3 9.2 5.3 9.2 5.3-3.3 5.3-9.2 5.3S2.8 12 2.8 12Z"/><circle cx="12" cy="12" r="2.4"/></svg></span>
+                <span class="bubble-preview-icon ai-heading-icon" data-ai-heading-icon="style-preview" aria-hidden="true">
+                  <svg viewBox="0 0 24 24">
+                    <path d="M2.8 12s3.3-5.3 9.2-5.3 9.2 5.3 9.2 5.3-3.3 5.3-9.2 5.3S2.8 12 2.8 12Z"/>
+                    <circle class="icon-accent-fill" cx="12" cy="12" r="2.15"/>
+                    <path class="icon-glint" d="m17.6 5.2.55 1.15 1.15.55-1.15.55-.55 1.15-.55-1.15-1.15-.55 1.15-.55Z"/>
+                  </svg>
+                </span>
                 <h3>样式预览</h3>
                 <p>这里是实际聊天时的显示效果预览。</p>
               </div>
@@ -507,51 +519,133 @@
               </div>
             </div>
           </section>
+
+          <section class="long-message-display-settings" aria-labelledby="long-message-display-title">
+            <div class="long-message-display-heading">
+              <span class="long-message-display-icon ai-heading-icon" data-ai-heading-icon="long-message-reader" aria-hidden="true">
+                <svg viewBox="0 0 24 24">
+                  <path d="M6 3.5h7.5L18 8v12.5H6z"/>
+                  <path class="icon-secondary-stroke" d="M13.5 3.5V8H18"/>
+                  <path d="M9 11h6M9 14h6M9 17h4"/>
+                </svg>
+              </span>
+              <span>
+                <h3 id="long-message-display-title">长消息展示</h3>
+                <p>分别控制应用回复与外部消息的完整阅读器。</p>
+              </span>
+            </div>
+            <div class="long-message-display-list">
+              <label class="setting-row long-message-threshold-row" for="long-message-character-threshold">
+                <span class="setting-row-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 5h14v14H5z"/><path d="M8 9h8M8 12h5M8 15h7"/></svg></span>
+                <span class="setting-copy"><strong>长消息字符数阈值</strong><small id="long-message-character-threshold-hint">不含空格与换行；默认 45 字，为四种气泡的最小安全容量。</small></span>
+                <span class="long-message-threshold-control">
+                  <input id="long-message-character-threshold" type="number" min="10" max="500" step="1" inputmode="numeric" value="45" aria-describedby="long-message-character-threshold-hint">
+                  <span aria-hidden="true">字</span>
+                </span>
+              </label>
+              <label class="setting-row">
+                <span class="setting-row-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="15" rx="2"/><path d="M7 8h10M7 12h7M7 16h4"/></svg></span>
+                <span class="setting-copy"><strong>APP 长消息自动展开</strong><small>聊天记录收起时，超过阈值的最终回复自动打开完整消息。</small></span>
+                <input class="switch-input" type="checkbox" data-setting="appLongMessageAutoExpand">
+                <span class="switch-track" aria-hidden="true"></span>
+              </label>
+              <label class="setting-row">
+                <span class="setting-row-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 8.5a4.5 4.5 0 0 1 8 0M6 5.5a8 8 0 0 1 12 0"/><rect x="4" y="11" width="16" height="9" rx="2"/><path d="M8 15h4m2 0h2"/></svg></span>
+                <span class="setting-copy"><strong>外部长消息自动展开</strong><small>外部消息的最终内容超过阈值时自动打开完整消息。</small></span>
+                <input class="switch-input" type="checkbox" data-setting="externalLongMessageAutoExpand">
+                <span class="switch-track" aria-hidden="true"></span>
+              </label>
+            </div>
+          </section>
+
+          <section class="long-message-display-settings message-output-settings" aria-labelledby="message-output-title">
+            <div class="long-message-display-heading">
+              <span class="long-message-display-icon ai-heading-icon" data-ai-heading-icon="message-output" aria-hidden="true">
+                <svg viewBox="0 0 24 24">
+                  <circle class="icon-accent-fill" cx="4.8" cy="12" r="1.45"/>
+                  <path d="M6.8 12h3.4c3.1 0 2.7-5 5.9-5h3.1"/>
+                  <path d="M10.2 12c3.1 0 2.7 5 5.9 5h3.1"/>
+                  <path d="m17.4 5.2 1.9 1.8-1.9 1.8M17.4 15.2l1.9 1.8-1.9 1.8"/>
+                </svg>
+              </span>
+              <span>
+                <h3 id="message-output-title">消息输出方式</h3>
+                <p>分别控制 APP 内部回复与外部输入消息是否逐字流式显示。</p>
+              </span>
+            </div>
+            <div class="long-message-display-list message-output-list">
+              <label class="setting-row">
+                <span class="setting-row-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="15" rx="2"/><path d="M7 8h4M7 12h10M7 16h7"/></svg></span>
+                <span class="setting-copy"><strong>APP 内部回复消息</strong><small>开启后，APP 内 AI 的最终回复将在气泡中逐字流式显示。</small></span>
+                <input class="switch-input" type="checkbox" data-setting="appMessageStreamingOutput">
+                <span class="switch-track" aria-hidden="true"></span>
+              </label>
+              <label class="setting-row">
+                <span class="setting-row-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 8.5a4.5 4.5 0 0 1 8 0M6 5.5a8 8 0 0 1 12 0"/><rect x="4" y="11" width="16" height="9" rx="2"/><path d="M8 15h3M13 15h3"/></svg></span>
+                <span class="setting-copy"><strong>外部输入消息</strong><small>开启后，外部消息的最终内容将在气泡中逐字流式显示。</small></span>
+                <input class="switch-input" type="checkbox" data-setting="externalMessageStreamingOutput">
+                <span class="switch-track" aria-hidden="true"></span>
+              </label>
+            </div>
+          </section>
         </section>
 
-        <section class="ai-settings-block" aria-labelledby="ai-model-settings-title">
-          <div class="ai-settings-block-heading">
+        <section class="ai-settings-block ai-model-settings-card" aria-labelledby="ai-model-settings-title">
+          <div class="ai-settings-block-heading ai-model-settings-heading">
             <span class="block-heading-icon model-heading-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m12 2.7 8 4.5v9.1l-8 4.5-8-4.5V7.2z"/><path d="m4.3 7.4 7.7 4.4 7.7-4.4M12 11.8v8.7"/></svg></span>
-            <span class="eyebrow">MODEL</span>
             <h2 id="ai-model-settings-title">模型设置</h2>
+            <p class="ai-model-settings-description">
+              <span class="glass-only">选择合适的模型，让伙伴更聪明地陪伴你 ♡</span>
+              <span class="healing-only">配置 AI 模型，支持文本对话与语音合成，让伙伴更聪明地陪伴你。</span>
+            </p>
+            <span class="ai-model-settings-doodle healing-only" aria-hidden="true">更智能的陪伴<br>从这里开始～♡</span>
           </div>
 
           <div class="ai-capability-group chat-model-group">
             <div class="ai-capability-heading">
-              <div>
-                <span class="eyebrow">TEXT</span>
+              <div class="ai-capability-title">
+                <span class="model-category-icon text-model-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24"><path d="M4 5.5h13v10H9l-4 3v-3H4z"/><path d="M9 8.5h8v7H9l-2.5 2v-2"/><path d="M7 9h6M7 12h4"/></svg>
+                </span>
                 <h2>文本模型</h2>
               </div>
+              <p class="ai-capability-description">
+                <span class="glass-only">用于对话、聊天和文本生成等任务</span>
+                <span class="healing-only">用于处理用户的文字输入，生成自然的回复内容。</span>
+              </p>
               <span id="ai-chat-active" class="ai-capability-state">未启用</span>
             </div>
-            <p>负责理解消息和生成回复；DeepSeek 与 GLM 同时安装时也只会启用其中一个。</p>
             <div id="ai-chat-plugin-list" class="ai-plugin-list" aria-label="文本模型插件"></div>
           </div>
 
           <div class="ai-capability-group voice-model-group">
             <div class="ai-capability-heading">
-              <div>
-                <span class="voice-heading-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 14v4M8 9v10M12 4v16M16 8v11M20 12v6"/></svg></span>
-                <span class="eyebrow">VOICE</span>
+              <div class="ai-capability-title">
+                <span class="model-category-icon voice-heading-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 14v4M8 9v10M12 4v16M16 8v11M20 12v6"/></svg></span>
                 <h2>语音模型</h2>
               </div>
+              <p class="ai-capability-description">
+                <span class="glass-only">用于语音合成、角色配音和语音交互</span>
+                <span class="healing-only">用于将回复内容转换为语音，驱动 Live2D 角色进行语音对话。</span>
+              </p>
               <span id="ai-tts-active" class="ai-capability-state">未启用</span>
             </div>
-            <p>把回复合成为语音并驱动 Live2D 口型；生成的音频会自动保存到外部数据目录。</p>
             <div id="ai-tts-plugin-list" class="ai-plugin-list" aria-label="语音模型插件"></div>
           </div>
+        </section>
 
-          <hr class="ai-section-divider">
-
+        <section class="ai-settings-block ai-extensions-block" aria-labelledby="ai-extensions-title">
           <div class="plugin-extension-heading">
             <svg class="plugin-heading-puzzle glass-only" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h4v4a2 2 0 1 0 4 0V3h4v7h-4a2 2 0 1 0 0 4h4v7h-7v-4a2 2 0 1 0-4 0v4H3v-7h4a2 2 0 1 0 0-4H3V3z"/></svg>
-            <svg class="plugin-heading-folder healing-only" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7.5h7l2-2h9v14H3z"/><path d="M12 11v5m-2.5-2.5h5"/></svg>
-            <strong class="glass-only">插件与扩展</strong><strong class="healing-only">更多插件</strong>
+            <svg class="plugin-heading-puzzle healing-only" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h4v4a2 2 0 1 0 4 0V3h4v7h-4a2 2 0 1 0 0 4h4v7h-7v-4a2 2 0 1 0-4 0v4H3v-7h4a2 2 0 1 0 0-4H3V3z"/></svg>
+            <h2 id="ai-extensions-title">插件与扩展</h2>
           </div>
           <div class="models-hint plugin-folder-hint">
             <span class="setting-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3 7.5h7l2-2h9v14H3z"/><path d="M12 11v5m-2.5-2.5h5"/></svg></span>
-            <div class="models-hint-copy"><strong class="models-title"><span class="glass-only">更多插件：把插件文件夹放进下面的 <code>plugins</code> 文件夹</span><span class="healing-only">更多插件</span></strong><p>把插件文件夹放进下面的 <code>plugins</code> 文件夹（卸载或更新程序都不会删除），然后点击托盘「刷新模型列表」。</p></div>
-            <span class="plugin-folder-doodle" aria-hidden="true">发现更多<br>有趣的伙伴吧！♡</span>
+            <div class="models-hint-copy">
+              <strong class="models-title">更多插件：把插件文件夹放<span class="glass-only">进</span><span class="healing-only">在</span>下面的 <code>plugins</code> 文件夹</strong>
+              <p>把插件文件夹放<span class="glass-only">进</span><span class="healing-only">在</span>下面的 <code>plugins</code> 文件夹（卸载或更新程序都不会删除），然后点击托盘「刷新模型列表」。</p>
+            </div>
             <div class="models-hint-row">
               <span id="plugins-folder-path" class="models-folder-path"></span>
               <button id="open-plugins-folder" class="text-button" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7.5h7l2-2h9v14H3z"/></svg><span>打开插件文件夹</span></button>
@@ -679,7 +773,7 @@
           <label class="setting-row">
             <span class="setting-row-icon system-bg-icon system-bg-icon-screen" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="15" rx="2"/><path d="m6 16 4-4 3 3 2-2 3 3"/><circle cx="16.5" cy="8.5" r="1.5"/></svg></span>
             <span class="setting-row-icon system-bg-icon system-bg-icon-cat" aria-hidden="true"><svg viewBox="0 0 30 24"><path d="M6 8 4 2l6 4c1.5-.6 3.2-.9 5-.9s3.5.3 5 .9l6-4-2 6c1.6 1.4 2.6 3.2 2.6 5.2C26.6 18 21.4 21.6 15 21.6S3.4 18 3.4 13.2C3.4 11.2 4.4 9.4 6 8Z"/><path d="M10 14h.1M20 14h.1M12 17c2 1.3 4 1.3 6 0"/></svg></span>
-            <span class="setting-copy"><strong>宠物动态背景</strong><small>在设置窗口背景中显示当前角色，并同步桌面动作。</small></span>
+            <span class="setting-copy"><strong>宠物动态背景</strong><small>默认显示静态宠物；开启会占用高 CPU。</small></span>
             <input class="switch-input" type="checkbox" data-setting="settingsPetBackground">
             <span class="switch-track" aria-hidden="true"></span>
           </label>

@@ -27,6 +27,10 @@
     PREVIEW_ACTION_LABELS: previewActionLabels,
     PREVIEW_EXPRESSION_LABELS: previewExpressionLabels,
   } = require('../config/model-reactions')
+  const {
+    normalizeLongMessageCharacterThreshold,
+    isLongMessageText,
+  } = require('../config/long-message')
   const petViewport = document.getElementById('pet-viewport')
   const stage = document.getElementById('pet-stage')
   const effectsCanvas = document.getElementById('fx-canvas')
@@ -62,12 +66,15 @@
   const MODEL_SCALE_MAX = 2
   const MODEL_SCALE_STEP = 0.05
   const WHEEL_SCALE_DEBOUNCE_MS = 120
-  const SETTINGS_BACKGROUND_FRAME_INTERVAL = 1000 / 15
+  const SETTINGS_BACKGROUND_FRAME_INTERVAL = 1000 / 4
+  const SETTINGS_BACKGROUND_ACK_TIMEOUT = 1500
   const SETTINGS_BACKGROUND_WIDTH = 240
   const SETTINGS_BACKGROUND_HEIGHT = 360
   const PET_VIEWPORT_WIDTH = 400
   const PET_VIEWPORT_HEIGHT = 600
   const LONG_MESSAGE_READER_WIDTH = 380
+  const TYPEWRITER_CHARACTER_INTERVAL_MS = 36
+  const TYPEWRITER_COMPLETE_HOLD_MS = 2000
   const interactionCopy = {
     greet: ['你好呀～', '今天也一起加油', '见到你真好'],
     head: ['好舒服～', '再摸一下嘛', '嘿嘿，谢谢你'],
@@ -142,6 +149,9 @@
     settingsBackgroundCaptureActive: false,
     settingsBackgroundCapturePending: false,
     settingsBackgroundLastFrameAt: 0,
+    settingsBackgroundFrameSequence: 0,
+    settingsBackgroundAwaitingAck: 0,
+    settingsBackgroundAckTimer: null,
     settingsBackgroundCanvas: null,
     settingsBackgroundProbeCanvas: null,
     settingsBackgroundErrorReported: false,
@@ -153,6 +163,9 @@
   let bubbleTimer = null
   let bubbleLeaseSequence = 0
   let activeBubbleLease = null
+  let typewriterSequence = 0
+  let typewriterTimer = null
+  let activeTypewriter = null
   let pendingGreetingBubble = null
   let chatBusy = false
   let chatCollapsed = true
@@ -174,6 +187,7 @@
   let wheelScaleModelId = null
   let petWindowLayout = {
     expanded: false,
+    detached: false,
     side: 'none',
     mode: 'collapsed',
     readerWidth: 0,
@@ -189,10 +203,12 @@
   let longMessageState = {
     open: false,
     text: '',
+    visibleText: '',
     label: '',
     source: '',
     lease: null,
     speech: null,
+    typing: false,
   }
   let longMessageRequestSequence = 0
   let longMessageLayoutQueue = Promise.resolve()
@@ -240,6 +256,7 @@
     if (!layout || typeof layout !== 'object') return false
     const next = {
       expanded: Boolean(layout.expanded),
+      detached: Boolean(layout.detached),
       side: ['left', 'right', 'overlay'].includes(layout.side) ? layout.side : 'none',
       mode: ['left', 'right', 'overlay'].includes(layout.mode) ? layout.mode : 'collapsed',
       readerWidth: Number(layout.readerWidth) || 0,
@@ -257,7 +274,7 @@
     // move the fixed pet stage back to a stale side after a quick collapse.
     if (next.revision < petWindowLayout.revision) return false
     const layoutKeys = [
-      'expanded', 'side', 'mode', 'readerWidth', 'gap', 'stageOffsetX',
+      'expanded', 'detached', 'side', 'mode', 'readerWidth', 'gap', 'stageOffsetX',
       'readerOffsetX', 'outerWidth', 'outerHeight', 'stageWidth', 'stageHeight', 'revision',
     ]
     if (layoutKeys.every(key => next[key] === petWindowLayout[key])) return false
@@ -277,9 +294,8 @@
   }
 
   // Read the host geometry synchronously during the parser-blocking startup
-  // script, before Chromium can present its first frame. Stable shaped hosts
-  // start wider than the visible pet stage; applying their fixed stage offset
-  // here prevents even the initial frame from being painted in the left gutter.
+  // script, before Chromium can present its first frame. This initializes both
+  // compact dynamic hosts and any platform that still uses a fixed stage gutter.
   if (typeof window.petAPI.previewLongMessageLayout === 'function') {
     try {
       applyPetWindowLayout(window.petAPI.previewLongMessageLayout({
@@ -1315,9 +1331,27 @@
     return false
   }
 
+  function releaseSettingsBackgroundFrame(sequence = 0) {
+    if (sequence && state.settingsBackgroundAwaitingAck !== sequence) return
+    if (state.settingsBackgroundAckTimer) clearTimeout(state.settingsBackgroundAckTimer)
+    state.settingsBackgroundAckTimer = null
+    state.settingsBackgroundAwaitingAck = 0
+  }
+
+  function waitForSettingsBackgroundFrameAck(sequence) {
+    releaseSettingsBackgroundFrame()
+    state.settingsBackgroundAwaitingAck = sequence
+    state.settingsBackgroundAckTimer = setTimeout(() => {
+      if (state.settingsBackgroundAwaitingAck !== sequence) return
+      state.settingsBackgroundAckTimer = null
+      state.settingsBackgroundAwaitingAck = 0
+    }, SETTINGS_BACKGROUND_ACK_TIMEOUT)
+  }
+
   async function captureSettingsPetBackground(timestamp) {
     if (
       !state.settingsBackgroundCaptureActive || state.settingsBackgroundCapturePending ||
+      state.settingsBackgroundAwaitingAck ||
       !state.liveCanvas || !state.model || !state.model.loaded || state.loading || state.dragging ||
       timestamp - state.settingsBackgroundLastFrameAt < SETTINGS_BACKGROUND_FRAME_INTERVAL
     ) return
@@ -1366,7 +1400,10 @@
         sourceCanvas === state.liveCanvas && sourceModel === state.model &&
         sourceMeta && sourceMeta === state.modelMeta
       ) {
+        const sequence = ++state.settingsBackgroundFrameSequence
+        waitForSettingsBackgroundFrameAck(sequence)
         window.petAPI.sendSettingsPetBackgroundFrame({
+          sequence,
           modelId: sourceMeta.id,
           format: sourceMeta.format,
           frame,
@@ -2167,6 +2204,180 @@
     return 10000
   }
 
+  function typewriterCharacterInterval() {
+    const qaInterval = Number(window.__PET_QA_TYPEWRITER_INTERVAL_MS)
+    return Number.isFinite(qaInterval) && qaInterval > 0
+      ? Math.max(1, qaInterval)
+      : TYPEWRITER_CHARACTER_INTERVAL_MS
+  }
+
+  function typewriterDuration(text, speech = null) {
+    const characterCount = Array.from(String(text || '')).length
+    if (characterCount <= 1) return 0
+    if (speech && Number.isFinite(speech.durationMs) && speech.durationMs > 0) {
+      return Math.max(1, Math.round(speech.durationMs))
+    }
+    return Math.max(1, Math.round((characterCount - 1) * typewriterCharacterInterval()))
+  }
+
+  function isMessageStreamingOutputEnabled(source) {
+    if (!state.preferences) return false
+    return source === 'external'
+      ? state.preferences.externalMessageStreamingOutput === true
+      : state.preferences.appMessageStreamingOutput === true
+  }
+
+  function cancelTypewriter(lease = null) {
+    if (lease != null && (!activeTypewriter || activeTypewriter.lease !== lease)) return false
+    typewriterSequence += 1
+    if (typewriterTimer) clearTimeout(typewriterTimer)
+    typewriterTimer = null
+    activeTypewriter = null
+    return true
+  }
+
+  function applyTypewriterText(typewriter, visibleText) {
+    if (!typewriter || typewriter.lease !== activeBubbleLease) return false
+    interactionBubble.fullMessage = typewriter.fullText
+    interactionBubble.visibleMessage = visibleText
+    if (typeof interactionBubble.measureOverflow === 'function') interactionBubble.measureOverflow()
+    if (longMessageState.open && longMessageState.lease === typewriter.lease) {
+      syncLongMessageContent(
+        visibleText,
+        interactionBubble.label,
+        interactionBubble.source,
+        typewriter.fullText
+      )
+    } else if (interactionBubble.classList.contains('is-visible')) {
+      layoutInteractionBubble()
+    }
+    return true
+  }
+
+  function scheduleTypewriterDismissal(typewriter = activeTypewriter) {
+    if (
+      !typewriter || !typewriter.complete || typewriter.lease !== activeBubbleLease ||
+      (longMessageState.open && longMessageState.lease === typewriter.lease)
+    ) return false
+    if (typewriter.speech && !typewriter.speechCompleted) return false
+    if (typewriter.source === 'external') {
+      const messageId = typewriter.messageId || externalPriorityMessageId
+      if (!messageId || messageId !== externalPriorityMessageId) return false
+      scheduleExternalPriorityRelease(messageId, typewriter.fullText, TYPEWRITER_COMPLETE_HOLD_MS)
+      return true
+    }
+    if (bubbleTimer) clearTimeout(bubbleTimer)
+    bubbleTimer = setTimeout(() => {
+      bubbleTimer = null
+      dismissBubble(typewriter.lease)
+    }, TYPEWRITER_COMPLETE_HOLD_MS)
+    return true
+  }
+
+  function renderTypewriterFrame(sequence) {
+    const typewriter = activeTypewriter
+    if (!typewriter || typewriter.sequence !== sequence || typewriter.lease !== activeBubbleLease) return
+    const elapsed = Math.max(0, performance.now() - typewriter.startedAt)
+    const totalCharacters = typewriter.characters.length
+    const visibleCount = typewriter.durationMs <= 0 || elapsed >= typewriter.durationMs
+      ? totalCharacters
+      : Math.max(1, Math.min(
+          totalCharacters,
+          1 + Math.floor(elapsed / typewriter.durationMs * (totalCharacters - 1))
+        ))
+    if (visibleCount !== typewriter.visibleCount) {
+      typewriter.visibleCount = visibleCount
+      applyTypewriterText(typewriter, typewriter.characters.slice(0, visibleCount).join(''))
+    }
+    if (visibleCount >= totalCharacters) {
+      typewriter.complete = true
+      typewriterTimer = null
+      scheduleTypewriterDismissal(typewriter)
+      return
+    }
+    const nextVisibleAt = typewriter.startedAt
+      + typewriter.durationMs * visibleCount / Math.max(1, totalCharacters - 1)
+    typewriterTimer = setTimeout(
+      () => renderTypewriterFrame(sequence),
+      Math.max(4, Math.min(80, nextVisibleAt - performance.now()))
+    )
+  }
+
+  function startTypewriter(lease, text, options = {}) {
+    const fullText = String(text || '').trim()
+    if (!fullText || lease == null || lease !== activeBubbleLease) return false
+    const speech = normalizePlayableSpeech(options.speech, options.source)
+      || bubbleSpeechForLease(lease)
+    if (
+      activeTypewriter && activeTypewriter.lease === lease &&
+      activeTypewriter.fullText === fullText
+    ) {
+      if (speech) {
+        activeTypewriter.speech = speech
+        setBubbleSpeech(lease, speech, options.source)
+      }
+      return true
+    }
+
+    cancelTypewriter()
+    if (bubbleTimer) clearTimeout(bubbleTimer)
+    bubbleTimer = null
+    if (externalPriorityTimer) clearTimeout(externalPriorityTimer)
+    externalPriorityTimer = null
+    if (speech) setBubbleSpeech(lease, speech, options.source)
+
+    const characters = Array.from(fullText)
+    const streaming = options.streaming !== false
+    const firstFrameText = streaming ? (characters[0] || '') : fullText
+    interactionBubble.fullMessage = fullText
+    interactionBubble.visibleMessage = firstFrameText
+    syncBubbleChrome()
+    if (typeof interactionBubble.measureOverflow === 'function') interactionBubble.measureOverflow()
+
+    const autoExpandSource = options.autoExpandSource === 'external'
+      ? 'external'
+      : options.autoExpandSource === 'ai' ? 'ai' : ''
+    const shouldOpenReader = autoExpandSource && shouldAutoOpenLongMessage(autoExpandSource)
+      && messageExceedsLongMessageThreshold(fullText)
+    if (longMessageState.open && longMessageState.lease === lease) {
+      syncLongMessageContent(firstFrameText, interactionBubble.label, interactionBubble.source, fullText)
+      longMessageBody.scrollTop = 0
+    } else if (shouldOpenReader) {
+      interactionBubble.classList.remove('is-visible')
+      void openLongMessageReader({
+        text: firstFrameText,
+        fullText,
+        label: interactionBubble.label,
+        source: autoExpandSource,
+      }, { focus: false })
+    } else {
+      interactionBubble.classList.add('is-visible')
+      layoutInteractionBubble()
+    }
+
+    const sequence = ++typewriterSequence
+    activeTypewriter = {
+      sequence,
+      lease,
+      source: options.source === 'external' ? 'external' : 'ai',
+      messageId: typeof options.messageId === 'string' ? options.messageId : '',
+      fullText,
+      characters,
+      visibleCount: streaming ? (firstFrameText ? 1 : 0) : characters.length,
+      durationMs: streaming ? typewriterDuration(fullText, speech) : 0,
+      startedAt: performance.now(),
+      speech,
+      speechCompleted: !speech,
+      complete: !streaming || characters.length <= 1,
+    }
+    if (activeTypewriter.complete) {
+      scheduleTypewriterDismissal(activeTypewriter)
+    } else {
+      renderTypewriterFrame(sequence)
+    }
+    return true
+  }
+
   function currentBubbleTheme() {
     return document.documentElement.dataset.settingsTheme === 'healing' ? 'healing' : 'glass'
   }
@@ -2179,6 +2390,16 @@
     return ['glass', 'sweet', 'pixel', 'sci-fi'].includes(selected) ? selected : 'glass'
   }
 
+  function currentLongMessageCharacterThreshold() {
+    return normalizeLongMessageCharacterThreshold(
+      state.preferences && state.preferences.longMessageCharacterThreshold
+    )
+  }
+
+  function messageExceedsLongMessageThreshold(text) {
+    return isLongMessageText(text, currentLongMessageCharacterThreshold())
+  }
+
   function syncBubbleChrome() {
     const meta = currentModelMeta()
     const nickname = meta && typeof meta.nickname === 'string' ? meta.nickname.trim() : ''
@@ -2187,6 +2408,10 @@
     const theme = currentBubbleTheme()
     interactionBubble.setAttribute('theme', theme)
     interactionBubble.styleName = currentBubbleStyle()
+    interactionBubble.setAttribute(
+      'long-message-threshold',
+      String(currentLongMessageCharacterThreshold())
+    )
     // Bubble identity is model-owned, not theme-owned: a saved nickname wins;
     // otherwise show the model's original role name.
     const identity = nickname || modelName || displayName || '伙伴'
@@ -2197,6 +2422,7 @@
       longMessageTitle.textContent = interactionBubble.label
       syncLongMessageSource(interactionBubble.source)
       longMessageReader.setAttribute('aria-label', `${interactionBubble.label}的完整消息`)
+      publishLongMessageReaderState()
     }
   }
 
@@ -2252,6 +2478,9 @@
         ? speech.mimeType.trim()
         : 'audio/wav',
       source: source === 'external' ? 'external' : 'ai',
+      durationMs: Number.isFinite(speech && speech.durationMs) && speech.durationMs > 0
+        ? Math.round(speech.durationMs)
+        : wavDurationMs(base64ToArrayBuffer(audioBase64)),
     }
     if (typeof speech === 'object') normalizedSpeechAssets.set(speech, descriptor)
     normalizedSpeechAssets.set(descriptor, descriptor)
@@ -2274,6 +2503,22 @@
     button.title = label
   }
 
+  function publishLongMessageReaderState() {
+    if (typeof window.petAPI.updateLongMessageReaderState !== 'function') return
+    const speech = longMessageState.speech
+    window.petAPI.updateLongMessageReaderState({
+      open: Boolean(longMessageState.open),
+      text: longMessageState.visibleText,
+      fullText: longMessageState.text,
+      label: longMessageState.label || '伙伴',
+      source: longMessageState.source,
+      theme: currentBubbleTheme(),
+      hasVoice: Boolean(speech),
+      playing: Boolean(speech && activeSpeechAssetId && speech.id === activeSpeechAssetId),
+      typing: Boolean(longMessageState.typing),
+    })
+  }
+
   function syncSpeechControlState() {
     document.querySelectorAll('.ai-message-audio[data-speech-asset-id]').forEach(button => {
       setSpeechButtonPlaying(button, Boolean(
@@ -2287,6 +2532,7 @@
     setSpeechButtonPlaying(longMessageAudio, Boolean(
       speech && activeSpeechAssetId && speech.id === activeSpeechAssetId
     ))
+    publishLongMessageReaderState()
   }
 
   function syncLongMessageSpeech(speech = longMessageState.speech) {
@@ -2327,16 +2573,32 @@
     else delete longMessageReader.dataset.source
   }
 
+  function setLongMessageStatusText(value) {
+    const statusTextNode = Array.from(longMessageStatus.childNodes)
+      .find(node => node.nodeType === Node.TEXT_NODE)
+    if (statusTextNode) statusTextNode.nodeValue = value
+    else longMessageStatus.appendChild(document.createTextNode(value))
+  }
+
   function syncLongMessageContent(
-    text = longMessageState.text,
+    visibleText = longMessageState.visibleText || longMessageState.text,
     label = longMessageState.label,
-    source = longMessageState.source
+    source = longMessageState.source,
+    fullText = longMessageState.text || visibleText
   ) {
-    const normalizedText = String(text || '').trim()
+    const normalizedText = String(fullText || '').trim()
+    const normalizedVisibleText = String(visibleText || '').trim()
     const normalizedLabel = String(label || interactionBubble.label || '伙伴').trim() || '伙伴'
+    const fullTextChanged = normalizedText !== longMessageState.text
     longMessageState.text = normalizedText
+    longMessageState.visibleText = normalizedVisibleText
+    longMessageState.typing = normalizedVisibleText !== normalizedText
     longMessageState.label = normalizedLabel
-    longMessageBody.textContent = normalizedText
+    longMessageBody.textContent = normalizedVisibleText
+    const scrollable = longMessageBody.scrollHeight > longMessageBody.clientHeight + 1
+    setLongMessageStatusText(longMessageState.typing
+      ? '文字展示中…'
+      : scrollable ? '可滚动查看全文' : '内容已完整显示')
     longMessageTitle.textContent = normalizedLabel
     longMessageSubtitle.textContent = '完整消息'
     syncLongMessageSource(source)
@@ -2345,7 +2607,7 @@
     longMessageBadge.setAttribute('aria-label', `长消息，共 ${characterCount} 字`)
     longMessageReader.setAttribute('aria-label', `${normalizedLabel}的完整消息`)
     syncLongMessageSpeech(longMessageState.speech)
-    resetLongMessageCopyFeedback()
+    if (fullTextChanged) resetLongMessageCopyFeedback()
     scheduleLongMessageMeasurement()
   }
 
@@ -2382,10 +2644,10 @@
     longMessageReader.classList.toggle('is-scrollable', scrollable)
     longMessageReader.classList.toggle('is-at-start', atStart)
     longMessageReader.classList.toggle('is-at-end', atEnd)
-    const statusText = scrollable ? '可滚动查看全文' : '内容已完整显示'
-    const statusTextNode = Array.from(longMessageStatus.childNodes).find(node => node.nodeType === Node.TEXT_NODE)
-    if (statusTextNode) statusTextNode.nodeValue = statusText
-    else longMessageStatus.appendChild(document.createTextNode(statusText))
+    const statusText = longMessageState.typing
+      ? '文字展示中…'
+      : scrollable ? '可滚动查看全文' : '内容已完整显示'
+    setLongMessageStatusText(statusText)
     reportLongMessageVisualBounds()
   }
 
@@ -2412,6 +2674,10 @@
 
   function resumeBubbleDismissalAfterReader(stateBeforeClose) {
     if (!stateBeforeClose || stateBeforeClose.lease == null || stateBeforeClose.lease !== activeBubbleLease) return
+    if (activeTypewriter && activeTypewriter.lease === stateBeforeClose.lease) {
+      scheduleTypewriterDismissal(activeTypewriter)
+      return
+    }
     if (externalPriorityMessageId) {
       scheduleExternalPriorityRelease(externalPriorityMessageId, stateBeforeClose.text)
       return
@@ -2458,12 +2724,22 @@
     })
   }
 
+  function shouldAutoOpenLongMessage(source) {
+    if (!state.preferences || state.preferences.interactionMode === 'locked') return false
+    if (source === 'external') return state.preferences.externalLongMessageAutoExpand === true
+    if (source !== 'ai' || state.preferences.appLongMessageAutoExpand !== true) return false
+    // The expanded APP chat already shows the complete reply. Its collapsed
+    // input bar does not, so the reader remains useful in that compact state.
+    return chatPanel.hidden || chatCollapsed
+  }
+
   async function createPetStageTransitionFrame(dataURL, stageOffsetX) {
     if (typeof dataURL !== 'string' || !dataURL.startsWith('data:image/')) return null
     const frame = new Image()
     frame.className = 'pet-stage-transition-frame'
     frame.alt = ''
     frame.setAttribute('aria-hidden', 'true')
+    frame.dataset.phase = 'prepared'
     frame.style.left = `${Math.round(Number(stageOffsetX) || 0)}px`
     frame.src = dataURL
     try { await frame.decode() } catch (error) { return null }
@@ -2475,9 +2751,9 @@
       && typeof window.petAPI.commitLongMessageLayout === 'function'
     if (!canCommitSynchronously) return window.petAPI.setLongMessageLayout(options)
 
-    // Stable shaped hosts keep the same stage offset for every layout and take
-    // the direct path below. The captured-frame branch remains only for a
-    // legacy dynamic host whose left-side layout changes BrowserWindow.x.
+    // Right-side expansion keeps the stage origin and takes the direct path.
+    // Left-side expansion/collapse changes BrowserWindow.x and uses a captured
+    // stage frame so the pet remains visually fixed across the native resize.
     const previousLayout = { ...petWindowLayout }
     const preview = window.petAPI.previewLongMessageLayout(options)
     if (!preview || typeof preview !== 'object') return window.petAPI.setLongMessageLayout(options)
@@ -2502,9 +2778,17 @@
       // exposes only the stage shape during this hand-off, so neither copy can
       // leak into the reader area.
       if (transitionActive) await waitForVisualFrames(2)
+      // Keep the capture at the same physical screen coordinate on both sides
+      // of the synchronous native resize. Moving it and committing bounds in
+      // one JS task prevents Chromium from painting the new local offset while
+      // it still belongs to the old window origin.
+      if (transitionFrame) {
+        transitionFrame.style.left = `${Math.round(Number(preview.stageOffsetX) || 0)}px`
+      }
       const committed = window.petAPI.commitLongMessageLayout(options)
       if (!committed || typeof committed !== 'object') throw new Error('窗口布局提交失败')
       applyPetWindowLayout(committed)
+      if (transitionFrame) transitionFrame.dataset.phase = 'committed'
       if (transitionActive) await waitForVisualFrames(2)
       return committed
     } catch (error) {
@@ -2527,10 +2811,13 @@
     return operation
   }
 
-  async function openLongMessageReader(detail = {}) {
-    const text = String(detail.text || interactionBubble.message || '').trim()
+  async function openLongMessageReader(detail = {}, options = {}) {
+    const text = String(
+      detail.fullText || interactionBubble.fullMessage || detail.text || interactionBubble.message || ''
+    ).trim()
+    const visibleText = String(detail.text || interactionBubble.message || text).trim()
     const lease = activeBubbleLease
-    if (!text || lease == null || !interactionBubble.expandable) return false
+    if (!text || lease == null || !messageExceedsLongMessageThreshold(text)) return false
 
     const requestSequence = ++longMessageRequestSequence
     if (bubbleTimer) clearTimeout(bubbleTimer)
@@ -2540,10 +2827,12 @@
     longMessageState = {
       open: true,
       text,
+      visibleText,
       label: String(detail.label || interactionBubble.label || '伙伴'),
       source: detail.source === 'external' || interactionBubble.source === 'external' ? 'external' : '',
       lease,
       speech: bubbleSpeechForLease(lease),
+      typing: visibleText !== text,
     }
     syncLongMessageContent()
     hideBubbleForLongMessageReader(lease)
@@ -2555,11 +2844,20 @@
       })
       if (requestSequence !== longMessageRequestSequence || lease !== activeBubbleLease || !longMessageState.open) return false
       applyPetWindowLayout(layout)
-      longMessageReader.hidden = false
+      const detached = Boolean(layout && layout.detached)
+      longMessageReader.hidden = detached
       // The host ignores the hidden bubble while the reader layout is open.
       // Clear its cached bounds only after the atomic window-layout commit so
       // Windows does not rebuild the collapsed shape immediately beforehand.
       window.petAPI.reportBubbleBounds(null)
+      if (detached) {
+        longMessageReader.classList.remove('is-visible', 'is-scrollable', 'is-at-start', 'is-at-end')
+        reportLongMessageVisualBounds()
+        publishLongMessageReaderState()
+        setDragAffordance(false)
+        markInteraction(60000)
+        return true
+      }
       // Chromium does not reliably apply scrollTop while an element is
       // display:none via [hidden]. Every newly opened message must begin at
       // the first line, including after the previous theme was scrolled down.
@@ -2568,7 +2866,7 @@
       requestAnimationFrame(() => {
         if (!longMessageState.open) return
         longMessageReader.classList.add('is-visible')
-        longMessageBody.focus({ preventScroll: true })
+        if (options.focus !== false) longMessageBody.focus({ preventScroll: true })
         scheduleLongMessageMeasurement()
       })
       setDragAffordance(false)
@@ -2600,7 +2898,16 @@
     ) || activeSpeechBubbleLease === stateBeforeClose.lease || activeSpeechButton === longMessageAudio
     if (readerOwnsActiveSpeech) stopCurrentSpeech()
     const requestSequence = ++longMessageRequestSequence
-    longMessageState = { open: false, text: '', label: '', source: '', lease: null, speech: null }
+    longMessageState = {
+      open: false,
+      text: '',
+      visibleText: '',
+      label: '',
+      source: '',
+      lease: null,
+      speech: null,
+      typing: false,
+    }
     syncLongMessageSource('')
     syncLongMessageSpeech(null)
     if (longMessageMeasureFrame != null) cancelAnimationFrame(longMessageMeasureFrame)
@@ -2616,7 +2923,7 @@
       // Paint the hidden state before changing the native origin/width. Without
       // this frame barrier Windows can reuse the previous card texture at its
       // collapsed offset and the reader visibly slides before disappearing.
-      if (!options.hostLayout) await waitForVisualFrames(2)
+      if (!options.hostLayout && !petWindowLayout.detached) await waitForVisualFrames(2)
       const layout = options.hostLayout || await requestLongMessageLayout({ open: false })
       if (requestSequence === longMessageRequestSequence) applyPetWindowLayout(layout)
     } catch (error) {
@@ -2648,24 +2955,47 @@
     }
     if (bubbleTimer) clearTimeout(bubbleTimer)
     bubbleTimer = null
+    cancelTypewriter(lease)
     activeBubbleLease = null
     if (activeBubbleSpeech && activeBubbleSpeech.lease === lease) activeBubbleSpeech = null
     interactionBubble.removeAttribute('aria-hidden')
     interactionBubble.classList.remove('is-visible')
+    interactionBubble.fullMessage = ''
     window.petAPI.reportBubbleBounds(null)
     return true
   }
 
   function updateBubbleText(lease, text, options = {}) {
     if (lease == null || lease !== activeBubbleLease || !text) return false
+    cancelTypewriter(lease)
     if (Object.prototype.hasOwnProperty.call(options, 'speech')) {
       setBubbleSpeech(lease, options.speech, options.source)
     }
+    interactionBubble.fullMessage = text
     interactionBubble.message = text
     syncBubbleChrome()
-    if (interactionBubble.classList.contains('is-visible')) layoutInteractionBubble()
+    if (typeof interactionBubble.measureOverflow === 'function') interactionBubble.measureOverflow()
     if (longMessageState.open && longMessageState.lease === lease) {
-      syncLongMessageContent(text, interactionBubble.label, interactionBubble.source)
+      syncLongMessageContent(text, interactionBubble.label, interactionBubble.source, text)
+    } else {
+      const autoExpandSource = options.autoExpandSource === 'external'
+        ? 'external'
+        : options.autoExpandSource === 'ai' ? 'ai' : ''
+      const shouldOpenReader = autoExpandSource && shouldAutoOpenLongMessage(autoExpandSource)
+        && messageExceedsLongMessageThreshold(text)
+      if (shouldOpenReader) {
+        // Decide and switch surfaces synchronously. Waiting for a later frame
+        // would paint the complete long reply in the bubble before the reader
+        // opens, producing a visible one-frame flash.
+        interactionBubble.classList.remove('is-visible')
+        void openLongMessageReader({
+          text,
+          label: interactionBubble.label,
+          source: autoExpandSource,
+        }, { focus: false })
+      } else if (interactionBubble.classList.contains('is-visible')) {
+        layoutInteractionBubble()
+      }
     }
     return true
   }
@@ -2688,13 +3018,57 @@
     const lease = ++bubbleLeaseSequence
     activeBubbleLease = lease
     setBubbleSpeech(lease, options.speech, source)
+    const ownsFinalMessageLifecycle = options.typewriter === true
+    const streaming = ownsFinalMessageLifecycle && isMessageStreamingOutputEnabled(source)
 
-    interactionBubble.message = text
+    interactionBubble.fullMessage = text
+    if (streaming) {
+      interactionBubble.visibleMessage = Array.from(String(text))[0] || ''
+    } else {
+      interactionBubble.message = text
+    }
     interactionBubble.classList.remove('is-left', 'is-right')
     interactionBubble.classList.add('is-top')
     syncBubbleChrome()
+    if (typeof interactionBubble.measureOverflow === 'function') interactionBubble.measureOverflow()
+    const autoExpandSource = options.autoExpandSource === 'external'
+      ? 'external'
+      : options.autoExpandSource === 'ai' ? 'ai' : ''
+    const shouldOpenReader = autoExpandSource && shouldAutoOpenLongMessage(autoExpandSource)
+      && messageExceedsLongMessageThreshold(text)
+    if (shouldOpenReader) {
+      // The bubble remains unpainted while the shared manual reader path opens.
+      // This also preserves the user's current focus because auto-open passes
+      // focus:false to the reader.
+      void openLongMessageReader({
+        text: interactionBubble.message,
+        fullText: text,
+        label: interactionBubble.label,
+        source: autoExpandSource,
+      }, { focus: false })
+      if (ownsFinalMessageLifecycle) {
+        startTypewriter(lease, text, {
+          source,
+          messageId: options.messageId,
+          speech: options.speech,
+          autoExpandSource,
+          streaming,
+        })
+      }
+      return lease
+    }
     interactionBubble.classList.add('is-visible')
     layoutInteractionBubble()
+    if (ownsFinalMessageLifecycle) {
+      startTypewriter(lease, text, {
+        source,
+        messageId: options.messageId,
+        speech: options.speech,
+        autoExpandSource,
+        streaming,
+      })
+      return lease
+    }
     if (options.hold) return lease
     const visibleDuration = Number.isFinite(duration) && duration > 0
       ? duration
@@ -3060,7 +3434,8 @@
     chatSend.disabled = chatBusy || chatInput.value.trim().length === 0
   }
 
-  function stopCurrentSpeech() {
+  function stopCurrentSpeech(options = {}) {
+    const stoppedSpeechId = activeSpeechAssetId
     speechSequence += 1
     activeSpeechButton = null
     activeSpeechAssetId = null
@@ -3068,8 +3443,13 @@
     if (activeSpeechBubbleLease != null) {
       const lease = activeSpeechBubbleLease
       activeSpeechBubbleLease = null
-      dismissBubble(lease)
+      if (options.dismissBubble !== false) dismissBubble(lease)
     }
+    if (
+      activeTypewriter && activeTypewriter.speech &&
+      activeTypewriter.speech.id === stoppedSpeechId
+    ) activeTypewriter.speechCompleted = true
+    if (activeTypewriter && activeTypewriter.complete) scheduleTypewriterDismissal(activeTypewriter)
     if (!state.model || typeof state.model.stopAudio !== 'function') return
     try { state.model.stopAudio() } catch (error) { /* 没有正在播放的语音 */ }
     // live2d-renderer stops the Web Audio source but intentionally retains the
@@ -3129,6 +3509,35 @@
     return bytes.buffer
   }
 
+  function wavDurationMs(buffer) {
+    try {
+      const view = new DataView(buffer)
+      const chunkName = offset => String.fromCharCode(
+        view.getUint8(offset), view.getUint8(offset + 1),
+        view.getUint8(offset + 2), view.getUint8(offset + 3)
+      )
+      if (view.byteLength < 44 || chunkName(0) !== 'RIFF' || chunkName(8) !== 'WAVE') return 0
+      let byteRate = 0
+      let dataSize = 0
+      let offset = 12
+      while (offset + 8 <= view.byteLength) {
+        const name = chunkName(offset)
+        const declaredSize = view.getUint32(offset + 4, true)
+        const availableSize = Math.max(0, Math.min(declaredSize, view.byteLength - offset - 8))
+        if (name === 'fmt ' && availableSize >= 12) byteRate = view.getUint32(offset + 16, true)
+        if (name === 'data') {
+          dataSize = availableSize
+          break
+        }
+        offset += 8 + declaredSize + (declaredSize % 2)
+      }
+      if (!byteRate || !dataSize) return 0
+      return Math.max(1, Math.round(dataSize / byteRate * 1000))
+    } catch (error) {
+      return 0
+    }
+  }
+
   async function synthesizeAssistantSpeech(text) {
     const ai = state.snapshot && state.snapshot.ai
     if (!ai || !ai.readyByCapability || !ai.readyByCapability.tts) return null
@@ -3169,6 +3578,9 @@
     const model = state.model
     activeSpeechButton = button
     activeSpeechAssetId = speech.id
+    if (activeTypewriter && activeTypewriter.speech === speech) {
+      activeTypewriter.speechCompleted = false
+    }
     if (button) button.dataset.speechAssetId = speech.id
     syncSpeechControlState()
     try {
@@ -3180,6 +3592,9 @@
         ? showBubble(bubbleText, null, options.source === 'external' ? 'external' : 'ai', {
             hold: true,
             speech,
+            autoExpandSource: options.autoExpandSource,
+            typewriter: options.typewriter === true,
+            messageId: options.messageId,
           })
         : null
       if (speechBubbleLease != null) activeSpeechBubbleLease = speechBubbleLease
@@ -3190,13 +3605,21 @@
         syncSpeechControlState()
         if (activeSpeechBubbleLease === speechBubbleLease) {
           activeSpeechBubbleLease = null
-          dismissBubble(speechBubbleLease)
+          if (activeTypewriter && activeTypewriter.lease === speechBubbleLease) {
+            scheduleTypewriterDismissal(activeTypewriter)
+          } else {
+            dismissBubble(speechBubbleLease)
+          }
+        }
+        if (activeTypewriter && activeTypewriter.speech === speech) {
+          activeTypewriter.speechCompleted = true
+          scheduleTypewriterDismissal(activeTypewriter)
         }
         markInteraction(1600)
         if (typeof options.onComplete === 'function') options.onComplete(true)
       }).catch(error => {
         if (requestId !== speechSequence) return
-        stopCurrentSpeech()
+        stopCurrentSpeech({ dismissBubble: false })
         console.warn('Speech playback failed:', error.message)
         showStatus(error.message || '语音播放失败', 'error', 3200)
         if (typeof options.onComplete === 'function') options.onComplete(false)
@@ -3204,7 +3627,7 @@
       return true
     } catch (error) {
       if (requestId !== speechSequence) return false
-      stopCurrentSpeech()
+      stopCurrentSpeech({ dismissBubble: false })
       console.warn('Speech playback failed:', error.message)
       showStatus(error.message || '语音播放失败', 'error', 3200)
       if (typeof options.onComplete === 'function') options.onComplete(false)
@@ -3224,66 +3647,45 @@
     return true
   }
 
-  function updateOpenLongMessageForIncoming(text, source, speech = null) {
-    const lease = longMessageState.open && longMessageState.lease === activeBubbleLease
-      ? activeBubbleLease
-      : null
-    if (lease == null) return null
-    if (bubbleTimer) clearTimeout(bubbleTimer)
-    bubbleTimer = null
-    if (!updateBubbleText(lease, text, { speech, source })) return null
-    longMessageBody.scrollTop = 0
-    scheduleLongMessageMeasurement()
-    return lease
-  }
-
-  function messageOverflowsCollapsedBubble(text, source = 'external') {
-    const normalizedText = String(text || '').trim()
-    if (!normalizedText) return false
-    const probe = document.createElement('pet-speech-bubble')
-    probe.className = 'interaction-bubble-widget'
-    probe.setAttribute('theme', interactionBubble.getAttribute('theme') || 'glass')
-    probe.setAttribute('style-name', interactionBubble.getAttribute('style-name') || 'glass')
-    probe.label = interactionBubble.label
-    probe.source = source
-    probe.message = normalizedText
-    probe.style.visibility = 'hidden'
-    probe.style.pointerEvents = 'none'
-    petViewport.appendChild(probe)
-    let overflowing = false
-    try {
-      overflowing = typeof probe.measureOverflow === 'function' && probe.measureOverflow()
-    } finally {
-      probe.remove()
-    }
-    return Boolean(overflowing)
-  }
-
   function shouldRetainReaderForExternalMessage(message) {
-    // A direct message's final display text is already known. A relay reply is
-    // unknown while it is thinking, so temporarily retain the reader and make
-    // the final long/short decision when the completed text arrives.
+    // Only a non-speech direct message already has its final text at receive
+    // time. Relay and TTS progress must stay in the compact bubble instead of
+    // replacing an open reader with “思考中/语音合成中”.
     return Boolean(
-      message && (
-        message.type === 'relay' ||
-        (message.type === 'direct' && messageOverflowsCollapsedBubble(message.content, 'external'))
-      )
+      message && message.type === 'direct' && !message.speak &&
+      messageExceedsLongMessageThreshold(message.content)
     )
   }
 
-  function updateExternalPriorityFinalSurface(text, speech = null) {
+  function updateExternalPriorityFinalSurface(text, speech = null, messageId = externalPriorityMessageId) {
     const readerOwnsLease = longMessageState.open
       && longMessageState.lease === externalPriorityBubbleLease
       && externalPriorityBubbleLease === activeBubbleLease
-    if (readerOwnsLease && !messageOverflowsCollapsedBubble(text, 'external')) {
+    if (readerOwnsLease && !messageExceedsLongMessageThreshold(text)) {
       const readerLease = externalPriorityBubbleLease
       dismissBubble(readerLease, true)
-      externalPriorityBubbleLease = showBubble(text, null, 'external', { hold: true, speech })
+      externalPriorityBubbleLease = showBubble(text, null, 'external', {
+        speech,
+        autoExpandSource: 'external',
+        typewriter: true,
+        messageId,
+      })
       return externalPriorityBubbleLease != null
     }
-    if (updateBubbleText(externalPriorityBubbleLease, text, { speech, source: 'external' })) return true
+    if (startTypewriter(externalPriorityBubbleLease, text, {
+      speech,
+      source: 'external',
+      autoExpandSource: 'external',
+      messageId,
+      streaming: isMessageStreamingOutputEnabled('external'),
+    })) return true
     if (activeBubbleLease != null) dismissBubble(activeBubbleLease)
-    externalPriorityBubbleLease = showBubble(text, null, 'external', { hold: true, speech })
+    externalPriorityBubbleLease = showBubble(text, null, 'external', {
+      speech,
+      autoExpandSource: 'external',
+      typewriter: true,
+      messageId,
+    })
     return externalPriorityBubbleLease != null
   }
 
@@ -3329,10 +3731,24 @@
     if (event.phase === 'received') {
       const retainedReaderLease = beginExternalPriority(message)
       const progressText = externalMessageProgressText(event, message)
+      const finalTextKnownAtReceive = message.type === 'direct' && !message.speak
       if (retainedReaderLease != null) {
-        externalPriorityBubbleLease = updateOpenLongMessageForIncoming(progressText, 'external')
+        externalPriorityBubbleLease = startTypewriter(retainedReaderLease, progressText, {
+          source: 'external',
+          autoExpandSource: 'external',
+          messageId: message.id,
+        }) ? retainedReaderLease : null
       } else {
-        externalPriorityBubbleLease = showBubble(progressText, null, 'external', { hold: true })
+        // A non-speech direct message already carries its final display text in
+        // the received/display phase. Run the overflow decision here instead
+        // of first painting the complete bubble and waiting for the nearly
+        // identical completed event to open the reader.
+        externalPriorityBubbleLease = showBubble(progressText, null, 'external', {
+          autoExpandSource: finalTextKnownAtReceive ? 'external' : undefined,
+          typewriter: finalTextKnownAtReceive,
+          messageId: message.id,
+          hold: !finalTextKnownAtReceive,
+        })
       }
       markInteraction(60000)
       return
@@ -3354,8 +3770,7 @@
     if (event.phase === 'failed') {
       if (externalPriorityMessageId !== message.id) return
       const errorText = event.error || '外部消息处理失败'
-      updateExternalPriorityFinalSurface(errorText)
-      scheduleExternalPriorityRelease(message.id, errorText)
+      updateExternalPriorityFinalSurface(errorText, null, message.id)
       return
     }
 
@@ -3363,35 +3778,27 @@
     if (externalPriorityMessageId !== message.id) return
     const result = event.result
     const speech = normalizePlayableSpeech(result.speech, 'external')
-    updateExternalPriorityFinalSurface(result.text, speech)
+    updateExternalPriorityFinalSurface(result.text, speech, message.id)
     runInteraction(emotionInteractions[result.emotion] || 'curious', null, { bubble: false })
     if (speech) {
-      scheduleExternalPriorityRelease(message.id, result.text, 65000)
       playGeneratedSpeech(speech, null, '', {
         ignoreMute: true,
         reuseBubble: true,
         source: 'external',
-        onComplete: () => releaseExternalPriority(message.id),
+        typewriter: true,
+        messageId: message.id,
       }).then(started => {
-        if (!started) scheduleExternalPriorityRelease(message.id, result.text)
+        if (!started && activeTypewriter && activeTypewriter.messageId === message.id) {
+          activeTypewriter.speechCompleted = true
+          scheduleTypewriterDismissal(activeTypewriter)
+        }
       })
-    } else {
-      scheduleExternalPriorityRelease(message.id, result.text)
     }
   }
 
   async function submitChat() {
     const text = chatInput.value.trim()
     if (!text || chatBusy) return
-    const retainedReaderLease = longMessageState.open && longMessageState.lease === activeBubbleLease
-      ? activeBubbleLease
-      : null
-    if (retainedReaderLease != null) {
-      if (externalPriorityTimer) clearTimeout(externalPriorityTimer)
-      externalPriorityTimer = null
-      externalPriorityMessageId = ''
-      externalPriorityBubbleLease = null
-    }
     const requestSequence = ++chatRequestSequence
     stopCurrentSpeech()
     chatBusy = true
@@ -3403,13 +3810,11 @@
     chatPresenceText.textContent = '思考中'
     appendChatMessage(text, 'user')
     const thinking = appendChatMessage('正在想', 'thinking')
-    const progressBubbleLease = retainedReaderLease != null
-      ? updateOpenLongMessageForIncoming('思考中…', 'ai')
-      : showBubble('思考中…', null, 'ai', { hold: true })
-    const readerStillOwnsProgress = () => progressBubbleLease != null
-      && longMessageState.open
-      && longMessageState.lease === progressBubbleLease
-      && activeBubbleLease === progressBubbleLease
+    // A reader belongs to the final message that opened it; it must never be
+    // reused as the progress surface for a later request. Close and release the
+    // old lease first, then show thinking/TTS progress in the ordinary bubble.
+    if (longMessageState.open) await closeLongMessageReader({ dismissBubble: true })
+    const progressBubbleLease = showBubble('思考中…', null, 'ai', { hold: true })
     markInteraction(60000)
     try {
       const result = await window.petAPI.sendAIMessage(text)
@@ -3427,36 +3832,30 @@
         if (requestSequence !== chatRequestSequence) return
       }
       thinking.remove()
-      const keepReaderOpen = readerStillOwnsProgress()
-      if (!keepReaderOpen) dismissBubble(progressBubbleLease)
+      dismissBubble(progressBubbleLease)
       const assistantMessage = appendChatMessage(result.text, 'assistant', speech)
       // 回复开头的情绪标签已由主进程剥离并解析为稳定键，映射到对应
       // 的情绪动作；模型没给标签时退回好奇反应（原默认行为）
       runInteraction(emotionInteractions[result.emotion] || 'curious', null, { bubble: false })
       if (speech) {
         const audioButton = assistantMessage.querySelector('.ai-message-audio')
-        if (keepReaderOpen) {
-          updateBubbleText(progressBubbleLease, result.text, { speech, source: 'ai' })
-          playGeneratedSpeech(speech, audioButton, '', { reuseBubble: true, source: 'ai' })
-        } else {
-          playGeneratedSpeech(speech, audioButton, result.text)
-        }
-      } else if (keepReaderOpen) {
-        updateBubbleText(progressBubbleLease, result.text, { speech: null, source: 'ai' })
+        playGeneratedSpeech(speech, audioButton, result.text, {
+          autoExpandSource: 'ai',
+          typewriter: true,
+        })
       } else {
-        showBubble(result.text, null, 'ai')
+        showBubble(result.text, null, 'ai', {
+          autoExpandSource: 'ai',
+          typewriter: true,
+        })
       }
     } catch (error) {
       if (requestSequence !== chatRequestSequence) return
       thinking.remove()
       const message = error.message || '连接失败，请稍后再试'
       appendChatMessage(message, 'error')
-      if (readerStillOwnsProgress()) {
-        updateBubbleText(progressBubbleLease, message, { speech: null, source: 'ai' })
-      } else {
-        dismissBubble(progressBubbleLease)
-        showBubble(message, null, 'ai')
-      }
+      dismissBubble(progressBubbleLease)
+      showBubble(message, null, 'ai')
     } finally {
       dismissBubble(progressBubbleLease)
       if (requestSequence === chatRequestSequence) {
@@ -3993,7 +4392,7 @@
     closeLongMessageReader({ dismissBubble: true })
   })
 
-  longMessageAudio.addEventListener('click', () => {
+  function toggleLongMessageAudio() {
     const speech = longMessageState.speech
     const lease = longMessageState.lease
     if (!longMessageState.open || lease == null || !speech) return
@@ -4002,7 +4401,16 @@
       reuseBubble: true,
       source: speech.source,
     })
-  })
+  }
+
+  longMessageAudio.addEventListener('click', toggleLongMessageAudio)
+
+  if (typeof window.petAPI.onLongMessageReaderAction === 'function') {
+    window.petAPI.onLongMessageReaderAction(action => {
+      if (action === 'collapse') closeLongMessageReader({ dismissBubble: true })
+      else if (action === 'audio') toggleLongMessageAudio()
+    })
+  }
 
   longMessageCopy.addEventListener('click', async () => {
     if (!longMessageState.open || !longMessageState.text) return
@@ -4053,8 +4461,15 @@
     state.settingsBackgroundCaptureActive = next
     state.settingsBackgroundLastFrameAt = 0
     state.settingsBackgroundErrorReported = false
+    if (!next) releaseSettingsBackgroundFrame()
     syncVisibility(state.hostVisible)
     if (next) ensureScheduler()
+  })
+
+  window.petAPI.onSettingsPetBackgroundFrameAck(sequence => {
+    const normalized = Number(sequence)
+    if (!Number.isSafeInteger(normalized) || normalized <= 0) return
+    releaseSettingsBackgroundFrame(normalized)
   })
 
   document.getElementById('ai-chat-close').addEventListener('click', () => setChatOpen(false))
@@ -4206,7 +4621,21 @@
       // shrinking the whole 16:9 frame into the role card.
       const dataURL = await centeredCoverDataURL(canvas, model.kind === 'video-pet')
       if (!dataURL) throw new Error('模型封面没有可见像素')
-      window.petAPI.saveCover(item.id, dataURL)
+
+      // The role-card cover above may crop and enlarge visible content. Render a
+      // separate 240x360 baseline frame for the settings background so switching
+      // between cached and live modes preserves the pet's on-screen size.
+      canvas.width = SETTINGS_BACKGROUND_WIDTH
+      canvas.height = SETTINGS_BACKGROUND_HEIGHT
+      canvas.style.width = `${SETTINGS_BACKGROUND_WIDTH}px`
+      canvas.style.height = `${SETTINGS_BACKGROUND_HEIGHT}px`
+      model.needsResize = true
+      model.centerModel()
+      if (!await waitForVisibleCoverFrame(model, canvas)) {
+        throw new Error('设置页静态背景首帧保持透明，未写入缓存')
+      }
+      const staticBackgroundDataURL = canvas.toDataURL('image/png')
+      window.petAPI.saveCover(item.id, dataURL, staticBackgroundDataURL)
     } catch (error) {
       console.warn(`Cover ${item.id} failed:`, error.message)
     } finally {

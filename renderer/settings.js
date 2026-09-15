@@ -76,6 +76,7 @@
     bubblePreviewAvatar: document.getElementById('bubble-preview-avatar'),
     bubbleLivePreviewSlot: document.getElementById('bubble-live-preview-slot'),
     bubblePreviewNote: document.getElementById('bubble-preview-note'),
+    longMessageCharacterThreshold: document.getElementById('long-message-character-threshold'),
     aiConfigTemplate: document.getElementById('ai-config-panel-template'),
     petBackground: document.getElementById('settings-pet-background'),
     petBackgroundCanvas: document.getElementById('settings-pet-background-canvas'),
@@ -336,9 +337,68 @@
     petBackgroundFrameQueue = null
     const context = elements.petBackgroundCanvas.getContext('2d')
     context.clearRect(0, 0, elements.petBackgroundCanvas.width, elements.petBackgroundCanvas.height)
-    elements.petBackground.classList.remove('is-ready', 'is-video-pet')
+    elements.petBackground.classList.remove('is-ready', 'is-video-pet', 'is-static')
     delete elements.petBackground.dataset.modelId
     delete elements.petBackground.dataset.modelFormat
+    delete elements.petBackground.dataset.backgroundMode
+    delete elements.petBackground.dataset.backgroundSource
+  }
+
+  const LONG_MESSAGE_CHARACTER_THRESHOLD_MIN = 10
+  const LONG_MESSAGE_CHARACTER_THRESHOLD_MAX = 500
+  const DEFAULT_LONG_MESSAGE_CHARACTER_THRESHOLD = 45
+
+  function normalizeLongMessageCharacterThreshold(value, fallback = DEFAULT_LONG_MESSAGE_CHARACTER_THRESHOLD) {
+    const numericValue = typeof value === 'string' && !value.trim() ? Number.NaN : Number(value)
+    const fallbackValue = Number(fallback)
+    const normalized = Number.isFinite(numericValue)
+      ? Math.round(numericValue)
+      : Number.isFinite(fallbackValue) ? Math.round(fallbackValue) : DEFAULT_LONG_MESSAGE_CHARACTER_THRESHOLD
+    return Math.min(
+      LONG_MESSAGE_CHARACTER_THRESHOLD_MAX,
+      Math.max(LONG_MESSAGE_CHARACTER_THRESHOLD_MIN, normalized)
+    )
+  }
+
+  function renderStaticPetBackground() {
+    const current = snapshot && snapshot.models.find(model => model.id === snapshot.currentModelId)
+    const staticBackgroundUrl = current && snapshot.staticPetBackgrounds
+      ? snapshot.staticPetBackgrounds[current.id]
+      : ''
+    const fallbackCoverUrl = current && snapshot.covers ? snapshot.covers[current.id] : ''
+    const imageUrl = staticBackgroundUrl || fallbackCoverUrl
+    if (!current || !imageUrl) {
+      clearPetBackgroundFrame()
+      return
+    }
+
+    const sequence = ++petBackgroundFrameSequence
+    petBackgroundFrameQueue = null
+    const image = new Image()
+    image.decoding = 'async'
+    image.onload = () => {
+      if (
+        sequence !== petBackgroundFrameSequence || !snapshot ||
+        snapshot.currentModelId !== current.id || !image.naturalWidth || !image.naturalHeight
+      ) return
+      const canvas = elements.petBackgroundCanvas
+      const context = canvas.getContext('2d')
+      const scale = Math.min(canvas.width / image.naturalWidth, canvas.height / image.naturalHeight)
+      const width = image.naturalWidth * scale
+      const height = image.naturalHeight * scale
+      context.clearRect(0, 0, canvas.width, canvas.height)
+      context.drawImage(image, (canvas.width - width) / 2, (canvas.height - height) / 2, width, height)
+      elements.petBackground.dataset.modelId = current.id
+      elements.petBackground.dataset.modelFormat = current.format || ''
+      elements.petBackground.dataset.backgroundMode = 'static'
+      elements.petBackground.dataset.backgroundSource = imageUrl
+      elements.petBackground.classList.toggle('is-video-pet', current.format === 'video-pet')
+      elements.petBackground.classList.add('is-static', 'is-ready')
+    }
+    image.onerror = () => {
+      if (sequence === petBackgroundFrameSequence) clearPetBackgroundFrame()
+    }
+    image.src = imageUrl
   }
 
   function petBackgroundFrameHasVisiblePixels(bitmap) {
@@ -360,25 +420,33 @@
       while (petBackgroundFrameQueue) {
         const queued = petBackgroundFrameQueue
         petBackgroundFrameQueue = null
-        const bitmap = await createImageBitmap(new Blob([queued.frame], { type: 'image/webp' }))
-        if (
-          queued.sequence === petBackgroundFrameSequence && snapshot &&
-          queued.modelId === snapshot.currentModelId && snapshot.preferences.settingsPetBackground &&
-          petBackgroundFrameHasVisiblePixels(bitmap)
-        ) {
-          const canvas = elements.petBackgroundCanvas
-          const context = canvas.getContext('2d')
-          context.clearRect(0, 0, canvas.width, canvas.height)
-          context.drawImage(bitmap, 0, 0, canvas.width, canvas.height)
-          elements.petBackground.dataset.modelId = queued.modelId
-          elements.petBackground.dataset.modelFormat = queued.format || ''
-          elements.petBackground.classList.toggle('is-video-pet', queued.format === 'video-pet')
-          elements.petBackground.classList.add('is-ready')
+        let bitmap = null
+        try {
+          bitmap = await createImageBitmap(new Blob([queued.frame], { type: 'image/webp' }))
+          if (
+            queued.sequence === petBackgroundFrameSequence && snapshot &&
+            queued.modelId === snapshot.currentModelId && snapshot.preferences.settingsPetBackground &&
+            petBackgroundFrameHasVisiblePixels(bitmap)
+          ) {
+            const canvas = elements.petBackgroundCanvas
+            const context = canvas.getContext('2d')
+            context.clearRect(0, 0, canvas.width, canvas.height)
+            context.drawImage(bitmap, 0, 0, canvas.width, canvas.height)
+            elements.petBackground.dataset.modelId = queued.modelId
+            elements.petBackground.dataset.modelFormat = queued.format || ''
+            elements.petBackground.dataset.backgroundMode = 'dynamic'
+            delete elements.petBackground.dataset.backgroundSource
+            elements.petBackground.classList.toggle('is-video-pet', queued.format === 'video-pet')
+            elements.petBackground.classList.remove('is-static')
+            elements.petBackground.classList.add('is-ready')
+          }
+        } catch (error) {
+          console.warn('Pet background frame decode failed:', error.message)
+        } finally {
+          if (bitmap) bitmap.close()
+          api.acknowledgePetBackgroundFrame(queued.deliverySequence)
         }
-        bitmap.close()
       }
-    } catch (error) {
-      console.warn('Pet background frame decode failed:', error.message)
     } finally {
       petBackgroundFrameBusy = false
       if (petBackgroundFrameQueue) drawQueuedPetBackgroundFrames()
@@ -386,20 +454,38 @@
   }
 
   function queuePetBackgroundFrame(payload) {
-    if (payload === null || !snapshot || !snapshot.preferences.settingsPetBackground) {
-      clearPetBackgroundFrame()
+    if (payload === null) {
+      if (snapshot && snapshot.currentModelId) renderStaticPetBackground()
+      else clearPetBackgroundFrame()
+      return
+    }
+    if (!snapshot || !snapshot.preferences.settingsPetBackground) {
+      const sequence = payload && Number(payload.sequence)
+      if (Number.isSafeInteger(sequence) && sequence > 0) api.acknowledgePetBackgroundFrame(sequence)
+      if (
+        snapshot && snapshot.currentModelId &&
+        (elements.petBackground.dataset.modelId !== snapshot.currentModelId ||
+          elements.petBackground.dataset.backgroundMode !== 'static')
+      ) renderStaticPetBackground()
       return
     }
     if (
       !payload || typeof payload !== 'object' || !payload.frame ||
-      typeof payload.modelId !== 'string' || payload.modelId !== snapshot.currentModelId
-    ) return
+      typeof payload.modelId !== 'string' || payload.modelId !== snapshot.currentModelId ||
+      !Number.isSafeInteger(Number(payload.sequence)) || Number(payload.sequence) <= 0
+    ) {
+      if (payload && Number.isSafeInteger(Number(payload.sequence))) {
+        api.acknowledgePetBackgroundFrame(Number(payload.sequence))
+      }
+      return
+    }
     const sequence = ++petBackgroundFrameSequence
     petBackgroundFrameQueue = {
       frame: payload.frame,
       format: payload.format,
       modelId: payload.modelId,
       sequence,
+      deliverySequence: Number(payload.sequence),
     }
     drawQueuedPetBackgroundFrames()
   }
@@ -1527,15 +1613,37 @@
       else if (key === 'reducedMotion') input.checked = preferences.reducedMotion === 'on'
       else input.checked = Boolean(preferences[key])
     })
+    elements.longMessageCharacterThreshold.value = String(normalizeLongMessageCharacterThreshold(
+      preferences.longMessageCharacterThreshold
+    ))
 
     document.querySelectorAll('[data-quality]').forEach(button => {
       button.classList.toggle('is-active', button.dataset.quality === preferences.qualityMode)
       button.setAttribute('aria-checked', String(button.dataset.quality === preferences.qualityMode))
     })
     elements.qualityDescription.textContent = qualityDescriptions[preferences.qualityMode]
-    const petBackgroundEnabled = Boolean(preferences.settingsPetBackground)
-    elements.petBackground.classList.toggle('is-enabled', petBackgroundEnabled)
-    if (!petBackgroundEnabled) clearPetBackgroundFrame()
+    const petBackgroundDynamic = Boolean(preferences.settingsPetBackground)
+    const currentModelId = snapshot && snapshot.currentModelId
+    const currentStaticBackgroundUrl = currentModelId && snapshot.staticPetBackgrounds
+      ? snapshot.staticPetBackgrounds[currentModelId]
+      : ''
+    const currentFallbackCoverUrl = currentModelId && snapshot.covers
+      ? snapshot.covers[currentModelId]
+      : ''
+    const currentBackgroundSource = currentStaticBackgroundUrl || currentFallbackCoverUrl
+    elements.petBackground.classList.toggle('is-enabled', Boolean(currentModelId))
+    elements.petBackground.classList.toggle('is-dynamic', petBackgroundDynamic)
+    const staticBackgroundReady = Boolean(
+      currentModelId && elements.petBackground.dataset.modelId === currentModelId &&
+      elements.petBackground.dataset.backgroundMode === 'static' &&
+      elements.petBackground.dataset.backgroundSource === currentBackgroundSource &&
+      elements.petBackground.classList.contains('is-ready')
+    )
+    if (!petBackgroundDynamic && !staticBackgroundReady) renderStaticPetBackground()
+    else if (petBackgroundDynamic && !elements.petBackground.classList.contains('is-ready')) {
+      // Keep the static cover visible while the first live frame is being prepared.
+      renderStaticPetBackground()
+    }
 
     const settingsTheme = ['glass', 'healing'].includes(preferences.settingsTheme)
       ? preferences.settingsTheme
@@ -2890,6 +2998,18 @@
       if (key === 'reducedMotion') value = input.checked ? 'on' : 'system'
       savePreference({ [key]: value })
     })
+  })
+
+  elements.longMessageCharacterThreshold.addEventListener('change', () => {
+    const fallback = snapshot && snapshot.preferences
+      ? snapshot.preferences.longMessageCharacterThreshold
+      : DEFAULT_LONG_MESSAGE_CHARACTER_THRESHOLD
+    const value = normalizeLongMessageCharacterThreshold(
+      elements.longMessageCharacterThreshold.value,
+      fallback
+    )
+    elements.longMessageCharacterThreshold.value = String(value)
+    savePreference({ longMessageCharacterThreshold: value })
   })
 
   elements.externalMessageOpenTester.addEventListener('click', async () => {

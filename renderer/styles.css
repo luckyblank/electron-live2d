@@ -1586,11 +1586,16 @@ html:not([data-settings-theme="healing"]) .ai-chat-panel.is-collapsed .ai-chat-t
 /* --------------------------------------------------------------------------
    Long-message reader
 
-   On shaped-window platforms the native host reserves transparent space on
-   both sides from startup; only the visible shape changes when this opens. The
-   pet rendering viewport remains exactly 400 × 600. The renderer writes the
-   layout variables below from the main-process placement result.
+   The Windows pet host remains 400 × 600 at all times. Side readers use an
+   independent transparent window so expanding/collapsing cannot rebuild the
+   Live2D DWM surface. Overlay fallback and non-Windows layouts reuse the same
+   card styles; the renderer writes the placement variables below.
    -------------------------------------------------------------------------- */
+
+html[data-long-message-reader-window="true"] body {
+  --long-message-reader-offset-x: 18px;
+  --long-message-reader-width: 380px;
+}
 
 #pet-viewport > .interaction-bubble-widget {
   position: absolute;

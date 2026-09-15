@@ -16,6 +16,11 @@ const PREFERENCE_DEFAULTS = Object.freeze({
   ...INITIAL_USER_DEFAULTS.system,
   onboardingSeen: INITIAL_USER_DEFAULTS.characters.onboardingSeen,
   chatGreeting: INITIAL_USER_DEFAULTS.ai.chatGreeting,
+  longMessageCharacterThreshold: INITIAL_USER_DEFAULTS.ai.longMessageCharacterThreshold,
+  appLongMessageAutoExpand: INITIAL_USER_DEFAULTS.ai.appLongMessageAutoExpand,
+  externalLongMessageAutoExpand: INITIAL_USER_DEFAULTS.ai.externalLongMessageAutoExpand,
+  appMessageStreamingOutput: INITIAL_USER_DEFAULTS.ai.appMessageStreamingOutput,
+  externalMessageStreamingOutput: INITIAL_USER_DEFAULTS.ai.externalMessageStreamingOutput,
 })
 
 function createInitialAIPluginState() {

@@ -775,7 +775,12 @@
   const styleWidths = Object.freeze({ glass: 270, sweet: 264, pixel: 270, 'sci-fi': 278 })
 
   class PetSpeechBubble extends HTMLElement {
-    static get observedAttributes() { return ['label', 'message', 'source', 'style-name', 'theme', 'expanded'] }
+    static get observedAttributes() {
+      return [
+        'label', 'message', 'full-message', 'source', 'style-name', 'theme', 'expanded',
+        'long-message-threshold',
+      ]
+    }
 
     constructor() {
       super()
@@ -799,6 +804,7 @@
           composed: true,
           detail: {
             text: this.message,
+            fullText: this.fullMessage,
             label: this.label,
             source: this.source,
           },
@@ -854,13 +860,25 @@
 
     measureOverflow() {
       if (!this.messageElement || !this.expandButton) return false
-      const hasMessage = this.messageElement.textContent.trim().length > 0
-      const overflowing = hasMessage && this.messageElement.scrollHeight > this.messageElement.clientHeight + 1
-      this.toggleAttribute('expandable', overflowing)
-      this.expandButton.hidden = !overflowing
-      if (!overflowing && this.expanded) this.removeAttribute('expanded')
+      // During the typewriter effect `message` is only the visible prefix.
+      // Overflow and the expand affordance must still be decided from the
+      // complete payload so a long message is expandable from its first frame.
+      const text = this.fullMessage
+      const hasMessage = text.trim().length > 0
+      const configuredThreshold = Number(this.getAttribute('long-message-threshold'))
+      const hasConfiguredThreshold = Number.isInteger(configuredThreshold) && configuredThreshold > 0
+      const characterCount = Array.from(text.replace(/\s/gu, '')).length
+      // The desktop bubble receives one shared threshold from app.js so all
+      // four visual styles classify the same message identically. Standalone
+      // previews omit the attribute and retain real layout-overflow detection.
+      const isLongMessage = hasMessage && (hasConfiguredThreshold
+        ? characterCount > configuredThreshold
+        : this.messageElement.scrollHeight > this.messageElement.clientHeight + 1)
+      this.toggleAttribute('expandable', isLongMessage)
+      this.expandButton.hidden = !isLongMessage
+      if (!isLongMessage && this.expanded) this.removeAttribute('expanded')
       this.syncExpandedState()
-      return overflowing
+      return isLongMessage
     }
 
     syncExpandedState() {
@@ -869,7 +887,17 @@
     }
 
     get message() { return this.messageElement.textContent }
-    set message(value) { this.setAttribute('message', String(value || '')) }
+    set message(value) {
+      const normalized = String(value || '')
+      this.setAttribute('full-message', normalized)
+      this.setAttribute('message', normalized)
+    }
+    get visibleMessage() { return this.message }
+    set visibleMessage(value) { this.setAttribute('message', String(value || '')) }
+    get fullMessage() {
+      return this.hasAttribute('full-message') ? this.getAttribute('full-message') : this.message
+    }
+    set fullMessage(value) { this.setAttribute('full-message', String(value || '')) }
     get label() { return this.labelElement.textContent }
     set label(value) { this.setAttribute('label', String(value || '')) }
     get source() { return this.getAttribute('source') === 'external' ? 'external' : '' }

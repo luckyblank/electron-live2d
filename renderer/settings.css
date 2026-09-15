@@ -7053,3 +7053,715 @@ body {
   cursor: wait;
   opacity: .58;
 }
+
+/* --------------------------------------------------------------------------
+   AI model settings — reference-faithful composition.
+
+   The two reference themes share the same information architecture, but keep
+   their materials and accents fully scoped.  The selectors deliberately bind
+   to the AI view so the later compatibility sheet cannot re-introduce the old
+   poster-density overrides, and no other settings page inherits this layout.
+   -------------------------------------------------------------------------- */
+
+:root[data-settings-theme][data-settings-view="ai"] .settings-section.ai-view .ai-model-settings-card,
+:root[data-settings-theme][data-settings-view="ai"] .settings-section.ai-view .ai-extensions-block {
+  position: relative;
+  width: auto;
+  margin: 0 0 8px;
+  padding: 8px 7px;
+  overflow: visible;
+  border: 1px solid;
+  border-radius: 15px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .9), 0 8px 20px rgba(73, 60, 143, .045);
+}
+
+:root[data-settings-theme="glass"][data-settings-view="ai"] .settings-section.ai-view .ai-model-settings-card,
+:root[data-settings-theme="glass"][data-settings-view="ai"] .settings-section.ai-view .ai-extensions-block {
+  border-color: rgba(255, 255, 255, .9);
+  background: linear-gradient(150deg, rgba(255, 255, 255, .48), rgba(235, 240, 255, .34));
+  -webkit-backdrop-filter: blur(17px) saturate(1.08);
+  backdrop-filter: blur(17px) saturate(1.08);
+}
+
+:root[data-settings-theme="healing"][data-settings-view="ai"] .settings-section.ai-view .ai-model-settings-card,
+:root[data-settings-theme="healing"][data-settings-view="ai"] .settings-section.ai-view .ai-extensions-block {
+  border-color: rgba(124, 103, 183, .2);
+  background: linear-gradient(155deg, rgba(255, 255, 255, .7), rgba(255, 250, 250, .57));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .94), 0 8px 18px rgba(135, 92, 151, .035);
+  -webkit-backdrop-filter: blur(14px) saturate(1.04);
+  backdrop-filter: blur(14px) saturate(1.04);
+}
+
+:root[data-settings-theme][data-settings-view="ai"] .settings-section.ai-view .ai-model-settings-card {
+  padding: 4px 5px 3px;
+}
+
+:root[data-settings-theme][data-settings-view="ai"] .settings-section.ai-view .ai-model-settings-heading {
+  position: relative;
+  display: grid;
+  grid-template-columns: 27px max-content minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 24px;
+  min-height: 24px;
+  margin: 0 2px 2px;
+  padding: 0 5px 2px 1px;
+  border-bottom: 1px solid rgba(116, 93, 195, .11);
+}
+
+:root[data-settings-theme][data-settings-view="ai"] .settings-section.ai-view .ai-model-settings-heading .model-heading-icon {
+  display: inline-grid;
+  width: 25px;
+  height: 25px;
+  color: #7353ef;
+  place-items: center;
+}
+
+:root[data-settings-theme][data-settings-view="ai"] .settings-section.ai-view .ai-model-settings-heading .model-heading-icon svg {
+  width: 23px;
+  height: 23px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+}
+
+:root[data-settings-theme][data-settings-view="ai"] .settings-section.ai-view .ai-model-settings-heading h2 {
+  margin: 0;
+  color: #101951;
+  font-family: var(--ref-ui-font, "Microsoft YaHei UI", sans-serif);
+  font-size: 15px;
+  font-weight: 780;
+  line-height: 1;
+  letter-spacing: -.025em;
+}
+
+:root[data-settings-theme][data-settings-view="ai"] .settings-section.ai-view .ai-model-settings-description {
+  justify-self: end;
+  margin: 0;
+  color: #7580bd;
+  font-size: 8.5px;
+  line-height: 1.35;
+  text-align: right;
+  white-space: nowrap;
+}
+
+:root[data-settings-theme="healing"][data-settings-view="ai"] .settings-section.ai-view .ai-model-settings-description {
+  padding-right: 70px;
+  color: #866f9f;
+  font-size: 7.4px;
+}
+
+:root[data-settings-theme][data-settings-view="ai"] .settings-section.ai-view .ai-model-settings-doodle {
+  position: absolute;
+  z-index: 2;
+  right: 2px;
+  top: -2px;
+  color: #f08ab8;
+  font-family: "Segoe Print", "KaiTi", cursive;
+  font-size: 7.5px;
+  font-weight: 500;
+  line-height: 1.25;
+  text-align: right;
+  transform: rotate(-4deg);
+}
+
+:root[data-settings-theme][data-settings-view="ai"] .settings-section.ai-view .ai-capability-group {
+  display: grid;
+  gap: 0;
+  margin: 0 0 4px;
+  padding: 0 6px 5px;
+  overflow: hidden;
+  border: 1px solid;
+  border-radius: 12px;
+  background: transparent;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .75);
+}
+
+:root[data-settings-theme][data-settings-view="ai"] .settings-section.ai-view .voice-model-group {
+  margin: 0;
+  padding-top: 0;
+  border-top-width: 1px;
+}
+
+:root[data-settings-theme="glass"][data-settings-view="ai"] .settings-section.ai-view .ai-capability-group {
+  border-color: rgba(115, 91, 214, .12);
+  background: rgba(255, 255, 255, .16);
+}
+
+:root[data-settings-theme="healing"][data-settings-view="ai"] .settings-section.ai-view .chat-model-group {
+  border-color: rgba(229, 78, 157, .24);
+  background: rgba(255, 248, 252, .38);
+}
+
+:root[data-settings-theme="healing"][data-settings-view="ai"] .settings-section.ai-view .voice-model-group {
+  border-color: rgba(112, 82, 238, .22);
+  background: rgba(248, 246, 255, .44);
+}
+
+:root[data-settings-theme][data-settings-view="ai"] .settings-section.ai-view .ai-capability-heading {
+  display: grid !important;
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-items: center;
+  gap: 13px;
+  width: calc(100% + 12px);
+  height: 28px;
+  min-height: 28px;
+  margin: 0 -6px 7px;
+  padding: 0 11px;
+  border: 0;
+  border-radius: 11px;
+}
+
+:root[data-settings-theme="glass"][data-settings-view="ai"] .settings-section.ai-view .ai-capability-heading {
+  background: linear-gradient(100deg, rgba(230, 226, 255, .8), rgba(239, 242, 255, .68));
+}
+
+:root[data-settings-theme="healing"][data-settings-view="ai"] .settings-section.ai-view .chat-model-group .ai-capability-heading {
+  background: linear-gradient(100deg, rgba(255, 230, 245, .92), rgba(255, 246, 250, .56));
+}
+
+:root[data-settings-theme="healing"][data-settings-view="ai"] .settings-section.ai-view .voice-model-group .ai-capability-heading {
+  background: linear-gradient(100deg, rgba(235, 230, 255, .9), rgba(248, 246, 255, .62));
+}
+
+:root[data-settings-theme][data-settings-view="ai"] .settings-section.ai-view .ai-capability-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: max-content;
+}
+
+:root[data-settings-theme][data-settings-view="ai"] .settings-section.ai-view .model-category-icon {
+  display: inline-grid;
+  width: 25px;
+  height: 25px;
+  flex: 0 0 25px;
+  border-radius: 8px;
+  background: linear-gradient(145deg, rgba(124, 91, 245, .18), rgba(160, 130, 255, .08));
+  color: #704ef0;
+  place-items: center;
+}
+
+:root[data-settings-theme="healing"][data-settings-view="ai"] .settings-section.ai-view .text-model-icon {
+  background: linear-gradient(145deg, rgba(239, 75, 165, .17), rgba(255, 169, 213, .1));
+  color: #e848a2;
+}
+
+:root[data-settings-theme][data-settings-view="ai"] .settings-section.ai-view .model-category-icon svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+}
+
+:root[data-settings-theme][data-settings-view="ai"] .settings-section.ai-view .voice-heading-icon,
+:root[data-settings-theme][data-settings-view="ai"] .settings-section.ai-view .voice-heading-icon svg {
+  width: 23px;
+  height: 23px;
+}
+
+:root[data-settings-theme][data-settings-view="ai"] .settings-section.ai-view .ai-capability-heading h2 {
+  margin: 0;
+  color: #101951;
+  font-family: var(--ref-ui-font, "Microsoft YaHei UI", sans-serif);
+  font-size: 13.5px;
+  font-weight: 780;
+  line-height: 1;
+}
+
+:root[data-settings-theme="healing"][data-settings-view="ai"] .settings-section.ai-view .chat-model-group .ai-capability-heading h2 {
+  color: #a82f77;
+}
+
+:root[data-settings-theme="healing"][data-settings-view="ai"] .settings-section.ai-view .voice-model-group .ai-capability-heading h2 {
+  color: #6344df;
+}
+
+:root[data-settings-theme][data-settings-view="ai"] .settings-section.ai-view .ai-capability-description {
+  overflow: hidden;
+  margin: 0;
+  color: #7880b2;
+  font-size: 8.5px;
+  line-height: 1.25;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+:root[data-settings-theme="healing"][data-settings-view="ai"] .settings-section.ai-view .ai-capability-description {
+  justify-self: start;
+  color: #89769e;
+  font-size: 8px;
+  text-align: left;
+}
+
+:root[data-settings-theme][data-settings-view="ai"] .settings-section.ai-view .ai-capability-state {
+  display: none;
+}
+
+:root[data-settings-theme][data-settings-view="ai"] .settings-section.ai-view .ai-plugin-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+:root[data-settings-theme][data-settings-view="ai"] .settings-section.ai-view #ai-tts-plugin-list > [data-plugin-id="qwen-tts"] {
+  order: 1;
+}
+
+:root[data-settings-theme][data-settings-view="ai"] .settings-section.ai-view #ai-tts-plugin-list > [data-plugin-id="zhipu-tts"] {
+  order: 2;
+}
+
+:root[data-settings-theme][data-settings-view="ai"] .settings-section.ai-view .ai-plugin-card,
+:root[data-settings-theme][data-settings-view="ai"] .settings-section.ai-view .ai-plugin-card.is-installed,
+:root[data-settings-theme][data-settings-view="ai"] .settings-section.ai-view .ai-plugin-card.is-active {
+  overflow: hidden;
+  border: 1px solid;
+  border-radius: 11px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .9), 0 4px 12px rgba(71, 55, 133, .045);
+}
+
+:root[data-settings-theme="glass"][data-settings-view="ai"] .settings-section.ai-view .ai-plugin-card,
+:root[data-settings-theme="glass"][data-settings-view="ai"] .settings-section.ai-view .ai-plugin-card.is-installed,
+:root[data-settings-theme="glass"][data-settings-view="ai"] .settings-section.ai-view .ai-plugin-card.is-active {
+  border-color: rgba(255, 255, 255, .82);
+  background: linear-gradient(145deg, rgba(255, 255, 255, .59), rgba(246, 248, 255, .42));
+}
+
+:root[data-settings-theme="healing"][data-settings-view="ai"] .settings-section.ai-view .ai-plugin-card,
+:root[data-settings-theme="healing"][data-settings-view="ai"] .settings-section.ai-view .ai-plugin-card.is-installed,
+:root[data-settings-theme="healing"][data-settings-view="ai"] .settings-section.ai-view .ai-plugin-card.is-active {
+  border-color: rgba(128, 106, 181, .12);
+  background: rgba(255, 255, 255, .68);
+}
+
+:root[data-settings-theme][data-settings-view="ai"] .settings-section.ai-view .ai-plugin-head,
+:root[data-settings-theme="healing"][data-settings-view="ai"] .settings-section.ai-view .ai-plugin-head {
+  display: grid;
+  grid-template-columns: 41px minmax(0, 1fr) auto;
+  grid-template-areas:
+    "mark copy badges"
+    "mark copy actions";
+  align-items: center;
+  column-gap: 6px;
+  row-gap: 3px;
+  width: 100%;
+  height: 64px;
+  min-height: 64px;
+  padding: 5px 6px;
+}
+
+:root[data-settings-theme][data-settings-view="ai"] .settings-section.ai-view .plugin-mark {
+  grid-area: mark;
+  align-self: center;
+  width: 36px;
+  height: 36px;
+  border: 0;
+  border-radius: 10px;
+  background: linear-gradient(145deg, #6849ee 0%, #9a78fb 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .28), 0 6px 14px rgba(103, 69, 222, .22);
+  color: #fff;
+  font-family: "Segoe UI Variable Display", "Microsoft YaHei UI", sans-serif;
+  font-size: 15px;
+  font-weight: 760;
+  line-height: 36px;
+  text-align: center;
+}
+
+:root[data-settings-theme][data-settings-view="ai"] .settings-section.ai-view .plugin-copy {
+  grid-area: copy;
+  align-self: center;
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+:root[data-settings-theme][data-settings-view="ai"] .settings-section.ai-view .plugin-copy strong {
+  overflow: hidden;
+  color: #101951;
+  font-family: var(--ref-ui-font, "Microsoft YaHei UI", sans-serif);
+  font-size: 12.5px;
+  font-weight: 780;
+  line-height: 1.24;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+:root[data-settings-theme][data-settings-view="ai"] .settings-section.ai-view .plugin-copy small,
+:root[data-settings-theme="healing"][data-settings-view="ai"] .settings-section.ai-view .plugin-copy small {
+  overflow: hidden;
+  color: #6673aa;
+  font-family: var(--ref-ui-font, "Microsoft YaHei UI", sans-serif);
+  font-size: 8.5px;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+:root[data-settings-theme][data-settings-view="ai"] .settings-section.ai-view .plugin-copy .plugin-detail,
+:root[data-settings-theme="healing"][data-settings-view="ai"] .settings-section.ai-view .plugin-copy .plugin-detail {
+  display: -webkit-box;
+  overflow: hidden;
+  color: #6875ad;
+  font-size: 8.5px;
+  line-height: 1.25;
+  white-space: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+:root[data-settings-theme][data-settings-view="ai"] .settings-section.ai-view .plugin-card-badges {
+  grid-area: badges;
+  align-self: end;
+  justify-self: end;
+  display: flex;
+  padding: 0;
+}
+
+:root[data-settings-theme][data-settings-view="ai"] .settings-section.ai-view .plugin-provider-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  padding: 3px 6px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(222, 246, 226, .88);
+  color: #20784d;
+  font-size: 9px;
+  font-weight: 720;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+:root[data-settings-theme][data-settings-view="ai"] .settings-section.ai-view .plugin-card-chevron {
+  display: none;
+}
+
+:root[data-settings-theme][data-settings-view="ai"] .settings-section.ai-view .plugin-head-actions {
+  grid-area: actions;
+  align-self: start;
+  justify-self: end;
+  display: flex;
+  gap: 5px;
+  min-width: max-content;
+}
+
+:root[data-settings-theme][data-settings-view="ai"] .settings-section.ai-view :is(.plugin-action, .plugin-remove-action, .plugin-select-action) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-width: 52px;
+  height: 26px;
+  min-height: 26px;
+  padding: 0 7px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, .66);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .9), 0 2px 6px rgba(82, 60, 161, .04);
+  font-family: var(--ref-ui-font, "Microsoft YaHei UI", sans-serif);
+  font-size: 9.5px;
+  font-weight: 720;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+:root[data-settings-theme][data-settings-view="ai"] .settings-section.ai-view .plugin-action {
+  border: 1px solid rgba(113, 78, 234, .28);
+  color: #6749dc;
+}
+
+:root[data-settings-theme][data-settings-view="ai"] .settings-section.ai-view .plugin-select-action[data-state="inactive"] {
+  border: 1px solid rgba(113, 78, 234, .31);
+  color: #6749dc;
+}
+
+:root[data-settings-theme][data-settings-view="ai"] .settings-section.ai-view .plugin-select-action[data-state="active"],
+:root[data-settings-theme][data-settings-view="ai"] .settings-section.ai-view .plugin-select-action.is-active {
+  border: 1px solid rgba(235, 89, 123, .33);
+  background: rgba(255, 249, 250, .73);
+  color: #d84e72;
+}
+
+:root[data-settings-theme][data-settings-view="ai"] .settings-section.ai-view :is(.plugin-action, .plugin-select-action):hover:not(:disabled) {
+  border-color: rgba(103, 68, 229, .54);
+  background: rgba(244, 239, 255, .93);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .94), 0 4px 10px rgba(96, 66, 201, .1);
+}
+
+:root[data-settings-theme][data-settings-view="ai"] .settings-section.ai-view .plugin-select-action[data-state="active"]:hover:not(:disabled),
+:root[data-settings-theme][data-settings-view="ai"] .settings-section.ai-view .plugin-select-action.is-active:hover:not(:disabled) {
+  border-color: rgba(222, 70, 105, .52);
+  background: rgba(255, 239, 244, .96);
+  color: #c53f62;
+}
+
+:root[data-settings-theme][data-settings-view="ai"] .settings-section.ai-view :is(.plugin-action, .plugin-select-action):focus-visible,
+:root[data-settings-theme][data-settings-view="ai"] .settings-section.ai-view .plugin-folder-hint .text-button:focus-visible {
+  outline: 2px solid rgba(102, 69, 226, .72);
+  outline-offset: 2px;
+}
+
+:root[data-settings-theme][data-settings-view="ai"] .settings-section.ai-view .plugin-action svg,
+:root[data-settings-theme][data-settings-view="ai"] .settings-section.ai-view .plugin-select-action .plugin-state-icon {
+  width: 13px;
+  height: 13px;
+  flex: 0 0 13px;
+}
+
+:root[data-settings-theme][data-settings-view="ai"] .settings-section.ai-view .ai-plugin-body:empty,
+:root[data-settings-theme][data-settings-view="ai"] .settings-section.ai-view .ai-plugin-body:has(> .ai-config-panel.is-collapsed) {
+  display: none;
+}
+
+:root[data-settings-theme][data-settings-view="ai"] .settings-section.ai-view .ai-plugin-body:not(:empty) {
+  padding: 0 7px 7px;
+}
+
+:root[data-settings-theme][data-settings-view="ai"] .settings-section.ai-view .ai-extensions-block {
+  padding: 4px 7px;
+}
+
+:root[data-settings-theme][data-settings-view="ai"] .settings-section.ai-view .plugin-extension-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 24px;
+  min-height: 24px;
+  margin: 0;
+  padding: 0 3px 4px;
+  color: #101951;
+}
+
+:root[data-settings-theme][data-settings-view="ai"] .settings-section.ai-view .plugin-extension-heading svg {
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
+  fill: #7050ed;
+  stroke: none;
+}
+
+:root[data-settings-theme][data-settings-view="ai"] .settings-section.ai-view .plugin-extension-heading h2 {
+  margin: 0;
+  color: #101951;
+  font-family: var(--ref-ui-font, "Microsoft YaHei UI", sans-serif);
+  font-size: 13px;
+  font-weight: 780;
+  line-height: 1;
+}
+
+:root[data-settings-theme][data-settings-view="ai"] .settings-section.ai-view .plugin-folder-hint,
+:root[data-settings-theme="healing"][data-settings-view="ai"] .settings-section.ai-view .plugin-folder-hint {
+  position: relative;
+  display: grid;
+  grid-template-columns: 35px minmax(0, 1fr);
+  grid-template-areas:
+    "icon copy"
+    "path path";
+  gap: 3px 9px;
+  width: 100%;
+  height: 66px;
+  min-height: 66px;
+  margin: 0;
+  padding: 6px 8px;
+  overflow: hidden;
+  border: 1px solid rgba(118, 96, 190, .12);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, .58);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .86);
+}
+
+:root[data-settings-theme="glass"][data-settings-view="ai"] .settings-section.ai-view .plugin-folder-hint {
+  border-color: rgba(255, 255, 255, .84);
+  background: rgba(255, 255, 255, .42);
+}
+
+:root[data-settings-theme][data-settings-view="ai"] .settings-section.ai-view .plugin-folder-hint .setting-icon {
+  grid-area: icon;
+  align-self: start;
+  display: grid;
+  width: 33px;
+  height: 33px;
+  border-radius: 9px;
+  background: linear-gradient(145deg, rgba(122, 84, 242, .16), rgba(163, 130, 251, .08));
+  color: #714fea;
+  place-items: center;
+}
+
+:root[data-settings-theme][data-settings-view="ai"] .settings-section.ai-view .plugin-folder-hint .setting-icon svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+}
+
+:root[data-settings-theme][data-settings-view="ai"] .settings-section.ai-view .plugin-folder-hint .models-hint-copy,
+:root[data-settings-theme="healing"][data-settings-view="ai"] .settings-section.ai-view .plugin-folder-hint .models-hint-copy {
+  grid-area: copy;
+  align-self: start;
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  padding: 0;
+  padding-right: 0 !important;
+}
+
+:root[data-settings-theme][data-settings-view="ai"] .settings-section.ai-view .plugin-folder-hint .models-title {
+  overflow: hidden;
+  color: #111950;
+  font-size: 10px;
+  font-weight: 760;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+:root[data-settings-theme][data-settings-view="ai"] .settings-section.ai-view .plugin-folder-hint code {
+  padding: 1px 6px;
+  border: 1px solid rgba(104, 90, 155, .12);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .72);
+  color: #282658;
+  font-family: Consolas, monospace;
+  font-size: .92em;
+  font-weight: 700;
+}
+
+:root[data-settings-theme][data-settings-view="ai"] .settings-section.ai-view .plugin-folder-hint .models-hint-copy p {
+  display: -webkit-box;
+  overflow: hidden;
+  margin: 0;
+  color: #6975aa;
+  font-size: 7.5px;
+  line-height: 1.25;
+  white-space: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+:root[data-settings-theme][data-settings-view="ai"] .settings-section.ai-view .plugin-folder-hint .models-hint-row {
+  grid-area: path;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  gap: 8px;
+  width: 100%;
+  height: 23px;
+  min-height: 23px;
+  margin: 0;
+}
+
+:root[data-settings-theme][data-settings-view="ai"] .settings-section.ai-view .plugin-folder-hint .models-folder-path {
+  display: block;
+  min-width: 0;
+  height: 23px;
+  padding: 0 10px;
+  overflow: hidden;
+  border: 1px solid rgba(118, 100, 187, .12);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, .5);
+  color: #7180bd;
+  font-size: 8px;
+  line-height: 21px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+:root[data-settings-theme][data-settings-view="ai"] .settings-section.ai-view .plugin-folder-hint .text-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-width: 112px;
+  height: 23px;
+  min-height: 23px;
+  padding: 0 11px;
+  border: 1px solid rgba(118, 99, 179, .15);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, .68);
+  color: #4e5790;
+  font-size: 8px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+:root[data-settings-theme][data-settings-view="ai"] .settings-section.ai-view .plugin-folder-hint .text-button svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+}
+
+:root[data-settings-theme="healing"][data-settings-view="ai"] .settings-section.ai-view .ai-extensions-block {
+  padding: 3px 7px;
+}
+
+:root[data-settings-theme="healing"][data-settings-view="ai"] .settings-section.ai-view .plugin-extension-heading {
+  height: 20px;
+  min-height: 20px;
+  padding-bottom: 2px;
+}
+
+:root[data-settings-theme="healing"][data-settings-view="ai"] .settings-section.ai-view .plugin-extension-heading svg {
+  width: 18px;
+  height: 18px;
+  flex-basis: 18px;
+}
+
+:root[data-settings-theme="healing"][data-settings-view="ai"] .settings-section.ai-view .plugin-folder-hint {
+  height: 60px;
+  min-height: 60px;
+  padding-block: 3px;
+}
+
+:root[data-settings-theme="healing"][data-settings-view="ai"] .settings-section.ai-view .plugin-folder-hint .models-title {
+  font-size: 10px;
+}
+
+:root[data-settings-theme="healing"][data-settings-view="ai"] .settings-section.ai-view .plugin-folder-hint .models-hint-copy p {
+  font-size: 8px;
+  line-height: 1.15;
+}
+
+:root[data-settings-theme="healing"][data-settings-view="ai"] .settings-section.ai-view .ai-capability-group {
+  padding-bottom: 1px;
+}
+
+:root[data-settings-theme="healing"][data-settings-view="ai"] .settings-section.ai-view .ai-capability-heading {
+  height: 26px;
+  min-height: 26px;
+  margin-bottom: 5px;
+}
+
+:root[data-settings-theme="healing"][data-settings-view="ai"] .settings-section.ai-view .ai-plugin-head {
+  height: 60px;
+  min-height: 60px;
+}
+
+/* Reference refinements: the glass text-model ribbon floats inside its group,
+   while the healing ribbon keeps its tab-like square lower-left corner. */
+:root[data-settings-theme="glass"][data-settings-view="ai"] .settings-section.ai-view :is(.chat-model-group, .voice-model-group) .ai-capability-heading {
+  width: 100%;
+  margin: 4px 0;
+}
+
+:root[data-settings-theme="healing"][data-settings-view="ai"] .settings-section.ai-view :is(.chat-model-group, .voice-model-group) .ai-capability-heading {
+  border-bottom-left-radius: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root[data-settings-theme][data-settings-view="ai"] .settings-section.ai-view :is(.plugin-action, .plugin-select-action, .plugin-folder-hint .text-button) {
+    transition: none;
+  }
+}

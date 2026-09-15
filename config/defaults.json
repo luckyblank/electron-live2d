@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "characters": {
     "preferredModelId": "mori-suit",
     "scale": 1,
@@ -78,6 +78,11 @@
   },
   "ai": {
     "chatGreeting": "你好呀～今天想聊点什么？",
+    "longMessageCharacterThreshold": 45,
+    "appLongMessageAutoExpand": false,
+    "externalLongMessageAutoExpand": false,
+    "appMessageStreamingOutput": false,
+    "externalMessageStreamingOutput": false,
     "installedPluginIds": ["deepseek", "zhipu-tts", "qwen-tts"],
     "activePluginIds": {
       "chat": "deepseek",
@@ -110,7 +115,7 @@
     "alwaysOnTop": true,
     "launchAtLogin": false,
     "reducedMotion": "system",
-    "settingsPetBackground": true,
+    "settingsPetBackground": false,
     "appLongScreenshotEnabled": false,
     "externalMessagesEnabled": false,
     "settingsTheme": "healing",

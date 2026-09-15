@@ -5,15 +5,22 @@ const path = require('path')
 const { pathToFileURL } = require('url')
 const sharp = require('sharp')
 const { BUBBLE_THEME_DEFINITIONS } = require('../config/bubble-styles')
+const { PREFERENCE_DEFAULTS } = require('../config/defaults')
 const { captureSettingsPanel } = require('../settings-screenshot')
 
 const projectRoot = path.resolve(__dirname, '..')
+const messageOutputOnly = process.argv.includes('--message-output-only')
+const aiPluginFolderOnly = process.argv.includes('--ai-plugin-folder-only')
 
 app.commandLine.appendSwitch('force-device-scale-factor', process.env.QA_DEVICE_SCALE || '1')
 app.commandLine.appendSwitch('disable-gpu')
 app.setPath('userData', path.join(os.tmpdir(), 'live2d-companion-qa-userdata'))
 
-const outDir = path.join(os.tmpdir(), `live2d-companion-qa${process.env.QA_DEVICE_SCALE ? `-${process.env.QA_DEVICE_SCALE}x` : ''}`)
+const outDir = path.join(os.tmpdir(), aiPluginFolderOnly
+  ? 'live2d-ai-plugin-folder-qa'
+  : messageOutputOnly
+    ? 'live2d-message-output-settings-qa'
+    : `live2d-companion-qa${process.env.QA_DEVICE_SCALE ? `-${process.env.QA_DEVICE_SCALE}x` : ''}`)
 fs.mkdirSync(outDir, { recursive: true })
 
 const coversDir = path.join(process.env.APPDATA || '', 'Live2DCompanion', 'covers')
@@ -164,12 +171,17 @@ let snapshot = {
     reducedMotion: 'system',
     onboardingSeen: true,
     backgroundDetection: true,
-    settingsPetBackground: true,
+    settingsPetBackground: false,
     appLongScreenshotEnabled: false,
     externalMessagesEnabled: false,
     settingsTheme: 'glass',
     bubbleStyles: { glass: 'glass', healing: 'glass' },
     chatGreeting: '你好呀～今天想聊点什么？',
+    longMessageCharacterThreshold: 45,
+    appLongMessageAutoExpand: false,
+    externalLongMessageAutoExpand: false,
+    appMessageStreamingOutput: false,
+    externalMessageStreamingOutput: false,
   },
   ai: {
     activePluginIds: { chat: 'deepseek', tts: 'zhipu-tts' },
@@ -605,6 +617,281 @@ async function characterLayoutMetrics(theme) {
   return selections
 }
 
+async function readMessageOutputSettingsState() {
+  return win.webContents.executeJavaScript(`(() => {
+    const group = document.querySelector('.message-output-settings')
+    const content = document.querySelector('.settings-section.ai-view')
+    const rows = [...group.querySelectorAll('.setting-row')]
+    const controls = [...group.querySelectorAll('[data-setting]')]
+    const rect = element => {
+      const box = element.getBoundingClientRect()
+      return {
+        x:+box.x.toFixed(2), y:+box.y.toFixed(2),
+        width:+box.width.toFixed(2), height:+box.height.toFixed(2),
+        right:+box.right.toFixed(2), bottom:+box.bottom.toFixed(2),
+      }
+    }
+    return {
+      theme:document.documentElement.dataset.settingsTheme,
+      title:group.querySelector('h3').textContent.trim(),
+      description:group.querySelector('.long-message-display-heading p').textContent.trim(),
+      labels:rows.map(row => row.querySelector('strong').textContent.trim()),
+      hints:rows.map(row => row.querySelector('small').textContent.trim()),
+      keys:controls.map(input => input.dataset.setting),
+      checked:Object.fromEntries(controls.map(input => [input.dataset.setting, input.checked])),
+      types:controls.map(input => input.type),
+      groupRect:rect(group),
+      rowRects:rows.map(rect),
+      groupVisible:group.getBoundingClientRect().top >= content.getBoundingClientRect().top
+        && group.getBoundingClientRect().bottom <= content.getBoundingClientRect().bottom,
+      noHorizontalOverflow:group.scrollWidth <= group.clientWidth + 1
+        && content.scrollWidth <= content.clientWidth + 1,
+      groupBackground:getComputedStyle(group).backgroundImage,
+      groupBorder:getComputedStyle(group).borderColor,
+      iconColor:getComputedStyle(group.querySelector('.long-message-display-icon')).color,
+      headingIcons:[...document.querySelectorAll('[data-ai-heading-icon]')].map(icon => {
+        const style = getComputedStyle(icon)
+        const svg = icon.querySelector('svg')
+        const signature = [...svg.querySelectorAll('path,circle,rect,line,polyline,polygon')]
+          .map(node => [node.tagName, node.getAttribute('d'), node.getAttribute('cx'), node.getAttribute('cy'), node.getAttribute('r'), node.getAttribute('points')].filter(Boolean).join(':'))
+          .join('|')
+        return {
+          role:icon.dataset.aiHeadingIcon,
+          signature,
+          color:style.color,
+          backgroundImage:style.backgroundImage,
+          borderColor:style.borderColor,
+          borderRadius:style.borderRadius,
+        }
+      }),
+      switches:controls.map(input => {
+        const track = input.nextElementSibling
+        const style = getComputedStyle(track)
+        const thumb = getComputedStyle(track, '::after')
+        return {
+          key:input.dataset.setting,
+          checked:input.checked,
+          backgroundImage:style.backgroundImage,
+          backgroundColor:style.backgroundColor,
+          borderColor:style.borderColor,
+          boxShadow:style.boxShadow,
+          thumbBackgroundColor:thumb.backgroundColor,
+        }
+      }),
+    }
+  })()`)
+}
+
+async function captureMessageOutputSettings(name) {
+  win.webContents.invalidate()
+  await win.capturePage()
+  await new Promise(resolve => setTimeout(resolve, 80))
+  const target = path.join(outDir, name)
+  fs.writeFileSync(target, await win.capturePage().then(image => image.toPNG()))
+  return target
+}
+
+async function runAIPluginFolderFocused(consoleMessages) {
+  const themes = {}
+  for (const theme of ['glass', 'healing']) {
+    snapshot.preferences = { ...snapshot.preferences, settingsTheme: theme }
+    win.webContents.send('state:changed', { snapshot: cloneSnapshot() })
+    await win.webContents.executeJavaScript(`(() => {
+      document.querySelector('.section-tab[data-section="ai"]').click()
+      const section = document.querySelector('.settings-section.ai-view')
+      section.scrollTop = section.scrollHeight
+    })()`)
+    await new Promise(resolve => setTimeout(resolve, 220))
+    const metrics = await win.webContents.executeJavaScript(`(() => {
+      const section = document.querySelector('.settings-section.ai-view')
+      const extension = section.querySelector('.ai-extensions-block')
+      const folder = extension.querySelector('.plugin-folder-hint')
+      const row = folder.querySelector('.models-hint-row')
+      const path = folder.querySelector('.models-folder-path')
+      const action = folder.querySelector('#open-plugins-folder')
+      const rect = element => {
+        const box = element.getBoundingClientRect()
+        return {
+          x:+box.x.toFixed(2), y:+box.y.toFixed(2), width:+box.width.toFixed(2), height:+box.height.toFixed(2),
+          right:+box.right.toFixed(2), bottom:+box.bottom.toFixed(2),
+        }
+      }
+      const sectionRect = rect(section)
+      const extensionRect = rect(extension)
+      const folderRect = rect(folder)
+      const rowRect = rect(row)
+      const pathRect = rect(path)
+      const actionRect = rect(action)
+      const folderStyle = getComputedStyle(folder)
+      const maximumScrollTop = section.scrollHeight - section.clientHeight
+      const contains = (outer, inner) => (
+        inner.x >= outer.x - 1 && inner.right <= outer.right + 1
+          && inner.y >= outer.y - 1 && inner.bottom <= outer.bottom + 1
+      )
+      return {
+        theme:document.documentElement.dataset.settingsTheme,
+        folderComputedHeight:parseFloat(folderStyle.height),
+        folderMinHeight:parseFloat(folderStyle.minHeight),
+        folderPaddingTop:parseFloat(folderStyle.paddingTop),
+        folderPaddingBottom:parseFloat(folderStyle.paddingBottom),
+        folderOverflow:folderStyle.overflow,
+        scrollTop:+section.scrollTop.toFixed(2),
+        maximumScrollTop:+maximumScrollTop.toFixed(2),
+        sectionRect,
+        extensionRect,
+        folderRect,
+        rowRect,
+        pathRect,
+        actionRect,
+        extensionFullyVisible:extensionRect.y >= sectionRect.y && extensionRect.bottom <= sectionRect.bottom,
+        folderContainedByExtension:contains(extensionRect, folderRect),
+        rowContainedByFolder:contains(folderRect, rowRect),
+        pathContainedByFolder:contains(folderRect, pathRect),
+        actionContainedByFolder:contains(folderRect, actionRect),
+        pathBottomInset:+(folderRect.bottom - pathRect.bottom).toFixed(2),
+        actionBottomInset:+(folderRect.bottom - actionRect.bottom).toFixed(2),
+        noHorizontalOverflow:section.scrollWidth <= section.clientWidth + 1,
+      }
+    })()`)
+    metrics.screenshot = await captureMessageOutputSettings(`${theme}-ai-plugin-folder.png`)
+    themes[theme] = metrics
+  }
+
+  const assertions = {
+    bothThemesReachTheTrueScrollEnd: Object.values(themes).every(result => (
+      Math.abs(result.scrollTop - result.maximumScrollTop) <= 1
+    )),
+    pluginFolderAreaIsFullyVisible: Object.values(themes).every(result => (
+      result.extensionFullyVisible && result.folderContainedByExtension
+    )),
+    pluginFolderContainsItsPathRow: Object.values(themes).every(result => (
+      result.rowContainedByFolder && result.pathContainedByFolder && result.actionContainedByFolder
+        && result.pathBottomInset >= 5 && result.actionBottomInset >= 5
+    )),
+    pluginFolderHasInternalBottomPadding: Object.values(themes).every(result => (
+      result.folderMinHeight >= 74 && result.folderPaddingBottom >= 8
+    )),
+    noHorizontalOverflow: Object.values(themes).every(result => result.noHorizontalOverflow),
+    noPageError: consoleMessages.filter(item => (
+      item.level === 'error' || /uncaught|unhandled/i.test(item.message || '')
+    )).length === 0,
+  }
+  return {
+    generatedAt: new Date().toISOString(),
+    outputDirectory: outDir,
+    window: win.getBounds(),
+    themes,
+    assertions,
+    passed: Object.values(assertions).every(Boolean),
+  }
+}
+
+async function runMessageOutputSettingsFocused(consoleMessages) {
+  const themes = {}
+  for (const theme of ['glass', 'healing']) {
+    snapshot.preferences = {
+      ...snapshot.preferences,
+      settingsTheme: theme,
+      appMessageStreamingOutput: false,
+      externalMessageStreamingOutput: false,
+    }
+    win.webContents.send('state:changed', { snapshot: cloneSnapshot() })
+    await win.webContents.executeJavaScript(`(() => {
+      document.querySelector('.section-tab[data-section="ai"]').click()
+      const content = document.querySelector('.settings-section.ai-view')
+      const group = document.querySelector('.message-output-settings')
+      content.scrollTo({ top: Math.max(0, group.offsetTop - 108), behavior: 'auto' })
+    })()`)
+    await new Promise(resolve => setTimeout(resolve, 220))
+    const updatesBefore = settingsUpdates.length
+    const initial = await readMessageOutputSettingsState()
+    const defaultScreenshot = await captureMessageOutputSettings(`${theme}-message-output-default.png`)
+
+    await win.webContents.executeJavaScript(
+      `document.querySelector('[data-setting="appMessageStreamingOutput"]').click()`
+    )
+    await new Promise(resolve => setTimeout(resolve, 180))
+    const afterAppToggle = await readMessageOutputSettingsState()
+
+    await win.webContents.executeJavaScript(
+      `document.querySelector('[data-setting="externalMessageStreamingOutput"]').click()`
+    )
+    await new Promise(resolve => setTimeout(resolve, 180))
+    const afterExternalToggle = await readMessageOutputSettingsState()
+    const enabledScreenshot = await captureMessageOutputSettings(`${theme}-message-output-enabled.png`)
+    themes[theme] = {
+      initial,
+      afterAppToggle,
+      afterExternalToggle,
+      submittedPatches: settingsUpdates.slice(updatesBefore),
+      screenshots: { default: defaultScreenshot, enabled: enabledScreenshot },
+    }
+  }
+
+  const variants = Object.values(themes)
+  const switchSignature = state => state.switches
+    .map(item => `${item.backgroundImage}|${item.backgroundColor}|${item.borderColor}`)
+    .join('||')
+  const assertions = {
+    groupCopyMatchesRequest: variants.every(result => (
+      result.initial.title === '消息输出方式'
+      && result.initial.description.includes('APP 内部回复')
+      && result.initial.description.includes('外部输入消息')
+      && result.initial.labels.join('|') === 'APP 内部回复消息|外部输入消息'
+    )),
+    controlsAreIndependentCheckboxes: variants.every(result => (
+      result.initial.keys.join('|') === 'appMessageStreamingOutput|externalMessageStreamingOutput'
+      && result.initial.types.every(type => type === 'checkbox')
+      && result.afterAppToggle.checked.appMessageStreamingOutput
+      && !result.afterAppToggle.checked.externalMessageStreamingOutput
+      && result.afterExternalToggle.checked.appMessageStreamingOutput
+      && result.afterExternalToggle.checked.externalMessageStreamingOutput
+    )),
+    bothDefaultsAreOff: variants.every(result => (
+      !result.initial.checked.appMessageStreamingOutput
+      && !result.initial.checked.externalMessageStreamingOutput
+    )) && PREFERENCE_DEFAULTS.appMessageStreamingOutput === false
+      && PREFERENCE_DEFAULTS.externalMessageStreamingOutput === false,
+    bothSettingsPersistSeparately: variants.every(result => (
+      result.submittedPatches.some(patch => (
+        Object.keys(patch).length === 1 && patch.appMessageStreamingOutput === true
+      ))
+      && result.submittedPatches.some(patch => (
+        Object.keys(patch).length === 1 && patch.externalMessageStreamingOutput === true
+      ))
+    )),
+    groupFitsSettingsViewport: variants.every(result => (
+      result.initial.groupVisible && result.initial.noHorizontalOverflow
+      && result.initial.rowRects.length === 2
+      && result.initial.rowRects.every(rect => rect.width > 350 && rect.height >= 50)
+    )),
+    themesKeepDistinctVisualTokens: themes.glass.initial.iconColor !== themes.healing.initial.iconColor
+      && themes.glass.initial.groupBorder !== themes.healing.initial.groupBorder
+      && switchSignature(themes.glass.afterExternalToggle)
+        !== switchSignature(themes.healing.afterExternalToggle),
+    aiHeadingIconsAreSemanticAndThemeScoped: variants.every(result => {
+      const icons = result.initial.headingIcons
+      const roles = icons.map(icon => icon.role)
+      return roles.join('|') === 'bubble-style|style-preview|long-message-reader|message-output'
+        && new Set(roles).size === 4
+        && new Set(icons.map(icon => icon.signature)).size === 4
+        && icons.every(icon => icon.signature && icon.backgroundImage !== 'none')
+    }) && themes.glass.initial.headingIcons[0].color !== themes.healing.initial.headingIcons[0].color
+      && themes.glass.initial.headingIcons[0].borderColor !== themes.healing.initial.headingIcons[0].borderColor,
+    noPageError: consoleMessages.filter(item => (
+      item.level === 'error' || /uncaught|unhandled/i.test(item.message || '')
+    )).length === 0,
+  }
+  return {
+    generatedAt: new Date().toISOString(),
+    outputDirectory: outDir,
+    window: win.getBounds(),
+    themes,
+    assertions,
+    passed: Object.values(assertions).every(Boolean),
+  }
+}
+
 async function run() {
   registerIPC()
   await app.whenReady()
@@ -659,6 +946,46 @@ async function run() {
     pages: [],
     characterLayouts: {},
     interactions: {},
+  }
+
+  if (aiPluginFolderOnly) {
+    const report = await runAIPluginFolderFocused(consoleMessages)
+    const reportPath = path.join(outDir, 'ai-plugin-folder.json')
+    fs.writeFileSync(reportPath, JSON.stringify(report, null, 2))
+    process.stdout.write(JSON.stringify({
+      reportPath,
+      passed: report.passed,
+      assertions: report.assertions,
+      themes: report.themes,
+    }, null, 2))
+    win.destroy()
+    if (!report.passed) {
+      app.exit(1)
+      return
+    }
+    app.quit()
+    return
+  }
+
+  if (messageOutputOnly) {
+    const report = await runMessageOutputSettingsFocused(consoleMessages)
+    const reportPath = path.join(outDir, 'message-output-settings.json')
+    fs.writeFileSync(reportPath, JSON.stringify(report, null, 2))
+    process.stdout.write(JSON.stringify({
+      reportPath,
+      passed: report.passed,
+      assertions: report.assertions,
+      screenshots: Object.fromEntries(Object.entries(report.themes).map(
+        ([theme, result]) => [theme, result.screenshots]
+      )),
+    }, null, 2))
+    win.destroy()
+    if (!report.passed) {
+      app.exit(1)
+      return
+    }
+    app.quit()
+    return
   }
 
   const readUpdateIndicator = `(() => {
@@ -870,7 +1197,7 @@ async function run() {
       before,
       after: input.checked,
       label: row.querySelector('strong').textContent.trim(),
-      hint: row.querySelector('small').textContent.replace(/\s+/g, ' ').trim(),
+      hint: row.querySelector('small').textContent.replace(/\\s+/g, ' ').trim(),
     }
     document.querySelector('.section-tab[data-section="characters"]').click()
     document.querySelector('[data-profile-tab="interactions"]').click()
@@ -1026,6 +1353,121 @@ async function run() {
     metrics.submittedPatches = settingsUpdates.slice(updatesBefore)
     results.interactions.bubbleStyles[theme] = metrics
   }
+
+  results.interactions.longMessageAutoExpand = {}
+  for (const theme of ['glass', 'healing']) {
+    snapshot.preferences = {
+      ...snapshot.preferences,
+      settingsTheme: theme,
+      longMessageCharacterThreshold: 45,
+      appLongMessageAutoExpand: false,
+      externalLongMessageAutoExpand: false,
+    }
+    win.webContents.send('state:changed', { snapshot: cloneSnapshot() })
+    await win.webContents.executeJavaScript(`(() => {
+      document.querySelector('.section-tab[data-section="ai"]').click()
+      const content = document.querySelector('.settings-section.ai-view')
+      const group = document.querySelector('.long-message-display-settings')
+      content.scrollTo({ top: Math.max(0, group.offsetTop - 88), behavior: 'auto' })
+    })()`)
+    await new Promise(resolve => setTimeout(resolve, 180))
+    const updatesBefore = settingsUpdates.length
+    const readSwitches = `(() => {
+      const group = document.querySelector('.long-message-display-settings')
+      const content = document.querySelector('.settings-section.ai-view')
+      const rows = [...group.querySelectorAll('.setting-row')]
+      const controls = [...group.querySelectorAll('[data-setting]')]
+      const threshold = group.querySelector('#long-message-character-threshold')
+      const inputs = Object.fromEntries(controls.map(input => [input.dataset.setting, input.checked]))
+      const switchStyles = controls.map(input => {
+        const track = input.nextElementSibling
+        const trackStyle = getComputedStyle(track)
+        const thumbStyle = getComputedStyle(track, '::after')
+        return {
+          key:input.dataset.setting,
+          checked:input.checked,
+          backgroundImage:trackStyle.backgroundImage,
+          backgroundColor:trackStyle.backgroundColor,
+          borderColor:trackStyle.borderColor,
+          boxShadow:trackStyle.boxShadow,
+          thumbBackgroundColor:thumbStyle.backgroundColor,
+          thumbBoxShadow:thumbStyle.boxShadow,
+        }
+      })
+      const rect = element => {
+        const box = element.getBoundingClientRect()
+        return { x:+box.x.toFixed(2), y:+box.y.toFixed(2), width:+box.width.toFixed(2), height:+box.height.toFixed(2), right:+box.right.toFixed(2), bottom:+box.bottom.toFixed(2) }
+      }
+      const groupStyle = getComputedStyle(group)
+      const iconStyle = getComputedStyle(group.querySelector('.long-message-display-icon'))
+      const thresholdStyle = getComputedStyle(threshold)
+      return {
+        theme:document.documentElement.dataset.settingsTheme,
+        title:group.querySelector('h3').textContent.trim(),
+        description:group.querySelector('.long-message-display-heading p').textContent.trim(),
+        keys:[...group.querySelectorAll('[data-setting]')].map(input => input.dataset.setting),
+        labels:rows.map(row => row.querySelector('strong').textContent.trim()),
+        hints:rows.map(row => row.querySelector('small').textContent.trim()),
+        checked:inputs,
+        threshold:{
+          value:Number(threshold.value),
+          min:Number(threshold.min),
+          max:Number(threshold.max),
+          borderColor:thresholdStyle.borderColor,
+          backgroundColor:thresholdStyle.backgroundColor,
+          color:thresholdStyle.color,
+        },
+        switchStyles,
+        groupRect:rect(group),
+        rowRects:rows.map(rect),
+        groupVisible:group.getBoundingClientRect().top >= content.getBoundingClientRect().top && group.getBoundingClientRect().bottom <= content.getBoundingClientRect().bottom,
+        noHorizontalOverflow:group.scrollWidth <= group.clientWidth + 1 && content.scrollWidth <= content.clientWidth + 1,
+        backgroundImage:groupStyle.backgroundImage,
+        borderColor:groupStyle.borderColor,
+        iconColor:iconStyle.color,
+      }
+    })()`
+    const initial = await win.webContents.executeJavaScript(readSwitches)
+    await win.webContents.executeJavaScript(`(() => {
+      const input = document.getElementById('long-message-character-threshold')
+      input.value = '60'
+      input.dispatchEvent(new Event('change', { bubbles: true }))
+    })()`)
+    await new Promise(resolve => setTimeout(resolve, 180))
+    const afterThreshold = await win.webContents.executeJavaScript(readSwitches)
+    await win.webContents.executeJavaScript(`document.querySelector('[data-setting="appLongMessageAutoExpand"]').click()`)
+    await new Promise(resolve => setTimeout(resolve, 180))
+    const afterAppToggle = await win.webContents.executeJavaScript(readSwitches)
+    await win.webContents.executeJavaScript(`document.querySelector('[data-setting="externalLongMessageAutoExpand"]').click()`)
+    await new Promise(resolve => setTimeout(resolve, 180))
+    const afterExternalToggle = await win.webContents.executeJavaScript(readSwitches)
+    await win.webContents.executeJavaScript(`(() => {
+      const input = document.getElementById('long-message-character-threshold')
+      input.value = '45'
+      input.dispatchEvent(new Event('change', { bubbles: true }))
+    })()`)
+    await new Promise(resolve => setTimeout(resolve, 180))
+    const screenshotState = await win.webContents.executeJavaScript(readSwitches)
+    win.webContents.invalidate()
+    await win.capturePage()
+    await new Promise(resolve => setTimeout(resolve, 80))
+    const screenshot = path.join(outDir, `${theme}-long-message-auto-expand-settings.png`)
+    fs.writeFileSync(screenshot, await win.capturePage().then(image => image.toPNG()))
+    results.interactions.longMessageAutoExpand[theme] = {
+      initial,
+      afterThreshold,
+      afterAppToggle,
+      afterExternalToggle,
+      screenshotState,
+      submittedPatches: settingsUpdates.slice(updatesBefore),
+      screenshot,
+    }
+  }
+  snapshot.preferences.appLongMessageAutoExpand = false
+  snapshot.preferences.externalLongMessageAutoExpand = false
+  snapshot.preferences.longMessageCharacterThreshold = 45
+  win.webContents.send('state:changed', { snapshot: cloneSnapshot() })
+  await new Promise(resolve => setTimeout(resolve, 120))
 
   results.interactions.contactAuthor = {}
   for (const theme of ['glass', 'healing']) {
@@ -1610,6 +2052,29 @@ async function run() {
   results.interactions.themeSwitch = themeSwitch
 
   settingsUpdates.length = 0
+  results.interactions.petBackgroundDefault = await win.webContents.executeJavaScript(`(async () => {
+    const toggle = document.querySelector('[data-setting="settingsPetBackground"]')
+    const background = document.querySelector('#settings-pet-background')
+    const warning = toggle.closest('.setting-row').querySelector('.setting-copy small').textContent.trim()
+    const readState = () => ({
+      checked: toggle.checked,
+      ready: background.classList.contains('is-ready'),
+      dynamicClass: background.classList.contains('is-dynamic'),
+      mode: background.dataset.backgroundMode || '',
+      modelId: background.dataset.modelId || '',
+    })
+    const initial = readState()
+    toggle.click()
+    await new Promise(resolve => setTimeout(resolve, 180))
+    const enabled = readState()
+    toggle.click()
+    await new Promise(resolve => setTimeout(resolve, 220))
+    const restored = readState()
+    return { warning, initial, enabled, restored }
+  })()`)
+  results.interactions.petBackgroundDefault.submittedPatches = [...settingsUpdates]
+
+  settingsUpdates.length = 0
   results.interactions.externalMessages = await win.webContents.executeJavaScript(`(async () => {
     const toggle = document.querySelector('[data-setting="externalMessagesEnabled"]')
     const service = document.querySelector('#external-message-service')
@@ -1836,6 +2301,17 @@ async function run() {
     pageEyebrowSizeUniformAcrossAllPages: pageEyebrowSizeIsUniform,
     behaviorSwitchRowsMatchReferenceSpacing: behaviorSwitchSpacingMatchesReference,
     mainSwitchesUseThemeAwareTranslucentSurfaces: mainSwitchStylesAreTranslucent,
+    staticPetBackgroundIsDefault: (() => {
+      const result = results.interactions.petBackgroundDefault
+      return result.warning === '默认显示静态宠物；开启会占用高 CPU。' &&
+        !result.initial.checked && result.initial.ready && !result.initial.dynamicClass &&
+        result.initial.mode === 'static' && result.initial.modelId === snapshot.currentModelId &&
+        result.enabled.checked && result.enabled.dynamicClass &&
+        !result.restored.checked && result.restored.ready && !result.restored.dynamicClass &&
+        result.restored.mode === 'static' &&
+        result.submittedPatches.some(patch => samePatch(patch, { settingsPetBackground: true })) &&
+        result.submittedPatches.some(patch => samePatch(patch, { settingsPetBackground: false }))
+    })(),
     heroTypographySupportsCjkLatinAndLongNames: heroTypographyIsAdaptive,
     contactAuthorMatchesReferenceAndWorks: contactAuthorIsValid,
     voicePickerSupportsFuzzySearchAndKeyboard: voicePickerIsValid,
@@ -1933,6 +2409,38 @@ async function run() {
       result.overflowCarousel.hasHorizontalOverflow && result.overflowCarousel.movedRight &&
       result.overflowCarousel.activePage === 1
     )),
+    longMessageAutoExpandControlsAreIndependentAndThemed: (() => {
+      const variants = Object.values(results.interactions.longMessageAutoExpand)
+      const glassSwitches = results.interactions.longMessageAutoExpand.glass.afterExternalToggle.switchStyles
+      const healingSwitches = results.interactions.longMessageAutoExpand.healing.afterExternalToggle.switchStyles
+      return variants.length === 2 && variants.every(result => (
+        result.initial.theme && result.initial.theme === result.afterExternalToggle.theme &&
+        result.initial.title === '长消息展示' && result.initial.description.includes('应用回复与外部消息') &&
+        result.initial.keys.join('|') === 'appLongMessageAutoExpand|externalLongMessageAutoExpand' &&
+        result.initial.labels.join('|') === '长消息字符数阈值|APP 长消息自动展开|外部长消息自动展开' &&
+        result.initial.hints[0].includes('默认 45 字') && result.initial.hints[0].includes('最小安全容量') &&
+        result.initial.hints[1].includes('聊天记录收起时') && result.initial.hints[2].includes('外部消息的最终内容') &&
+        result.initial.threshold.value === 45 && result.initial.threshold.min === 10 && result.initial.threshold.max === 500 &&
+        result.afterThreshold.threshold.value === 60 &&
+        result.screenshotState.threshold.value === 45 &&
+        !result.initial.checked.appLongMessageAutoExpand && !result.initial.checked.externalLongMessageAutoExpand &&
+        result.afterAppToggle.checked.appLongMessageAutoExpand && !result.afterAppToggle.checked.externalLongMessageAutoExpand &&
+        result.afterExternalToggle.checked.appLongMessageAutoExpand && result.afterExternalToggle.checked.externalLongMessageAutoExpand &&
+        result.afterExternalToggle.rowRects.length === 3 && result.afterExternalToggle.rowRects.every(row => row.width > 350 && row.height >= 54) &&
+        result.afterExternalToggle.rowRects[1].y > result.afterExternalToggle.rowRects[0].y &&
+        result.afterExternalToggle.rowRects[2].y > result.afterExternalToggle.rowRects[1].y &&
+        result.afterExternalToggle.groupVisible && result.afterExternalToggle.noHorizontalOverflow &&
+        result.afterExternalToggle.switchStyles.every(style => style.checked && style.backgroundImage !== 'none' && style.boxShadow !== 'none') &&
+        result.submittedPatches.some(patch => samePatch(patch, { longMessageCharacterThreshold: 60 })) &&
+        result.submittedPatches.some(patch => samePatch(patch, { appLongMessageAutoExpand: true })) &&
+        result.submittedPatches.some(patch => samePatch(patch, { externalLongMessageAutoExpand: true }))
+      )) && new Set(variants.map(result => result.afterExternalToggle.backgroundImage)).size === 2 &&
+        new Set(variants.map(result => result.afterExternalToggle.iconColor)).size === 2 &&
+        new Set(variants.map(result => result.initial.threshold.color)).size === 2 &&
+        glassSwitches.every(style => style.backgroundImage.includes('145, 109, 248') && style.backgroundImage.includes('104, 72, 238')) &&
+        healingSwitches.every(style => style.backgroundImage.includes('240, 112, 188') && style.backgroundImage.includes('199, 91, 225')) &&
+        glassSwitches[0].backgroundImage !== healingSwitches[0].backgroundImage
+    })(),
     presetPatchesValid,
     externalSnapshotUpdatesSelection: results.interactions.externalPresetState.quiet === 'true' && results.interactions.externalPresetState.natural === 'false' && results.interactions.externalPresetState.eco === 'false',
     characterProfileMatchesReferenceAndWorks: characterProfileIsValid,

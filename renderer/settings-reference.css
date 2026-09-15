@@ -4923,6 +4923,285 @@ kbd {
   gap: 7px;
 }
 
+.settings-section.ai-view .long-message-display-settings {
+  position: relative;
+  display: grid;
+  gap: 6px;
+  margin: 0 0 8px;
+  padding: 7px;
+  overflow: hidden;
+  border: 1px solid rgba(103, 92, 196, .13);
+  border-radius: 11px;
+  background: linear-gradient(145deg, rgba(255, 255, 255, .72), rgba(233, 238, 255, .5));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .96), 0 4px 14px rgba(76, 71, 142, .055);
+}
+
+.long-message-display-heading {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  min-height: 30px;
+}
+
+.long-message-display-heading > span:last-child {
+  min-width: 0;
+}
+
+.long-message-display-heading h3,
+.long-message-display-heading p {
+  margin: 0;
+}
+
+.long-message-display-heading h3 {
+  color: #15235f;
+  font-size: 12px;
+  line-height: 1.3;
+}
+
+.long-message-display-heading p {
+  margin-top: 1px;
+  color: #7180b5;
+  font-size: 9px;
+  line-height: 1.35;
+}
+
+.long-message-display-icon {
+  display: grid;
+  width: 28px;
+  height: 26px;
+  border-radius: 8px;
+  background: linear-gradient(145deg, rgba(122, 92, 242, .14), rgba(173, 147, 255, .08));
+  color: #7258e5;
+  place-items: center;
+}
+
+.long-message-display-icon svg {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.7;
+}
+
+/* AI section heading icons share one optical frame, while each glyph carries a
+   different task: bubble choice, visual preview, long-form reading, or output
+   routing. Keeping the distinction in the silhouette preserves it at 17px. */
+.settings-section.ai-view .ai-heading-icon {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  border: 1px solid rgba(111, 101, 226, .16);
+  background: linear-gradient(145deg, rgba(255, 255, 255, .68), rgba(122, 92, 242, .12));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, .9),
+    0 3px 9px rgba(75, 70, 151, .07);
+}
+
+.settings-section.ai-view .ai-heading-icon::before {
+  position: absolute;
+  z-index: 0;
+  top: -8px;
+  right: -6px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: rgba(137, 115, 247, .11);
+  content: "";
+}
+
+.settings-section.ai-view .ai-heading-icon svg {
+  position: relative;
+  z-index: 1;
+  overflow: visible;
+  filter: drop-shadow(0 1px 1px rgba(72, 61, 164, .08));
+}
+
+.settings-section.ai-view .ai-heading-icon .icon-secondary-stroke {
+  opacity: .68;
+}
+
+.settings-section.ai-view .ai-heading-icon .icon-accent-fill {
+  fill: currentColor;
+  stroke: none;
+}
+
+.settings-section.ai-view .ai-heading-icon .icon-glint {
+  fill: currentColor;
+  stroke: none;
+  opacity: .72;
+}
+
+.settings-section.ai-view [data-ai-heading-icon="bubble-style"] svg {
+  width: 18px;
+  height: 18px;
+  stroke-width: 1.65;
+}
+
+.settings-section.ai-view [data-ai-heading-icon="long-message-reader"] svg {
+  stroke-width: 1.72;
+}
+
+.settings-section.ai-view [data-ai-heading-icon="message-output"] svg {
+  stroke-width: 1.8;
+}
+
+.long-message-display-list {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 6px;
+}
+
+.settings-section.ai-view .long-message-display-list .setting-row {
+  grid-template-columns: 32px minmax(0, 1fr) 43px;
+  gap: 7px;
+  min-height: 54px;
+  padding: 6px 7px;
+  border-color: rgba(103, 92, 196, .11);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, .46);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .78);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+.settings-section.ai-view .long-message-display-list .long-message-threshold-row {
+  grid-template-columns: 32px minmax(0, 1fr) 70px;
+}
+
+.long-message-threshold-control {
+  display: grid;
+  grid-template-columns: minmax(0, 48px) auto;
+  align-items: center;
+  justify-content: end;
+  gap: 4px;
+  color: var(--accent);
+  font-size: 9px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.long-message-threshold-control input {
+  width: 48px;
+  height: 29px;
+  padding: 0 4px 0 7px;
+  border: 1px solid var(--settings-toggle-off-border);
+  border-radius: 8px;
+  outline: none;
+  background: color-mix(in srgb, var(--settings-toggle-icon-bg) 62%, rgba(255, 255, 255, .76));
+  box-shadow: inset 0 1px 1px rgba(71, 58, 115, .06), 0 2px 7px rgba(72, 58, 107, .045);
+  color: var(--accent);
+  font: 750 10.5px/1 "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+  text-align: center;
+  transition: border-color 150ms ease, background 150ms ease, box-shadow 150ms ease;
+}
+
+.long-message-threshold-control input:hover {
+  border-color: color-mix(in srgb, var(--accent) 36%, transparent);
+  background: rgba(255, 255, 255, .82);
+}
+
+.long-message-threshold-control input:focus-visible {
+  border-color: color-mix(in srgb, var(--accent) 58%, transparent);
+  background: rgba(255, 255, 255, .94);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 13%, transparent);
+}
+
+.settings-section.ai-view .long-message-display-list .setting-row-icon {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+}
+
+.settings-section.ai-view .long-message-display-list .setting-row-icon svg {
+  width: 17px;
+  height: 17px;
+}
+
+.settings-section.ai-view .long-message-display-list .setting-copy strong {
+  font-size: 10.5px;
+  line-height: 1.3;
+}
+
+.settings-section.ai-view .long-message-display-list .setting-copy small {
+  margin-top: 2px;
+  font-size: 8.5px;
+  line-height: 1.35;
+}
+
+:root[data-settings-theme] .settings-section.ai-view .long-message-display-list .switch-track {
+  border: 1px solid var(--settings-toggle-off-border);
+  background: var(--settings-toggle-off-bg);
+  box-shadow:
+    inset 0 1px 2px rgba(74, 63, 92, .08),
+    0 2px 7px rgba(72, 58, 107, .06);
+  transition:
+    background 150ms ease,
+    border-color 150ms ease,
+    box-shadow 150ms ease,
+    transform 120ms ease;
+}
+
+:root[data-settings-theme] .settings-section.ai-view .long-message-display-list .setting-row:hover
+  .switch-input:not(:checked):not(:disabled) + .switch-track {
+  background: var(--settings-toggle-off-bg-hover);
+}
+
+:root[data-settings-theme] .settings-section.ai-view .long-message-display-list .switch-track::after {
+  border: 1px solid rgba(255, 255, 255, .62);
+  background: var(--settings-toggle-thumb-bg);
+  box-shadow:
+    0 2px 5px rgba(44, 34, 65, .18),
+    inset 0 1px 0 rgba(255, 255, 255, .72);
+}
+
+:root[data-settings-theme] .settings-section.ai-view .long-message-display-list
+  .switch-input:checked + .switch-track {
+  border-color: var(--settings-toggle-on-border);
+  background: var(--settings-toggle-on-bg);
+  box-shadow:
+    0 4px 10px color-mix(in srgb, var(--settings-toggle-on-border) 70%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, .24);
+}
+
+:root[data-settings-theme] .settings-section.ai-view .long-message-display-list .setting-row:hover
+  .switch-input:checked:not(:disabled) + .switch-track {
+  background: var(--settings-toggle-on-bg-hover);
+}
+
+:root[data-settings-theme] .settings-section.ai-view .long-message-display-list .setting-row:active
+  .switch-input:not(:disabled) + .switch-track {
+  transform: scale(.96);
+}
+
+:root[data-settings-theme="healing"] .settings-section.ai-view .long-message-display-settings {
+  border-color: rgba(228, 105, 169, .14);
+  background: linear-gradient(145deg, rgba(255, 255, 255, .78), rgba(255, 238, 247, .58));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .97), 0 4px 14px rgba(196, 67, 137, .055);
+}
+
+:root[data-settings-theme="healing"] .long-message-display-icon,
+:root[data-settings-theme="healing"] .long-message-display-list .setting-row-icon {
+  background: linear-gradient(145deg, rgba(238, 89, 168, .13), rgba(255, 185, 221, .11));
+  color: #df54a0;
+}
+
+:root[data-settings-theme="healing"] .long-message-display-heading h3 {
+  color: #6c3459;
+}
+
+:root[data-settings-theme="healing"] .long-message-display-heading p,
+:root[data-settings-theme="healing"] .long-message-display-list .setting-copy small {
+  color: #9b7190;
+}
+
+:root[data-settings-theme="healing"] .settings-section.ai-view .long-message-display-list .setting-row {
+  border-color: rgba(228, 105, 169, .11);
+  background: rgba(255, 255, 255, .55);
+}
+
 .bubble-style-selection-panel,
 .bubble-style-preview-panel {
   position: relative;
@@ -5357,6 +5636,37 @@ kbd {
 :root[data-settings-theme="healing"] .bubble-preview-icon {
   background: linear-gradient(145deg, rgba(238, 89, 168, .13), rgba(255, 185, 221, .11));
   color: #df54a0;
+}
+
+:root[data-settings-theme="glass"] .settings-section.ai-view .ai-heading-icon {
+  background: linear-gradient(145deg, rgba(255, 255, 255, .68), rgba(122, 92, 242, .12));
+}
+
+:root[data-settings-theme="healing"] .settings-section.ai-view .ai-heading-icon {
+  border-color: rgba(225, 88, 160, .17);
+  border-radius: 9px 10px 9px 11px;
+  background: linear-gradient(145deg, rgba(255, 255, 255, .78), rgba(255, 221, 240, .48));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, .96),
+    0 3px 10px rgba(211, 78, 148, .08);
+}
+
+:root[data-settings-theme="healing"] .settings-section.ai-view .ai-heading-icon::before {
+  top: -7px;
+  right: -5px;
+  background: rgba(239, 105, 176, .13);
+}
+
+:root[data-settings-theme="healing"] .settings-section.ai-view .ai-heading-icon svg {
+  filter: drop-shadow(0 1px 1px rgba(196, 66, 137, .1));
+}
+
+:root[data-settings-theme="healing"] .settings-section.ai-view .ai-heading-icon .icon-secondary-stroke {
+  opacity: .76;
+}
+
+:root[data-settings-theme="healing"] .settings-section.ai-view .ai-heading-icon .icon-glint {
+  opacity: .86;
 }
 
 :root[data-settings-theme="healing"] .bubble-customizer-heading p,
@@ -7771,4 +8081,14 @@ kbd {
 @media (prefers-reduced-motion: reduce) {
   .external-message-service[data-status="starting"] .external-message-service-state,
   .external-message-service[data-status="stopping"] .external-message-service-state { animation: none; }
+}
+
+/* The path row is a second grid row. Its 32px action used to overflow the
+   fixed-height folder panel, so the panel's own overflow clipped its bottom.
+   Size the inner panel for both rows instead of adding space to the whole page. */
+:root[data-settings-theme][data-settings-view="ai"]
+  .settings-section.ai-view .plugin-folder-hint {
+  height: auto;
+  min-height: 74px;
+  padding: 6px 8px 8px;
 }

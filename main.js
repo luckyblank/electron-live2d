@@ -13,6 +13,7 @@ const {
   createInitialStoreDefaults,
 } = require('./config/defaults')
 const { BUBBLE_THEME_DEFINITIONS, normalizeBubbleStyles } = require('./config/bubble-styles')
+const { normalizeLongMessageCharacterThreshold } = require('./config/long-message')
 const { readEnvFile } = require('./config/environment')
 const { inspectModelArchive, inspectModelDirectory } = require('./model-inspector')
 const { captureSettingsPanel, normalizedSection } = require('./settings-screenshot')
@@ -28,18 +29,21 @@ const LONG_MESSAGE_READER_EDGE_MARGIN = 18
 const LONG_MESSAGE_OVERLAY_MARGIN = 12
 const LONG_MESSAGE_READER_TOP = 40
 const LONG_MESSAGE_READER_HEIGHT = 520
-// On the platforms where Electron supports shaped windows, reserve the maximum
-// reader width on both sides from the moment the (still transparent) pet host is
-// created. Opening and closing the reader then changes only the visible shape;
-// the native BrowserWindow surface and the 400x600 WebGL stage never resize or
-// change their local origin. This avoids Windows briefly compositing the model
-// against the full expanded surface before Chromium applies the stage offset.
-const USE_STABLE_LONG_MESSAGE_HOST = ['win32', 'linux'].includes(process.platform)
+const LONG_MESSAGE_READER_WINDOW_PADDING = LONG_MESSAGE_READER_EDGE_MARGIN
+const LONG_MESSAGE_READER_IDLE_DESTROY_MS = 15000
+// A transparent Windows BrowserWindow visibly rebuilds its DWM surface when
+// its native width/origin changes. Keep the Live2D host permanently 400x600
+// there and render a side reader in a separate lightweight window. Linux keeps
+// its conservative fixed shaped host; other platforms retain the compact
+// single-window layout until their native compositor behaviour is verified.
+const USE_DETACHED_LONG_MESSAGE_READER = process.platform === 'win32'
+const USE_STABLE_LONG_MESSAGE_HOST = process.platform === 'linux'
 const LONG_MESSAGE_HOST_GUTTER = LONG_MESSAGE_READER_GAP + LONG_MESSAGE_READER_MAX_WIDTH + LONG_MESSAGE_READER_EDGE_MARGIN
 const PET_HOST_WIDTH = PET_WIDTH + LONG_MESSAGE_HOST_GUTTER * 2
 const SETTINGS_WIDTH = 470
 const SETTINGS_HEIGHT = 760
 const COVER_CACHE_SUFFIX = '.centered-v4.png'
+const STATIC_PET_BACKGROUND_CACHE_SUFFIX = '.settings-background-v1.png'
 const POSITION_SAVE_DELAY = 180
 const CURSOR_NEAR_DISTANCE = 220
 const PET_VISIBLE_MARGIN = 80
@@ -109,9 +113,25 @@ let settingsWindowReadyToShow = false
 let settingsWindowActivationPending = false
 let settingsCaptureWindow = null
 let externalMessageTesterWindow = null
+let longMessageReaderWindow = null
+let longMessageReaderWindowReady = false
+let longMessageReaderDestroyTimer = null
+let longMessageReaderShapeWidth = 0
+let longMessageReaderState = {
+  open: false,
+  text: '',
+  fullText: '',
+  label: '伙伴',
+  source: '',
+  theme: 'glass',
+  hasVoice: false,
+  playing: false,
+  typing: false,
+}
 let tray = null
 let modelsCache = null
 let coversCache = null
+let staticPetBackgroundsCache = null
 const modelAssetCatalogs = new Map()
 const pendingModelPreviews = new Map()
 let modelPreviewSequence = 0
@@ -140,6 +160,7 @@ let longMessageReaderWidth = LONG_MESSAGE_READER_WIDTH
 let petLayoutTransitionActive = false
 let petWindowLayout = {
   expanded: false,
+  detached: false,
   side: 'none',
   mode: 'collapsed',
   readerWidth: 0,
@@ -155,6 +176,7 @@ let petWindowLayout = {
     height: PET_HEIGHT,
   },
   readerSlotBounds: null,
+  readerWindowBounds: null,
   revision: 0,
 }
 let aiPluginManager = null
@@ -321,11 +343,31 @@ function cachedCovers() {
   return map
 }
 
+function cachedStaticPetBackgrounds() {
+  if (staticPetBackgroundsCache) return staticPetBackgroundsCache
+  const map = {}
+  try {
+    const dir = coversDir()
+    if (fs.existsSync(dir)) {
+      for (const file of fs.readdirSync(dir)) {
+        if (file.toLowerCase().endsWith(STATIC_PET_BACKGROUND_CACHE_SUFFIX)) {
+          map[file.slice(0, -STATIC_PET_BACKGROUND_CACHE_SUFFIX.length)] = pathToFileURL(path.join(dir, file)).href
+        }
+      }
+    }
+  } catch (error) {
+    console.warn('Static pet background cache scan failed:', error.message)
+  }
+  staticPetBackgroundsCache = map
+  return map
+}
+
 function requestMissingCovers() {
   if (!petWindow || petWindow.isDestroyed() || petWindow.webContents.isDestroyed()) return
   const covers = cachedCovers()
+  const staticPetBackgrounds = cachedStaticPetBackgrounds()
   const missing = listModels()
-    .filter(model => model.status === 'ready' && !covers[model.id])
+    .filter(model => model.status === 'ready' && (!covers[model.id] || !staticPetBackgrounds[model.id]))
     .map(model => ({ id: model.id, name: model.name, path: model.path, format: model.format, modelType: model.modelType }))
   if (missing.length) sendToWindow(petWindow, 'covers:request', missing)
 }
@@ -697,9 +739,17 @@ function getPreferences() {
     reducedMotion: ['system', 'on', 'off'].includes(reducedMotion) ? reducedMotion : 'system',
     onboardingSeen: store.get('onboardingSeen') === true,
     backgroundDetection: store.get('backgroundDetection') === true,
-    settingsPetBackground: store.get('settingsPetBackground') !== false,
+    settingsPetBackground: store.get('settingsPetBackground') === true,
     appLongScreenshotEnabled: store.get('appLongScreenshotEnabled') === true,
     externalMessagesEnabled: store.get('externalMessagesEnabled') === true,
+    longMessageCharacterThreshold: normalizeLongMessageCharacterThreshold(
+      store.get('longMessageCharacterThreshold'),
+      preferenceDefaults.longMessageCharacterThreshold
+    ),
+    appLongMessageAutoExpand: store.get('appLongMessageAutoExpand') === true,
+    externalLongMessageAutoExpand: store.get('externalLongMessageAutoExpand') === true,
+    appMessageStreamingOutput: store.get('appMessageStreamingOutput') === true,
+    externalMessageStreamingOutput: store.get('externalMessageStreamingOutput') === true,
     settingsTheme: ['glass', 'healing'].includes(store.get('settingsTheme'))
       ? store.get('settingsTheme')
       : preferenceDefaults.settingsTheme,
@@ -716,6 +766,7 @@ function getSnapshot() {
     appVersion: app.getVersion(),
     models: modelsWithNicknames(),
     covers: cachedCovers(),
+    staticPetBackgrounds: cachedStaticPetBackgrounds(),
     modelsFolder: userModelsDir(),
     pluginsFolder: userPluginsDir(),
     ttsFolder: userTtsDir(),
@@ -762,7 +813,7 @@ function sendToWindow(target, channel, payload) {
   }
 }
 
-function shouldCaptureSettingsPetBackground() {
+function shouldDisplaySettingsPetBackground() {
   return Boolean(
     getPreferences().settingsPetBackground &&
     settingsWindow && !settingsWindow.isDestroyed() &&
@@ -770,10 +821,19 @@ function shouldCaptureSettingsPetBackground() {
   )
 }
 
+function shouldCaptureSettingsPetBackground() {
+  return shouldDisplaySettingsPetBackground()
+}
+
 function syncSettingsPetBackgroundCapture() {
   const active = shouldCaptureSettingsPetBackground()
   sendToWindow(petWindow, 'settings:pet-background-capture', active)
-  if (!active) sendToWindow(settingsWindow, 'settings:pet-background-frame', null)
+  // Clear the last valid frame only when the feature is disabled or the
+  // settings surface itself is no longer shown. A visible unfocused settings
+  // window deliberately keeps animating so the background never appears stuck.
+  if (!shouldDisplaySettingsPetBackground()) {
+    sendToWindow(settingsWindow, 'settings:pet-background-frame', null)
+  }
 }
 
 function broadcastState(reason = 'updated') {
@@ -827,11 +887,11 @@ function refreshPetShapeForCurrentDisplay() {
 }
 
 // Pure geometry resolver for the long-message surface. `stageBounds` always
-// describes the fixed 400x600 Live2D viewport in screen DIP coordinates. On
-// Windows/Linux the transparent host permanently reserves both reader gutters,
-// so expanded/collapsed layouts share identical native bounds and stage origin.
-// Keeping this function independent from Electron makes the side/overlay matrix
-// straightforward to exercise in QA.
+// describes the fixed 400x600 Live2D viewport in screen DIP coordinates.
+// Windows side layouts keep that native host untouched and return a separate
+// readerWindowBounds. A stable Linux host permanently reserves both gutters;
+// other platforms resize one host. Keeping this independent from Electron
+// makes the side/overlay matrix straightforward to exercise in QA.
 function resolveLongMessageWindowLayout({
   stageBounds,
   workArea,
@@ -863,6 +923,7 @@ function resolveLongMessageWindowLayout({
   if (!expanded) {
     return {
       expanded: false,
+      detached: false,
       side: 'none',
       mode: 'collapsed',
       readerWidth: 0,
@@ -874,6 +935,7 @@ function resolveLongMessageWindowLayout({
       stageBounds: stage,
       windowBounds: collapsedWindowBounds,
       readerSlotBounds: null,
+      readerWindowBounds: null,
     }
   }
 
@@ -887,10 +949,34 @@ function resolveLongMessageWindowLayout({
   const leftRoom = stageX - area.x
 
   if (rightRoom >= requiredExtension) {
+    if (USE_DETACHED_LONG_MESSAGE_READER) {
+      return {
+        expanded: true,
+        detached: true,
+        side: 'right',
+        mode: 'right',
+        readerWidth: desiredReaderWidth,
+        gap: desiredGap,
+        stageOffsetX: 0,
+        readerOffsetX: LONG_MESSAGE_READER_WINDOW_PADDING,
+        outerWidth: PET_WIDTH,
+        outerHeight: PET_HEIGHT,
+        stageBounds: stage,
+        windowBounds: { ...stage },
+        readerSlotBounds: null,
+        readerWindowBounds: {
+          x: stageRight + desiredGap - LONG_MESSAGE_READER_WINDOW_PADDING,
+          y: stageY,
+          width: desiredReaderWidth + LONG_MESSAGE_READER_WINDOW_PADDING * 2,
+          height: PET_HEIGHT,
+        },
+      }
+    }
     const stageOffsetX = USE_STABLE_LONG_MESSAGE_HOST ? LONG_MESSAGE_HOST_GUTTER : 0
     const readerOffsetX = stageOffsetX + PET_WIDTH + desiredGap
     return {
       expanded: true,
+      detached: false,
       side: 'right',
       mode: 'right',
       readerWidth: desiredReaderWidth,
@@ -912,16 +998,42 @@ function resolveLongMessageWindowLayout({
         width: desiredReaderWidth,
         height: LONG_MESSAGE_READER_HEIGHT,
       },
+      readerWindowBounds: null,
     }
   }
 
   if (leftRoom >= requiredExtension) {
+    if (USE_DETACHED_LONG_MESSAGE_READER) {
+      const cardX = stageX - desiredGap - desiredReaderWidth
+      return {
+        expanded: true,
+        detached: true,
+        side: 'left',
+        mode: 'left',
+        readerWidth: desiredReaderWidth,
+        gap: desiredGap,
+        stageOffsetX: 0,
+        readerOffsetX: LONG_MESSAGE_READER_WINDOW_PADDING,
+        outerWidth: PET_WIDTH,
+        outerHeight: PET_HEIGHT,
+        stageBounds: stage,
+        windowBounds: { ...stage },
+        readerSlotBounds: null,
+        readerWindowBounds: {
+          x: cardX - LONG_MESSAGE_READER_WINDOW_PADDING,
+          y: stageY,
+          width: desiredReaderWidth + LONG_MESSAGE_READER_WINDOW_PADDING * 2,
+          height: PET_HEIGHT,
+        },
+      }
+    }
     const stageOffsetX = USE_STABLE_LONG_MESSAGE_HOST ? LONG_MESSAGE_HOST_GUTTER : requiredExtension
     const readerOffsetX = USE_STABLE_LONG_MESSAGE_HOST
       ? stageOffsetX - desiredGap - desiredReaderWidth
       : LONG_MESSAGE_READER_EDGE_MARGIN
     return {
       expanded: true,
+      detached: false,
       side: 'left',
       mode: 'left',
       readerWidth: desiredReaderWidth,
@@ -943,6 +1055,7 @@ function resolveLongMessageWindowLayout({
         width: desiredReaderWidth,
         height: LONG_MESSAGE_READER_HEIGHT,
       },
+      readerWindowBounds: null,
     }
   }
 
@@ -951,6 +1064,7 @@ function resolveLongMessageWindowLayout({
   const readerOffsetX = overlayStageOffsetX + Math.round((PET_WIDTH - overlayWidth) / 2)
   return {
     expanded: true,
+    detached: false,
     side: 'overlay',
     mode: 'overlay',
     readerWidth: overlayWidth,
@@ -967,12 +1081,14 @@ function resolveLongMessageWindowLayout({
       width: overlayWidth,
       height: LONG_MESSAGE_READER_HEIGHT,
     },
+    readerWindowBounds: null,
   }
 }
 
 function petWindowLayoutPayload(layout = petWindowLayout) {
   return {
     expanded: Boolean(layout.expanded),
+    detached: Boolean(layout.detached),
     side: layout.side,
     mode: layout.mode,
     readerWidth: layout.readerWidth,
@@ -989,7 +1105,7 @@ function petWindowLayoutPayload(layout = petWindowLayout) {
 
 function samePetWindowLayoutGeometry(left, right) {
   return Boolean(left && right) && [
-    'expanded', 'side', 'mode', 'readerWidth', 'gap', 'stageOffsetX',
+    'expanded', 'detached', 'side', 'mode', 'readerWidth', 'gap', 'stageOffsetX',
     'readerOffsetX', 'outerWidth', 'outerHeight',
   ].every(key => left[key] === right[key])
 }
@@ -1118,9 +1234,9 @@ function applyPetInteractionRegion() {
     // 400x600 舞台与阅读卡视觉区域，空白仍然穿透到桌面。
     const useFullStage = petChatOpen || locked || preferences.backgroundDetection
     const regions = [useFullStage ? fullStage : translateStageRegion(interactionRegionFromBounds())]
-    // Unsupported legacy hosts can still use the dynamic left-side hand-off.
-    // During it expose only the pet stage. Stable shaped hosts never enter this
-    // branch because their stage offset and native bounds are invariant.
+    // Dynamic hosts use a captured-stage hand-off when a left-side reader
+    // changes the window origin. During it expose only the pet stage. Stable
+    // shaped hosts never enter this branch because their stage origin is fixed.
     if (!petLayoutTransitionActive && !longMessageLayoutOpen && !useFullStage && speechBubbleBounds) {
       regions.push(translateStageRegion(speechBubbleBounds))
     }
@@ -1211,7 +1327,7 @@ function persistPetPosition() {
   store.set({ windowX: stage.x, windowY: stage.y })
 }
 
-function placePetWindow(x, y) {
+function placePetWindow(x, y, options = {}) {
   if (!petWindow || petWindow.isDestroyed()) return
   const stageBounds = {
     x: Math.round(x),
@@ -1236,13 +1352,22 @@ function placePetWindow(x, y) {
   const currentBounds = petWindow.getBounds()
   const targetBounds = petWindowLayout.windowBounds
   const nativeBoundsChanged = ['x', 'y', 'width', 'height'].some(key => currentBounds[key] !== targetBounds[key])
-  if (nativeBoundsChanged) petWindow.setBounds({ ...targetBounds }, false)
+  // A layout-only Windows reader transaction must not touch the pet HWND at
+  // all—even correcting a one-DIP fractional-scale readback here can rebuild
+  // the transparent DWM surface. Ordinary drag/preset placement still writes
+  // complete bounds so its DPI rounding error remains bounded.
+  if (nativeBoundsChanged && options.preserveNativeBounds !== true) {
+    petWindow.setBounds({ ...targetBounds }, false)
+  }
+  // The Windows reader follows the stage in its own native surface. Crucially,
+  // opening/closing it never changes the Live2D BrowserWindow bounds above.
+  syncLongMessageReaderWindow()
   // setShape 在 Windows 上保存的是按调用时 DPI 换算后的原生区域。
   // setBounds 让窗口跨屏后立刻重建一次 shape，不能等鼠标松开或下一次
   // 命中蒙版上报，否则拖动途中模型会按旧显示器比例被裁掉。
   if (layoutChanged) {
     // Reader visibility/side changes alter the shaped native region even when
-    // the stable host bounds and DPI stay identical.
+    // the Linux stable-host bounds and DPI stay identical.
     applyPetInteractionRegion()
     sendPetWindowLayout()
   } else {
@@ -1262,6 +1387,206 @@ function schedulePositionSave() {
 function secureLocalWindow(target) {
   target.webContents.on('will-navigate', event => event.preventDefault())
   target.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+}
+
+function isLongMessageReaderWindowSender(event) {
+  return Boolean(
+    event && event.sender && longMessageReaderWindow && !longMessageReaderWindow.isDestroyed() &&
+    !longMessageReaderWindow.webContents.isDestroyed() &&
+    event.sender.id === longMessageReaderWindow.webContents.id
+  )
+}
+
+function normalizeLongMessageReaderState(payload) {
+  const value = payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : {}
+  return {
+    open: Boolean(value.open),
+    text: typeof value.text === 'string' ? value.text.slice(0, CLIPBOARD_TEXT_MAX_LENGTH) : '',
+    fullText: typeof value.fullText === 'string'
+      ? value.fullText.slice(0, CLIPBOARD_TEXT_MAX_LENGTH)
+      : typeof value.text === 'string' ? value.text.slice(0, CLIPBOARD_TEXT_MAX_LENGTH) : '',
+    label: typeof value.label === 'string' && value.label.trim()
+      ? value.label.trim().slice(0, 120)
+      : '伙伴',
+    source: value.source === 'external' ? 'external' : '',
+    theme: value.theme === 'healing' ? 'healing' : 'glass',
+    hasVoice: Boolean(value.hasVoice),
+    playing: Boolean(value.hasVoice && value.playing),
+    typing: Boolean(value.typing),
+  }
+}
+
+function longMessageReaderWindowPayload() {
+  return {
+    ...longMessageReaderState,
+    open: Boolean(
+      longMessageReaderState.open && longMessageLayoutOpen && petWindowLayout.detached
+    ),
+    side: ['left', 'right'].includes(petWindowLayout.side) ? petWindowLayout.side : 'right',
+    readerWidth: petWindowLayout.readerWidth || LONG_MESSAGE_READER_WIDTH,
+    offsetX: LONG_MESSAGE_READER_WINDOW_PADDING,
+    top: LONG_MESSAGE_READER_TOP,
+    height: LONG_MESSAGE_READER_HEIGHT,
+    revision: petWindowLayout.revision,
+  }
+}
+
+function sendLongMessageReaderWindowState() {
+  if (
+    !longMessageReaderWindow || longMessageReaderWindow.isDestroyed() ||
+    !longMessageReaderWindowReady || longMessageReaderWindow.webContents.isDestroyed()
+  ) return false
+  sendToWindow(longMessageReaderWindow, 'long-message-reader:state', longMessageReaderWindowPayload())
+  return true
+}
+
+function cancelLongMessageReaderWindowDestroy() {
+  if (longMessageReaderDestroyTimer) clearTimeout(longMessageReaderDestroyTimer)
+  longMessageReaderDestroyTimer = null
+}
+
+function scheduleLongMessageReaderWindowDestroy() {
+  cancelLongMessageReaderWindowDestroy()
+  if (!longMessageReaderWindow || longMessageReaderWindow.isDestroyed()) return
+  longMessageReaderDestroyTimer = setTimeout(() => {
+    longMessageReaderDestroyTimer = null
+    if (longMessageLayoutOpen || !longMessageReaderWindow || longMessageReaderWindow.isDestroyed()) return
+    longMessageReaderWindow.destroy()
+  }, LONG_MESSAGE_READER_IDLE_DESTROY_MS)
+}
+
+function hideLongMessageReaderWindow() {
+  if (!longMessageReaderWindow || longMessageReaderWindow.isDestroyed()) return
+  if (longMessageReaderWindow.isVisible()) longMessageReaderWindow.hide()
+  scheduleLongMessageReaderWindowDestroy()
+}
+
+function applyLongMessageReaderWindowBounds(layout = petWindowLayout) {
+  if (!longMessageReaderWindow || longMessageReaderWindow.isDestroyed()) return false
+  const bounds = layout && layout.readerWindowBounds
+  if (!bounds) return false
+  const targetBounds = {
+    x: Math.round(bounds.x),
+    y: Math.round(bounds.y),
+    width: Math.round(bounds.width),
+    height: Math.round(bounds.height),
+  }
+  const currentBounds = longMessageReaderWindow.getBounds()
+  if (['x', 'y', 'width', 'height'].some(key => currentBounds[key] !== targetBounds[key])) {
+    longMessageReaderWindow.setBounds(targetBounds, false)
+  }
+  if (
+    ['win32', 'linux'].includes(process.platform) &&
+    longMessageReaderShapeWidth !== targetBounds.width
+  ) {
+    try {
+      longMessageReaderWindow.setShape([{
+        // The 18px window padding begins four pixels inside the pet's 14px
+        // visual gap. Restrict the native shape to the card/tail overflow
+        // (10px) so the auxiliary HWND never steals clicks from the pet edge.
+        x: Math.max(0, LONG_MESSAGE_READER_WINDOW_PADDING - 10),
+        y: Math.max(0, LONG_MESSAGE_READER_TOP - LONG_MESSAGE_READER_WINDOW_PADDING),
+        width: targetBounds.width - Math.max(0, LONG_MESSAGE_READER_WINDOW_PADDING - 10) * 2,
+        height: Math.min(
+          PET_HEIGHT,
+          LONG_MESSAGE_READER_HEIGHT + LONG_MESSAGE_READER_WINDOW_PADDING * 2
+        ),
+      }])
+      longMessageReaderShapeWidth = targetBounds.width
+    } catch (error) {
+      console.warn('Failed to apply long-message reader shape:', error.message)
+    }
+  }
+  return true
+}
+
+function createLongMessageReaderWindow(layout = petWindowLayout) {
+  if (longMessageReaderWindow && !longMessageReaderWindow.isDestroyed()) return longMessageReaderWindow
+  const bounds = layout.readerWindowBounds || {
+    x: 0,
+    y: 0,
+    width: LONG_MESSAGE_READER_WIDTH + LONG_MESSAGE_READER_WINDOW_PADDING * 2,
+    height: PET_HEIGHT,
+  }
+  longMessageReaderWindowReady = false
+  longMessageReaderShapeWidth = 0
+  const targetWindow = new BrowserWindow({
+    x: Math.round(bounds.x),
+    y: Math.round(bounds.y),
+    width: Math.round(bounds.width),
+    height: Math.round(bounds.height),
+    show: false,
+    transparent: true,
+    backgroundColor: '#00000000',
+    title: '',
+    frame: false,
+    thickFrame: false,
+    roundedCorners: false,
+    autoHideMenuBar: true,
+    alwaysOnTop: getPreferences().alwaysOnTop,
+    hasShadow: false,
+    skipTaskbar: true,
+    resizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    icon: path.join(__dirname, 'resources', 'icon.png'),
+    webPreferences: {
+      preload: path.join(__dirname, 'long-message-preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      webSecurity: true,
+      // The window begins hidden and reports readiness after one populated
+      // requestAnimationFrame. Hidden-page throttling would delay that first
+      // frame and make expansion feel intermittent.
+      backgroundThrottling: false,
+    },
+  })
+  longMessageReaderWindow = targetWindow
+  secureLocalWindow(targetWindow)
+  targetWindow.setMenu(null)
+  targetWindow.setMenuBarVisibility(false)
+  targetWindow.setTitle('')
+  targetWindow.setBackgroundColor('#00000000')
+  targetWindow.webContents.on('page-title-updated', event => event.preventDefault())
+  targetWindow.webContents.on('did-finish-load', () => {
+    if (targetWindow.isDestroyed() || longMessageReaderWindow !== targetWindow) return
+    longMessageReaderWindowReady = true
+    applyLongMessageReaderWindowBounds(petWindowLayout)
+    sendLongMessageReaderWindowState()
+  })
+  targetWindow.webContents.on('console-message', details => {
+    const { level, message, lineNumber, sourceId } = details
+    console.log(`Long-message renderer [${level}] ${sourceId}:${lineNumber} -> ${message}`)
+  })
+  targetWindow.on('closed', () => {
+    if (longMessageReaderWindow !== targetWindow) return
+    longMessageReaderWindow = null
+    longMessageReaderWindowReady = false
+    longMessageReaderShapeWidth = 0
+    cancelLongMessageReaderWindowDestroy()
+  })
+  targetWindow.loadFile(path.join(__dirname, 'renderer', 'long-message-reader.html')).catch(error => {
+    console.warn('Long-message reader failed to load:', error.message)
+  })
+  applyLongMessageReaderWindowBounds(layout)
+  syncWindowLevels()
+  return targetWindow
+}
+
+function syncLongMessageReaderWindow() {
+  if (
+    !USE_DETACHED_LONG_MESSAGE_READER || !longMessageLayoutOpen ||
+    !petWindowLayout.detached || !petWindowLayout.readerWindowBounds || petOffScreen
+  ) {
+    hideLongMessageReaderWindow()
+    return false
+  }
+  cancelLongMessageReaderWindowDestroy()
+  createLongMessageReaderWindow(petWindowLayout)
+  applyLongMessageReaderWindowBounds(petWindowLayout)
+  sendLongMessageReaderWindowState()
+  return true
 }
 
 function settingsWindowHeight() {
@@ -1423,6 +1748,7 @@ function createPetWindow() {
   const preferences = getPreferences()
   longMessageLayoutOpen = false
   longMessageReaderBounds = null
+  longMessageReaderState = normalizeLongMessageReaderState(null)
   petLayoutTransitionActive = false
   const initialStageBounds = { ...position, width: PET_WIDTH, height: PET_HEIGHT }
   petWindowLayout = {
@@ -1507,6 +1833,9 @@ function createPetWindow() {
   })
   petWindow.on('closed', () => {
     stopCursorTracking()
+    if (longMessageReaderWindow && !longMessageReaderWindow.isDestroyed()) {
+      longMessageReaderWindow.destroy()
+    }
     petWindow = null
     longMessageLayoutOpen = false
     longMessageReaderBounds = null
@@ -1903,7 +2232,9 @@ function setPetLongMessageLayout(open, preferredWidth = longMessageReaderWidth) 
   const stage = currentPetStageBounds()
   longMessageLayoutOpen = Boolean(open)
   if (!longMessageLayoutOpen) longMessageReaderBounds = null
-  placePetWindow(stage.x, stage.y)
+  placePetWindow(stage.x, stage.y, {
+    preserveNativeBounds: USE_DETACHED_LONG_MESSAGE_READER,
+  })
   // placePetWindow sends an asynchronous notification whenever native geometry
   // changed; invoke callers also receive the authoritative layout immediately.
   return petWindowLayoutPayload()
@@ -2418,6 +2749,7 @@ function syncWindowLevels() {
   // setAlwaysOnTop 会改变原生窗口样式。状态未变化时跳过调用，避免透明
   // WebGL 表面被无意义地移出并重新加入 DWM 合成树。
   applyAlwaysOnTop(petWindow, alwaysOnTop, 'screen-saver')
+  applyAlwaysOnTop(longMessageReaderWindow, alwaysOnTop, 'screen-saver')
   // 两个工具窗口保持 normal：它们之间由系统焦点自然排序；置顶宠物
   // 则位于独立的 topmost Z 带。这样点击标题栏不会先遮住宠物、再把
   // 宠物抬回来，也就不会触发透明 WebGL 窗口的闪烁和抖动。
@@ -2443,6 +2775,14 @@ function updatePreferences(patch) {
     settingsPetBackground: value => Boolean(value),
     appLongScreenshotEnabled: value => Boolean(value),
     externalMessagesEnabled: value => Boolean(value),
+    longMessageCharacterThreshold: value => normalizeLongMessageCharacterThreshold(
+      value,
+      currentPreferences.longMessageCharacterThreshold
+    ),
+    appLongMessageAutoExpand: value => Boolean(value),
+    externalLongMessageAutoExpand: value => Boolean(value),
+    appMessageStreamingOutput: value => Boolean(value),
+    externalMessageStreamingOutput: value => Boolean(value),
     settingsTheme: value => ['glass', 'healing'].includes(value) ? value : currentPreferences.settingsTheme,
     bubbleStyles: value => normalizeBubbleStyles(value),
     chatGreeting: value => typeof value === 'string'
@@ -3139,6 +3479,37 @@ function setupIPC() {
     clipboard.writeText(value)
     return true
   })
+  ipcMain.on('pet:long-message-reader-state', (event, payload = {}) => {
+    if (!isPetWindowSender(event)) return
+    longMessageReaderState = normalizeLongMessageReaderState(payload)
+    if (!longMessageReaderState.open) {
+      hideLongMessageReaderWindow()
+      return
+    }
+    syncLongMessageReaderWindow()
+  })
+  ipcMain.on('long-message-reader:request-state', event => {
+    if (isLongMessageReaderWindowSender(event)) sendLongMessageReaderWindowState()
+  })
+  ipcMain.on('long-message-reader:action', (event, action) => {
+    if (!isLongMessageReaderWindowSender(event) || !['collapse', 'audio'].includes(action)) return
+    sendToWindow(petWindow, 'pet:long-message-reader-action', action)
+  })
+  ipcMain.on('long-message-reader:rendered', (event, revision) => {
+    if (
+      !isLongMessageReaderWindowSender(event) || !longMessageReaderWindowReady ||
+      !longMessageLayoutOpen || !petWindowLayout.detached || !longMessageReaderState.open ||
+      Number(revision) !== petWindowLayout.revision || petOffScreen ||
+      !petWindow || petWindow.isDestroyed() || !petWindow.isVisible()
+    ) return
+    cancelLongMessageReaderWindowDestroy()
+    applyLongMessageReaderWindowBounds(petWindowLayout)
+    syncWindowLevels()
+    // The reader renderer reports this only after its populated card has
+    // completed a paint frame, so Windows never presents an empty transparent
+    // auxiliary surface on first expansion.
+    if (!longMessageReaderWindow.isVisible()) longMessageReaderWindow.showInactive()
+  })
   ipcMain.handle('pet:long-message-layout', (event, payload = {}) => {
     if (!isPetWindowSender(event)) throw new Error('Unauthorized pet window sender')
     const request = payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : {}
@@ -3208,20 +3579,41 @@ function setupIPC() {
   })
   ipcMain.on('settings:pet-background-frame', (event, payload) => {
     if (!petWindow || petWindow.isDestroyed() || event.sender.id !== petWindow.webContents.id) return
-    if (!shouldCaptureSettingsPetBackground()) return
     if (payload === null) {
       sendToWindow(settingsWindow, 'settings:pet-background-frame', null)
+      return
+    }
+    const sequence = payload && Number(payload.sequence)
+    if (!Number.isSafeInteger(sequence) || sequence <= 0) return
+    const acknowledge = () => sendToWindow(petWindow, 'settings:pet-background-frame-ack', sequence)
+    if (!shouldCaptureSettingsPetBackground()) {
+      acknowledge()
       return
     }
     const current = selectedModel()
     if (
       !payload || typeof payload !== 'object' || !current ||
       payload.modelId !== current.id || payload.format !== current.format
-    ) return
+    ) {
+      acknowledge()
+      return
+    }
     const frame = payload.frame
     const byteLength = frame && Number(frame.byteLength)
-    if (!Number.isFinite(byteLength) || byteLength <= 0 || byteLength > 512 * 1024) return
+    if (!Number.isFinite(byteLength) || byteLength <= 0 || byteLength > 512 * 1024) {
+      acknowledge()
+      return
+    }
     sendToWindow(settingsWindow, 'settings:pet-background-frame', payload)
+  })
+  ipcMain.on('settings:pet-background-frame-ack', (event, sequence) => {
+    if (
+      !settingsWindow || settingsWindow.isDestroyed() ||
+      event.sender.id !== settingsWindow.webContents.id
+    ) return
+    const normalized = Number(sequence)
+    if (!Number.isSafeInteger(normalized) || normalized <= 0) return
+    sendToWindow(petWindow, 'settings:pet-background-frame-ack', normalized)
   })
   ipcMain.on('pet:bubble-bounds', (event, bounds) => {
     if (!isPetWindowSender(event)) return
@@ -3261,6 +3653,7 @@ function setupIPC() {
 
   ipcMain.on('pet:long-message-bounds', (event, bounds) => {
     if (!isPetWindowSender(event)) return
+    if (petWindowLayout.detached) return
     if (bounds === null) {
       longMessageReaderBounds = null
       applyPetInteractionRegion()
@@ -3303,15 +3696,25 @@ function setupIPC() {
     applyPetInteractionRegion()
   })
 
-  ipcMain.on('pet:save-cover', (_event, modelId, dataURL) => {
+  ipcMain.on('pet:save-cover', (_event, modelId, dataURL, staticBackgroundDataURL) => {
     if (typeof modelId !== 'string' || !/^[\w.-]+$/.test(modelId) || typeof dataURL !== 'string') return
     const match = dataURL.match(/^data:image\/png;base64,([A-Za-z0-9+/=]+)$/)
     if (!match) return
+    const staticBackgroundMatch = typeof staticBackgroundDataURL === 'string'
+      ? staticBackgroundDataURL.match(/^data:image\/png;base64,([A-Za-z0-9+/=]+)$/)
+      : null
     try {
       const dir = coversDir()
       if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
       fs.writeFileSync(path.join(dir, `${modelId}${COVER_CACHE_SUFFIX}`), Buffer.from(match[1], 'base64'))
+      if (staticBackgroundMatch) {
+        fs.writeFileSync(
+          path.join(dir, `${modelId}${STATIC_PET_BACKGROUND_CACHE_SUFFIX}`),
+          Buffer.from(staticBackgroundMatch[1], 'base64')
+        )
+      }
       coversCache = null
+      staticPetBackgroundsCache = null
       broadcastState('cover-ready')
     } catch (error) {
       console.warn('Cover save failed:', error.message)
@@ -3424,6 +3827,7 @@ app.on('before-quit', () => {
   stopCursorTracking()
   if (petShapeRefreshTimer) clearTimeout(petShapeRefreshTimer)
   petShapeRefreshTimer = null
+  cancelLongMessageReaderWindowDestroy()
   if (positionSaveTimer) clearTimeout(positionSaveTimer)
   persistPetPosition()
 })

@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain } = require('electron')
+const { app, BrowserWindow, ipcMain, nativeImage } = require('electron')
 const fs = require('fs')
 const os = require('os')
 const path = require('path')
@@ -31,6 +31,7 @@ let snapshot = {
     { id: 'broken', name: 'broken', displayName: 'broken', path: brokenPath, format: 'folder', cubismVersion: 3, status: 'ready', statusMessage: '' },
   ],
   covers: {},
+  staticPetBackgrounds: {},
   modelsFolder: path.join(outputDirectory, 'models'),
   pluginsFolder: path.join(outputDirectory, 'plugins'),
   preferences: {
@@ -66,6 +67,10 @@ let lastModelStatus = null
 let lastPetBackgroundPayload = null
 let frameCount = 0
 let nullFrameCount = 0
+let ackCount = 0
+let holdBackgroundAcks = false
+let heldBackgroundAck = 0
+let savedCoverPayload = null
 
 function cloneSnapshot() {
   return structuredClone(snapshot)
@@ -82,6 +87,25 @@ function broadcast(reason) {
 }
 
 function registerIPC() {
+  let longMessageLayoutRevision = 0
+  const resolveLongMessageLayout = (payload = {}) => {
+    const expanded = Boolean(payload && payload.open)
+    return {
+      expanded,
+      side: expanded ? 'right' : 'none',
+      mode: expanded ? 'right' : 'collapsed',
+      readerWidth: expanded ? 356 : 0,
+      gap: 14,
+      stageOffsetX: 0,
+      readerOffsetX: expanded ? 414 : 0,
+      outerWidth: expanded ? 770 : 400,
+      outerHeight: 600,
+      stageWidth: 400,
+      stageHeight: 600,
+      revision: ++longMessageLayoutRevision,
+    }
+  }
+
   ipcMain.handle('state:get-snapshot', () => cloneSnapshot())
   ipcMain.handle('settings:update', (_event, patch) => {
     snapshot.preferences = { ...snapshot.preferences, ...(patch || {}) }
@@ -113,6 +137,17 @@ function registerIPC() {
   ipcMain.handle('ai:speech-synthesize', () => ({ ok: false, skipped: true }))
   ipcMain.handle('ai:conversation-get', () => [])
   ipcMain.handle('ai:conversation-clear', () => true)
+  ipcMain.handle('pet:long-message-layout', (_event, payload) => resolveLongMessageLayout(payload))
+  ipcMain.on('pet:long-message-layout-preview', (event, payload) => {
+    event.returnValue = resolveLongMessageLayout(payload)
+  })
+  ipcMain.on('pet:long-message-layout-commit', (event, payload) => {
+    event.returnValue = resolveLongMessageLayout(payload)
+  })
+  ipcMain.handle('pet:long-message-transition-frame', () => '')
+  ipcMain.on('pet:long-message-transition-state', (event, active) => {
+    event.returnValue = Boolean(active)
+  })
 
   ipcMain.on('pet:hit-bounds', (_event, bounds) => { lastHitBounds = bounds })
   ipcMain.on('model:report-status', (_event, status) => {
@@ -134,6 +169,21 @@ function registerIPC() {
     frameCount++
     lastPetBackgroundPayload = { ...payload, frame: Buffer.from(frame) }
     if (settingsWindow && !settingsWindow.isDestroyed()) settingsWindow.webContents.send('settings:pet-background-frame', payload)
+  })
+  ipcMain.on('settings:pet-background-frame-ack', (_event, sequence) => {
+    const normalized = Number(sequence)
+    if (!Number.isSafeInteger(normalized) || normalized <= 0) return
+    ackCount++
+    if (holdBackgroundAcks) {
+      heldBackgroundAck = normalized
+      return
+    }
+    if (petWindow && !petWindow.isDestroyed()) {
+      petWindow.webContents.send('settings:pet-background-frame-ack', normalized)
+    }
+  })
+  ipcMain.on('pet:save-cover', (_event, modelId, coverDataURL, staticBackgroundDataURL) => {
+    savedCoverPayload = { modelId, coverDataURL, staticBackgroundDataURL }
   })
 }
 
@@ -185,6 +235,8 @@ async function backgroundState(label) {
       rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
       modelId: root.dataset.modelId || '',
       modelFormat: root.dataset.modelFormat || '',
+      backgroundMode: root.dataset.backgroundMode || '',
+      hasBackgroundSource: Boolean(root.dataset.backgroundSource),
       videoPet: root.classList.contains('is-video-pet'),
       canvasTransform: getComputedStyle(canvas).transform,
       canvasTransitionDuration: getComputedStyle(canvas).transitionDuration,
@@ -263,12 +315,88 @@ async function run() {
 
   await petWindow.loadFile(path.join(projectRoot, 'renderer', 'index.html'))
   const modelReady = await waitUntil(() => lastModelStatus?.phase === 'ready' && lastHitBounds)
+  petWindow.webContents.send('covers:request', [targetModel])
+  const staticBackgroundCacheGenerated = await waitUntil(() => Boolean(
+    savedCoverPayload && savedCoverPayload.modelId === targetModel.id &&
+    savedCoverPayload.coverDataURL && savedCoverPayload.staticBackgroundDataURL
+  ), 14000)
+  if (staticBackgroundCacheGenerated) {
+    snapshot.covers[targetModel.id] = savedCoverPayload.coverDataURL
+    snapshot.staticPetBackgrounds[targetModel.id] = savedCoverPayload.staticBackgroundDataURL
+  }
+  const generatedCacheSizes = staticBackgroundCacheGenerated
+    ? {
+        cover: nativeImage.createFromDataURL(savedCoverPayload.coverDataURL).getSize(),
+        staticBackground: nativeImage.createFromDataURL(savedCoverPayload.staticBackgroundDataURL).getSize(),
+      }
+    : null
   await settingsWindow.loadFile(path.join(projectRoot, 'renderer', 'settings.html'))
   await settingsWindow.webContents.insertCSS('*,*::before,*::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}')
   petWindow.webContents.send('settings:pet-background-capture', true)
 
   const firstFrameReady = await waitUntil(hasVisibleBackground)
   const states = [await backgroundState('first-open')]
+
+  const cadenceStartFrames = frameCount
+  await wait(1100)
+  const foregroundFramesPerSecond = frameCount - cadenceStartFrames
+
+  holdBackgroundAcks = true
+  heldBackgroundAck = 0
+  const backpressureStartFrames = frameCount
+  await wait(700)
+  const framesWhileAckHeld = frameCount - backpressureStartFrames
+  holdBackgroundAcks = false
+  if (heldBackgroundAck) {
+    petWindow.webContents.send('settings:pet-background-frame-ack', heldBackgroundAck)
+  }
+  const resumeStartFrames = frameCount
+  await wait(650)
+  const framesAfterAckReleased = frameCount - resumeStartFrames
+
+  petWindow.webContents.send('settings:pet-background-capture', false)
+  const pausedBackground = await backgroundState('capture-paused')
+  const pausedStartFrames = frameCount
+  await wait(700)
+  const framesWhileCapturePaused = frameCount - pausedStartFrames
+  petWindow.webContents.send('settings:pet-background-capture', true)
+  const resumedAfterPause = await waitUntil(() => frameCount > pausedStartFrames, 3000)
+
+  let staticBackgroundSizeTransition = null
+  if (requestedModelId === 'deepseek-pet') {
+    await settingsWindow.webContents.executeJavaScript(`
+      document.querySelector('.section-tab[data-section="system"]').click()
+    `)
+    await wait(350)
+    const dynamicState = await backgroundState('video-pet-dynamic-reference')
+    const dynamicScreenshot = await capture('settings-background-dynamic.png')
+    snapshot.preferences.settingsPetBackground = false
+    broadcast('video-pet-static-background')
+    const staticReady = await waitUntil(async () => {
+      const state = await backgroundState('video-pet-static-probe')
+      return state.ready && state.backgroundMode === 'static' && state.modelId === targetModel.id
+    })
+    const staticState = await backgroundState('video-pet-static-reference')
+    const staticScreenshot = await capture('settings-background-static.png')
+    const widthRatio = dynamicState.visibleBounds && staticState.visibleBounds
+      ? staticState.visibleBounds.width / dynamicState.visibleBounds.width
+      : 0
+    const heightRatio = dynamicState.visibleBounds && staticState.visibleBounds
+      ? staticState.visibleBounds.height / dynamicState.visibleBounds.height
+      : 0
+    staticBackgroundSizeTransition = {
+      staticReady,
+      dynamicState,
+      staticState,
+      widthRatio,
+      heightRatio,
+      dynamicScreenshot,
+      staticScreenshot,
+    }
+    snapshot.preferences.settingsPetBackground = true
+    broadcast('video-pet-dynamic-background-restored')
+    await waitUntil(async () => (await backgroundState('video-pet-dynamic-restore-probe')).backgroundMode === 'dynamic')
+  }
 
   let videoPetSwitchTransition = null
   if (requestedModelId === 'deepseek-pet') {
@@ -390,8 +518,24 @@ async function run() {
   const assertions = {
     modelReady,
     firstFrameReady,
+    staticBackgroundCacheGenerated,
+    staticBackgroundCacheHasExpectedDimensions: Boolean(
+      generatedCacheSizes && generatedCacheSizes.cover.width === 220 && generatedCacheSizes.cover.height === 280 &&
+      generatedCacheSizes.staticBackground.width === 240 && generatedCacheSizes.staticBackground.height === 360
+    ),
+    foregroundCaptureIsThrottled: foregroundFramesPerSecond >= 2 && foregroundFramesPerSecond <= 5,
+    backgroundDeliveryUsesBackpressure: framesWhileAckHeld <= 1 && framesAfterAckReleased >= 1,
+    capturePauseStopsFramesAndKeepsLastImage: framesWhileCapturePaused === 0 && pausedBackground.ready && pausedBackground.opaquePixels > 100,
+    captureResumesAfterPause: resumedAfterPause,
     videoPetBackgroundUsesVisibleFraming: requestedModelId !== 'deepseek-pet' || Boolean(
       firstRenderedVisibleBounds && firstRenderedVisibleBounds.width >= 150 && firstRenderedVisibleBounds.height >= 180
+    ),
+    videoPetStaticBackgroundKeepsDynamicSize: requestedModelId !== 'deepseek-pet' || Boolean(
+      staticBackgroundSizeTransition && staticBackgroundSizeTransition.staticReady &&
+      staticBackgroundSizeTransition.dynamicState.backgroundMode === 'dynamic' &&
+      staticBackgroundSizeTransition.staticState.backgroundMode === 'static' &&
+      staticBackgroundSizeTransition.widthRatio >= 0.9 && staticBackgroundSizeTransition.widthRatio <= 1.1 &&
+      staticBackgroundSizeTransition.heightRatio >= 0.9 && staticBackgroundSizeTransition.heightRatio <= 1.1
     ),
     videoPetSwitchClearsPreviousFrame: requestedModelId !== 'deepseek-pet' || Boolean(
       videoPetSwitchTransition && videoPetSwitchTransition.alternateReady && videoPetSwitchTransition.maxSnapshots === 0
@@ -418,11 +562,18 @@ async function run() {
     outputDirectory,
     frameCount,
     nullFrameCount,
+    ackCount,
+    foregroundFramesPerSecond,
+    framesWhileAckHeld,
+    framesAfterAckReleased,
+    framesWhileCapturePaused,
     framesDuringDrag,
     recoveryFrames,
+    generatedCacheSizes,
     lastModelStatus,
     lastHitBounds,
     renderedVisibleBounds: firstRenderedVisibleBounds,
+    staticBackgroundSizeTransition,
     videoPetSwitchTransition,
     states,
     screenshot,

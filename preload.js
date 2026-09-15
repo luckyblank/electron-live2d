@@ -23,7 +23,9 @@ window.petAPI = {
   dragMove: (screenX, screenY) => ipcRenderer.send('pet:drag-move', { screenX, screenY }),
   dragEnd: () => ipcRenderer.send('pet:drag-end'),
   onDragAborted: callback => subscribe('pet:drag-aborted', callback),
-  saveCover: (modelId, dataURL) => ipcRenderer.send('pet:save-cover', modelId, dataURL),
+  saveCover: (modelId, dataURL, staticBackgroundDataURL) => {
+    ipcRenderer.send('pet:save-cover', modelId, dataURL, staticBackgroundDataURL)
+  },
   onCoversRequest: callback => subscribe('covers:request', callback),
   reportHitBounds: bounds => ipcRenderer.send('pet:hit-bounds', bounds),
   reportBubbleBounds: bounds => ipcRenderer.send('pet:bubble-bounds', bounds),
@@ -34,6 +36,8 @@ window.petAPI = {
   capturePetTransitionFrame: () => ipcRenderer.invoke('pet:long-message-transition-frame'),
   setLongMessageTransitionState: active => ipcRenderer.sendSync('pet:long-message-transition-state', Boolean(active)),
   reportLongMessageBounds: bounds => ipcRenderer.send('pet:long-message-bounds', bounds),
+  updateLongMessageReaderState: state => ipcRenderer.send('pet:long-message-reader-state', state),
+  onLongMessageReaderAction: callback => subscribe('pet:long-message-reader-action', callback),
   onPetWindowLayoutChanged: callback => subscribe('pet:window-layout-changed', callback),
   writeClipboardText: text => ipcRenderer.invoke('clipboard:write-text', text),
   reportModelStatus: status => ipcRenderer.send('model:report-status', status),
@@ -54,4 +58,5 @@ window.petAPI = {
   onExternalMessage: callback => subscribe('external-message:event', callback),
   sendSettingsPetBackgroundFrame: payload => ipcRenderer.send('settings:pet-background-frame', payload),
   onSettingsPetBackgroundCapture: callback => subscribe('settings:pet-background-capture', callback),
+  onSettingsPetBackgroundFrameAck: callback => subscribe('settings:pet-background-frame-ack', callback),
 }

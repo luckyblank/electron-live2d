@@ -53,6 +53,25 @@ function wait(milliseconds) {
 }
 
 function registerIPC() {
+  let longMessageLayoutRevision = 0
+  const resolveLongMessageLayout = (payload = {}) => {
+    const expanded = Boolean(payload && payload.open)
+    return {
+      expanded,
+      side: expanded ? 'right' : 'none',
+      mode: expanded ? 'right' : 'collapsed',
+      readerWidth: expanded ? 356 : 0,
+      gap: 14,
+      stageOffsetX: 0,
+      readerOffsetX: expanded ? 414 : 0,
+      outerWidth: expanded ? 770 : 400,
+      outerHeight: 600,
+      stageWidth: 400,
+      stageHeight: 600,
+      revision: ++longMessageLayoutRevision,
+    }
+  }
+
   ipcMain.handle('state:get-snapshot', () => structuredClone(activeSnapshot))
   ipcMain.handle('settings:update', () => structuredClone(activeSnapshot))
   ipcMain.handle('model:select', () => ({ ok: true, snapshot: structuredClone(activeSnapshot) }))
@@ -61,6 +80,17 @@ function registerIPC() {
   ipcMain.handle('ai:speech-synthesize', () => ({ ok: false, skipped: true }))
   ipcMain.handle('ai:conversation-get', () => [])
   ipcMain.handle('ai:conversation-clear', () => true)
+  ipcMain.handle('pet:long-message-layout', (_event, payload) => resolveLongMessageLayout(payload))
+  ipcMain.on('pet:long-message-layout-preview', (event, payload) => {
+    event.returnValue = resolveLongMessageLayout(payload)
+  })
+  ipcMain.on('pet:long-message-layout-commit', (event, payload) => {
+    event.returnValue = resolveLongMessageLayout(payload)
+  })
+  ipcMain.handle('pet:long-message-transition-frame', () => '')
+  ipcMain.on('pet:long-message-transition-state', (event, active) => {
+    event.returnValue = Boolean(active)
+  })
   ipcMain.on('model:report-status', (_event, status) => { activeStatus = status })
   ipcMain.on('model:assets-report', (_event, assets) => { activeAssets = assets })
   ipcMain.on('model:preview-result', (_event, result) => {
