@@ -19,6 +19,8 @@ const { inspectModelArchive, inspectModelDirectory } = require('./model-inspecto
 const { captureSettingsPanel, normalizedSection } = require('./settings-screenshot')
 const { buildConditionalTrayItems } = require('./tray-menu')
 
+const WINDOWS_APP_USER_MODEL_ID = 'com.luckyblank.live2d'
+const APP_ICON_PATH = path.join(__dirname, 'resources', 'icon.png')
 const PET_WIDTH = 400
 const PET_HEIGHT = 600
 const LONG_MESSAGE_READER_WIDTH = 380
@@ -92,6 +94,12 @@ const DEFAULT_PET_GESTURES = Object.freeze([
 ])
 const appliedWindowLevels = new WeakMap()
 
+// Give every taskbar window the packaged app identity even during `electron .`
+// development runs. Without this, Windows groups a recreated settings window
+// under electron.app.Electron and can replace its explicit window icon with the
+// Electron executable icon after the previous taskbar button disappears.
+if (process.platform === 'win32') app.setAppUserModelId(WINDOWS_APP_USER_MODEL_ID)
+
 if (!app.requestSingleInstanceLock()) {
   app.quit()
   return
@@ -129,6 +137,7 @@ let longMessageReaderState = {
   typing: false,
 }
 let tray = null
+let applicationIcon = null
 let modelsCache = null
 let coversCache = null
 let staticPetBackgroundsCache = null
@@ -1529,7 +1538,7 @@ function createLongMessageReaderWindow(layout = petWindowLayout) {
     resizable: false,
     maximizable: false,
     fullscreenable: false,
-    icon: path.join(__dirname, 'resources', 'icon.png'),
+    icon: getApplicationIcon(),
     webPreferences: {
       preload: path.join(__dirname, 'long-message-preload.js'),
       contextIsolation: true,
@@ -1596,9 +1605,31 @@ function settingsWindowHeight() {
   return Math.min(SETTINGS_HEIGHT, availableHeight, Math.max(640, preferredHeight))
 }
 
+function getApplicationIcon() {
+  if (!applicationIcon) {
+    applicationIcon = nativeImage.createFromPath(APP_ICON_PATH)
+    if (applicationIcon.isEmpty()) console.warn(`Application icon could not be loaded: ${APP_ICON_PATH}`)
+  }
+  return applicationIcon.isEmpty() ? APP_ICON_PATH : applicationIcon
+}
+
+function applyTaskbarIdentity(targetWindow) {
+  if (!targetWindow || targetWindow.isDestroyed()) return
+  if (process.platform === 'win32') {
+    targetWindow.setAppDetails({ appId: WINDOWS_APP_USER_MODEL_ID })
+    targetWindow.setIcon(getApplicationIcon())
+  } else if (process.platform === 'linux') {
+    targetWindow.setIcon(getApplicationIcon())
+  }
+}
+
 function activateToolWindow(targetWindow) {
   if (!targetWindow || targetWindow.isDestroyed()) return false
   if (targetWindow.isMinimized()) targetWindow.restore()
+  // Reassert the native taskbar metadata before every show. This matters when
+  // the previous settings BrowserWindow was closed and Windows creates a fresh
+  // taskbar button for its replacement.
+  applyTaskbarIdentity(targetWindow)
   targetWindow.show()
   // 设置页和测试台都是普通窗口，Windows 会自然地把获得焦点的那个
   // 排到另一个上方。宠物只有在用户开启“始终置顶”时才进入 topmost
@@ -1684,7 +1715,7 @@ function createExternalMessageTesterWindow() {
     hasShadow: false,
     backgroundColor: '#00000000',
     title: '外部消息测试台',
-    icon: path.join(__dirname, 'resources', 'icon.png'),
+    icon: getApplicationIcon(),
     webPreferences: {
       preload: path.join(__dirname, 'external-message-tester-preload.js'),
       contextIsolation: true,
@@ -1694,6 +1725,7 @@ function createExternalMessageTesterWindow() {
     },
   })
   externalMessageTesterWindow = testerWindow
+  applyTaskbarIdentity(testerWindow)
   testerWindow.setMenu(null)
   testerWindow.setTitle('外部消息测试台')
   testerWindow.webContents.on('page-title-updated', event => {
@@ -1778,7 +1810,7 @@ function createPetWindow() {
     alwaysOnTop: preferences.alwaysOnTop,
     hasShadow: false,
     skipTaskbar: true,
-    icon: path.join(__dirname, 'resources', 'icon.png'),
+    icon: getApplicationIcon(),
     resizable: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -1872,7 +1904,7 @@ function createSettingsWindow() {
     alwaysOnTop: false,
     skipTaskbar: false,
     title: '桌面伙伴',
-    icon: path.join(__dirname, 'resources', 'icon.png'),
+    icon: getApplicationIcon(),
     webPreferences: {
       preload: path.join(__dirname, 'settings-preload.js'),
       contextIsolation: true,
@@ -1882,33 +1914,34 @@ function createSettingsWindow() {
     },
   })
 
-  secureLocalWindow(settingsWindow)
-  settingsWindow.setTitle('桌面伙伴')
-  settingsWindow.webContents.on('page-title-updated', event => {
+  const targetWindow = settingsWindow
+  applyTaskbarIdentity(targetWindow)
+  secureLocalWindow(targetWindow)
+  targetWindow.setTitle('桌面伙伴')
+  targetWindow.webContents.on('page-title-updated', event => {
     event.preventDefault()
-    if (!settingsWindow.isDestroyed()) settingsWindow.setTitle('桌面伙伴')
+    if (!targetWindow.isDestroyed()) targetWindow.setTitle('桌面伙伴')
   })
-  settingsWindow.loadFile(path.join(__dirname, 'renderer', 'settings.html'))
-  settingsWindow.webContents.on('did-finish-load', syncSettingsPetBackgroundCapture)
-  settingsWindow.webContents.on('console-message', details => {
+  targetWindow.loadFile(path.join(__dirname, 'renderer', 'settings.html'))
+  targetWindow.webContents.on('did-finish-load', syncSettingsPetBackgroundCapture)
+  targetWindow.webContents.on('console-message', details => {
     const { level, message, lineNumber, sourceId } = details
     console.log(`Settings renderer [${level}] ${sourceId}:${lineNumber} -> ${message}`)
   })
 
-  settingsWindow.on('show', () => {
+  targetWindow.on('show', () => {
     if (store.get('initialSettingsShown') !== true) store.set('initialSettingsShown', true)
     syncWindowLevels()
     updateTrayMenu()
     broadcastState('settings-opened')
     syncSettingsPetBackgroundCapture()
   })
-  settingsWindow.on('hide', () => {
+  targetWindow.on('hide', () => {
     syncWindowLevels()
     updateTrayMenu()
     syncSettingsPetBackgroundCapture()
   })
 
-  const targetWindow = settingsWindow
   targetWindow.once('ready-to-show', () => {
     if (targetWindow.isDestroyed() || settingsWindow !== targetWindow) return
     settingsWindowReadyToShow = true
@@ -1916,21 +1949,23 @@ function createSettingsWindow() {
     settingsWindowActivationPending = false
     activateToolWindow(targetWindow)
   })
-  settingsWindow.on('minimize', () => {
+  targetWindow.on('minimize', () => {
     syncWindowLevels()
     updateTrayMenu()
     syncSettingsPetBackgroundCapture()
   })
-  settingsWindow.on('restore', () => {
+  targetWindow.on('restore', () => {
     syncWindowLevels()
     updateTrayMenu()
     syncSettingsPetBackgroundCapture()
   })
-  settingsWindow.on('closed', () => {
-    if (toolWindowDrag && toolWindowDrag.targetWindow === settingsWindow) toolWindowDrag = null
-    settingsWindow = null
-    settingsWindowReadyToShow = false
-    settingsWindowActivationPending = false
+  targetWindow.on('closed', () => {
+    if (toolWindowDrag && toolWindowDrag.targetWindow === targetWindow) toolWindowDrag = null
+    if (settingsWindow === targetWindow) {
+      settingsWindow = null
+      settingsWindowReadyToShow = false
+      settingsWindowActivationPending = false
+    }
     syncWindowLevels()
     updateTrayMenu()
     syncSettingsPetBackgroundCapture()
