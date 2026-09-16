@@ -76,6 +76,7 @@
   },
   "behavior": {
     "interactionMode": "smart",
+    "showMessagesWhenLocked": true,
     "cursorFollow": "near",
     "effects": "subtle",
     "idleEnabled": false,

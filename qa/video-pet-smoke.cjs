@@ -26,7 +26,10 @@ async function run() {
     const canvas = document.getElementById('pet')
     const model = new VideoPetModel(canvas)
     await model.load(${JSON.stringify(manifestURL)})
-    const exactAction = model.previewCatalog().actions.some(action => action.id === 'video:写代码.webm' && action.type === 'video')
+    const catalog = model.previewCatalog()
+    const exactAction = catalog.actions.some(action => action.id === 'video:写代码.webm' && action.type === 'video')
+    const shyInteraction = catalog.actions.some(action => action.id === 'interaction:shy' && action.interaction === 'shy')
+    const surprisedInteraction = catalog.actions.some(action => action.id === 'interaction:surprised' && action.interaction === 'surprised')
     await new Promise(resolve => setTimeout(resolve, 300))
     model.update()
     const countPixels = () => {
@@ -51,6 +54,10 @@ async function run() {
     const switching = countPixels()
     await reactionPromise
     const reaction = model._currentAnimation
+    await model.playReaction('shy')
+    const shyReaction = model._currentAnimation
+    await model.playReaction('surprised')
+    const surprisedReaction = model._currentAnimation
     model.destroy()
     return {
       visible: initial.visible,
@@ -58,11 +65,20 @@ async function run() {
       centerY: initial.centerY,
       visibleDuringSwitch: switching.visible,
       exactAction,
+      shyInteraction,
+      surprisedInteraction,
       reaction,
+      shyReaction,
+      surprisedReaction,
     }
   })()`)
 
-  if (result.visible < 100 || result.transparent < 100 || Math.abs(result.centerY - 300) > 24 || result.visibleDuringSwitch < 100 || !result.exactAction || !result.reaction.includes('元气挥手')) {
+  if (
+    result.visible < 100 || result.transparent < 100 || Math.abs(result.centerY - 300) > 24 ||
+    result.visibleDuringSwitch < 100 || !result.exactAction || !result.shyInteraction ||
+    !result.surprisedInteraction || !result.reaction.includes('元气挥手') ||
+    !result.shyReaction.includes('害羞惊讶') || !result.surprisedReaction.includes('害羞惊讶')
+  ) {
     throw new Error(`视频宠物冒烟检查失败：${JSON.stringify(result)}`)
   }
   console.log(JSON.stringify(result))

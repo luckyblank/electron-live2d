@@ -12,9 +12,12 @@
 ### 2.1 规则
 
 - 打开聊天只控制聊天面板的显示状态，不创建整窗边框。
+- 聊天面板把自身实际矩形上报给主进程；原生窗口 shape 由角色、聊天框、顶部气泡、状态提示和长消息阅读器的可见矩形组成，不再因为聊天打开而占用完整 `400×600` 透明舞台。
 - 聊天面板每次打开默认为折叠态。
 - 聊天面板只响应左侧切换按钮；悬停、移出和失焦不改变展开状态。
 - 整窗轮廓只由有效的“背景检测”状态控制；锁定宠物时仅暂停宠物窗口中的检测效果并隐藏整窗轮廓，设置页开关保持正常、可操作状态，解锁后按当前开关值生效。
+- 锁定是无条件的原生鼠标穿透状态，不会被已打开的聊天框或长消息阅读器取消。进入锁定时隐藏聊天并收起阅读器，未发送草稿保留；锁定期间不能重新打开聊天，解锁后也不会自动弹回。
+- “锁定时显示消息”默认开启并可提前配置：开启时 APP 回复与外部消息仍可使用角色上方气泡；关闭时立即收起当前消息气泡并抑制后续消息气泡，但不影响普通互动提示、消息处理、语音播报或历史记录。
 - 背景检测关闭时，整窗轮廓不显示。
 
 ### 2.2 状态流
@@ -24,7 +27,15 @@ chat visibility changed
   -> setChatOpen(open)
   -> open: reset to collapsed
   -> update chat panel and accessibility state
+  -> report the visible chat rectangle to the main process
   -> do not add a document/body border class
+
+interactionMode changed to locked
+  -> setIgnoreMouseEvents(true) immediately in the main process
+  -> hide chat while preserving its draft
+  -> collapse the long-message reader
+  -> show or suppress APP/external bubbles according to showMessagesWhenLocked
+  -> keep the pet/bubble visual surface fully rendered but non-interactive
 
 backgroundDetection changed
   -> pet-stage toggles has-background-detection

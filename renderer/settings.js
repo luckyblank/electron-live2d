@@ -230,7 +230,7 @@
   ]
   const fallbackModelGestures = [
     { id: 'tap-head', label: '单击头部', kind: 'head', actionId: '', text: '好舒服～', enabled: true, defaultMapping: '摸头动作' },
-    { id: 'tap-body', label: '单击身体', kind: 'curious', actionId: '', text: '在忙什么呀？', enabled: true, defaultMapping: '点击 / 好奇动作' },
+    { id: 'tap-body', label: '单击身体', kind: 'tap', actionId: '', text: '碰到我啦～', enabled: true, defaultMapping: '点击回应动作' },
     { id: 'double-click', label: '连续双击', kind: 'praise', actionId: '', text: '被夸奖了 ✦', enabled: true, defaultMapping: '开心 / 夸奖动作' },
     { id: 'triple-click', label: '连续三击', kind: 'excited', actionId: '', text: '最喜欢你啦！', enabled: true, defaultMapping: '兴奋 / 开心动作' },
     { id: 'long-press-head', label: '长按头部', kind: 'head', actionId: '', text: '再摸一下嘛', enabled: true, defaultMapping: '摸头动作' },

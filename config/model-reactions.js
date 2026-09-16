@@ -4,6 +4,16 @@ function deepFreeze(value) {
   return Object.freeze(value)
 }
 
+const AI_EMOTION_INTERACTIONS = deepFreeze({
+  happy: 'praise',
+  sad: 'sad',
+  angry: 'angry',
+  surprised: 'surprised',
+  shy: 'shy',
+  confused: 'curious',
+  calm: 'calm',
+})
+
 // cafe-gun 没有原生 .exp3.json。下面这组基线来自它的 stand 动作，只保留
 // 眉眼、嘴型、脸红和情绪装饰参数；每个生成表情都带完整基线，因此从生气、
 // 惊讶等状态切回默认时不会残留黑线、脸红或特殊眼型。
@@ -188,7 +198,8 @@ const MODEL_REACTION_PROFILES = deepFreeze({
       snack: '微笑',
       calm: '默认',
       curious: '疑惑',
-      excited: '惊讶',
+      surprised: '惊讶',
+      excited: '微笑',
       sad: '无语',
       angry: '生气',
       drag: '惊讶',
@@ -207,6 +218,7 @@ const MODEL_REACTION_PROFILES = deepFreeze({
       snack: [{ clip: 'Mgirl08_kending' }, { clip: 'Mgirl08_weixiao' }],
       shy: [{ clip: 'Mgirl08_xiuxiuqieqie' }, { clip: 'Mgirl08_duishouzhi' }],
       curious: [{ clip: 'Mgirl08_yihuo' }, { clip: 'Mgirl08_tuoyeyihuo' }],
+      surprised: [{ clip: 'Mgirl08_jingya' }],
       // 原资源没有睡眠动作，复用唯一待机片段作为安静状态。
       sleepy: [{ clip: 'Mgirl08_stand' }],
       sad: [{ clip: 'Mgirl08_wuye' }],
@@ -245,6 +257,7 @@ const MODEL_REACTION_PROFILES = deepFreeze({
       snack: [{ clip: '吃零食' }],
       shy: [{ clip: '害羞' }, { clip: '脸红摇摆' }],
       curious: [{ clip: '好奇' }, { clip: '四处张望' }],
+      surprised: [{ clip: '惊讶' }],
       sleepy: [{ clip: '哈欠' }, { clip: '闭眼轻晃' }],
       sad: [{ clip: '委屈' }, { clip: '担心' }],
       // 没有独立的生气 motion；“被戳”配合生气表情作为最接近的反馈。
@@ -260,6 +273,7 @@ const MODEL_REACTION_PROFILES = deepFreeze({
       snack: '微笑',
       calm: '困倦',
       curious: '好奇',
+      surprised: '惊讶',
       excited: '大笑',
       sad: '难过',
       angry: '生气',
@@ -285,6 +299,8 @@ const MODEL_REACTION_PROFILES = deepFreeze({
       snack: [{ clip: '吃零食' }],
       shy: [{ clip: '害羞' }],
       curious: [{ clip: '好奇' }, { clip: '伸展' }],
+      // 没有同名惊讶 motion；扶帽是现有动作中最接近受惊后下意识护帽的反馈。
+      surprised: [{ clip: '扶帽' }],
       sleepy: [{ clip: '哈欠' }],
       // 原资源没有难过 motion，用低强度扶帽动作叠加焦虑表情。
       sad: [{ clip: '扶帽' }],
@@ -300,6 +316,7 @@ const MODEL_REACTION_PROFILES = deepFreeze({
       snack: '笑眼',
       calm: '困倦',
       curious: '好奇',
+      surprised: '惊讶',
       excited: '惊喜',
       sad: '焦虑',
       angry: '生气',
@@ -325,6 +342,8 @@ const MODEL_REACTION_PROFILES = deepFreeze({
       happy: [{ clip: 'mtn_shakeh' }],
       snack: [{ clip: 'head_diantou' }],
       curious: [{ clip: 'mtn_shake' }],
+      // 没有受惊专用全身动作；短促的上下弹动比挥手/点头更接近突然受惊的身体反馈。
+      surprised: [{ clip: 'mtn_shakeh' }],
       sleepy: [{ clip: 'mtn_fushen', followUp: { clip: 'mtn_qishen', delay: 1600 } }],
       sad: [{ clip: 'mtn_fushen', followUp: { clip: 'mtn_qishen', delay: 1900 } }],
       angry: [{ clip: 'head_yaotou' }],
@@ -339,6 +358,8 @@ const MODEL_REACTION_PROFILES = deepFreeze({
       snack: 'face_xiao',
       calm: 'face_weixiao',
       curious: 'face_haoqi',
+      // 没有独立惊讶表情；好奇脸的抬眉与收圆嘴型是现有中性资源里最接近的近似。
+      surprised: 'face_haoqi',
       excited: 'face_xingfen',
       sad: 'face_jusang',
       angry: 'face_xiaoqi',
@@ -383,7 +404,7 @@ const PREVIEW_ACTION_LABELS = deepFreeze({
   Mgirl08_wuye: '无语',
   Mgirl08_shuijingxie: '水晶鞋',
   Mgirl08_xianqunzi: '掀裙摆',
-  mtn_shake_huishou: '挥手',
+  mtn_shake_huishou: '合掌问候',
   mtn_fushen: '俯身',
   mtn_qishen: '起身',
   mtn_shakeh: '开心摇摆',
@@ -415,6 +436,7 @@ const PREVIEW_EXPRESSION_LABELS = deepFreeze({
 })
 
 module.exports = {
+  AI_EMOTION_INTERACTIONS,
   MODEL_REACTION_PROFILES,
   PREVIEW_ACTION_LABELS,
   PREVIEW_EXPRESSION_LABELS,

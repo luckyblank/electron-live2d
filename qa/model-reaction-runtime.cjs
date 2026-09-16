@@ -46,10 +46,17 @@ let activeSnapshot = null
 let activeStatus = null
 let activeAssets = null
 let activePreviewResults = new Map()
+let activePreviewRestores = new Map()
+let previewRestoreSequence = 0
+let previewRequestSequence = 0
 const qaWindows = []
 
 function wait(milliseconds) {
   return new Promise(resolve => setTimeout(resolve, milliseconds))
+}
+
+function previewRestoreKey(modelId, kind, assetId) {
+  return JSON.stringify([modelId, kind, assetId])
 }
 
 function registerIPC() {
@@ -96,6 +103,19 @@ function registerIPC() {
   ipcMain.on('model:preview-result', (_event, result) => {
     if (result && result.requestId) activePreviewResults.set(result.requestId, result)
   })
+  ipcMain.on('model:preview-restored', (event, result) => {
+    const modelId = result && typeof result.modelId === 'string' ? result.modelId : ''
+    const kind = result && result.kind === 'expression' ? 'expression' : 'action'
+    const assetId = result && typeof result.assetId === 'string' ? result.assetId : ''
+    if (!modelId || !assetId) return
+    activePreviewRestores.set(previewRestoreKey(modelId, kind, assetId), {
+      modelId,
+      kind,
+      assetId,
+      senderId: event.sender.id,
+      sequence: ++previewRestoreSequence,
+    })
+  })
 }
 
 async function waitUntil(predicate, timeoutMs, label) {
@@ -109,14 +129,48 @@ async function waitUntil(predicate, timeoutMs, label) {
 }
 
 async function previewAsset(win, modelId, kind, asset) {
-  const requestId = `${modelId}-${kind}-${Date.now()}`
+  const requestId = `${modelId}-${kind}-${Date.now()}-${++previewRequestSequence}`
+  const restoreKey = previewRestoreKey(modelId, kind, asset.id)
+  const restoreSequenceBeforePreview = previewRestoreSequence
   win.webContents.send('model:preview', { requestId, modelId, kind, asset })
   const result = await waitUntil(() => activePreviewResults.get(requestId), 5000, `${modelId} ${kind} preview`)
+  activePreviewResults.delete(requestId)
+  const restoreAfterMs = Number(result.preview?.restoreAfterMs) || (kind === 'expression' ? 3600 : 4200)
+  const restoreExpected = Boolean(result.ok) || /没有产生播放变化|预览画面验证失败|预览期间角色已切换/.test(String(result.error || ''))
+  let restore = { expected: restoreExpected, ok: !restoreExpected }
+  if (restoreExpected) {
+    const timeoutMs = Math.max(5000, restoreAfterMs + 2500)
+    const restoreStartedAt = Date.now()
+    try {
+      await waitUntil(() => {
+        const restored = activePreviewRestores.get(restoreKey)
+        return restored &&
+          restored.senderId === win.webContents.id &&
+          restored.sequence > restoreSequenceBeforePreview
+          ? restored
+          : null
+      }, timeoutMs, `${modelId} ${kind} restore (${asset.id})`)
+      activePreviewRestores.delete(restoreKey)
+      restore = {
+        expected: true,
+        ok: true,
+        waitedMs: Date.now() - restoreStartedAt,
+      }
+    } catch (error) {
+      restore = {
+        expected: true,
+        ok: false,
+        waitedMs: Date.now() - restoreStartedAt,
+        timeoutMs,
+        error: error.message,
+      }
+    }
+  }
   const preview = result.preview && typeof result.preview === 'object'
     ? { ...result.preview, frameGenerated: Boolean(result.preview.frame) }
     : result.preview
   if (preview && typeof preview === 'object') delete preview.frame
-  return { ...result, preview }
+  return { ...result, preview, restore }
 }
 
 function summarizePreviews(results, requireParameterChange = false) {
@@ -127,13 +181,24 @@ function summarizePreviews(results, requireParameterChange = false) {
       resourceParameters: Number(item.result.preview?.expressionParameterCount) || 0,
       matchedResourceParameters: Number(item.result.preview?.matchedExpressionParameterCount) || 0,
     }))
+  const restoreFailures = results
+    .filter(item => item.result?.restore?.expected && !item.result.restore.ok)
+    .map(item => ({
+      id: item.id,
+      error: item.result.restore.error || 'unknown preview restore error',
+      timeoutMs: item.result.restore.timeoutMs || 0,
+    }))
   return {
     tested: results.length,
-    passed: results.filter(item => item.result?.ok).length,
+    previewPassed: results.filter(item => item.result?.ok).length,
+    restoresExpected: results.filter(item => item.result?.restore?.expected).length,
+    restored: results.filter(item => item.result?.restore?.expected && item.result.restore.ok).length,
+    passed: results.filter(item => item.result?.ok && item.result?.restore?.ok).length,
     noChange,
     failures: results
       .filter(item => !item.result?.ok)
       .map(item => ({ id: item.id, error: item.result?.error || 'unknown preview error' })),
+    restoreFailures,
     effective: !requireParameterChange || noChange.length === 0,
   }
 }
@@ -143,6 +208,7 @@ async function runModelCase(modelCase) {
   activeStatus = null
   activeAssets = null
   activePreviewResults = new Map()
+  activePreviewRestores = new Map()
   const archivePath = path.join(projectRoot, 'models', modelCase.sourceId || modelCase.id, modelCase.archive)
   const modelMeta = {
     id: modelCase.id,
@@ -181,8 +247,6 @@ async function runModelCase(modelCase) {
       backgroundThrottling: false,
     },
   })
-  // Keep earlier windows alive until every model is checked. Destroying the only
-  // BrowserWindow can put Electron into its shutdown path before the next case.
   qaWindows.push(win)
   win.webContents.on('console-message', details => {
     if (/failed|error|missing/i.test(details.message)) consoleMessages.push(details.message)
@@ -225,7 +289,7 @@ async function runModelCase(modelCase) {
   const actionPreviews = summarizePreviews(actionResults, requireParameterChange)
   const expressionPreviews = summarizePreviews(expressionResults, requireParameterChange)
 
-  return {
+  const result = {
     modelId: modelCase.id,
     status: activeStatus,
     actionCount: activeAssets.actions.length,
@@ -240,11 +304,26 @@ async function runModelCase(modelCase) {
       consoleMessages.length === 0
     ),
   }
+  if (!win.isDestroyed()) win.destroy()
+  const windowIndex = qaWindows.indexOf(win)
+  if (windowIndex >= 0) qaWindows.splice(windowIndex, 1)
+  return result
 }
 
 async function run() {
   registerIPC()
   await app.whenReady()
+  // Keep one inert window alive for the whole suite so each animated model
+  // window can be destroyed after its case. Retaining every hidden Live2D
+  // renderer made later software-rendered cases compete with four stale 30fps
+  // schedulers and caused false "no parameter change" results.
+  const lifecycleGuard = new BrowserWindow({
+    width: 1,
+    height: 1,
+    show: false,
+    webPreferences: { backgroundThrottling: true },
+  })
+  qaWindows.push(lifecycleGuard)
   const models = []
   const selectedCases = process.env.QA_MODEL_ID
     ? modelCases.filter(modelCase => modelCase.id === process.env.QA_MODEL_ID)

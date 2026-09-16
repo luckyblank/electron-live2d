@@ -14,6 +14,7 @@ const {
 } = require('./config/defaults')
 const { BUBBLE_THEME_DEFINITIONS, normalizeBubbleStyles } = require('./config/bubble-styles')
 const { normalizeLongMessageCharacterThreshold } = require('./config/long-message')
+const { resolvePetInteractionPolicy } = require('./config/pet-interaction-region')
 const { readEnvFile } = require('./config/environment')
 const {
   mergeShortcutBindingsWithDefaults,
@@ -119,7 +120,7 @@ const DEFAULT_PET_INTERACTIONS = Object.freeze([
 ])
 const DEFAULT_PET_GESTURES = Object.freeze([
   { id: 'tap-head', label: '单击头部', kind: 'head', text: '好舒服～', enabled: true, defaultMapping: '摸头动作' },
-  { id: 'tap-body', label: '单击身体', kind: 'curious', text: '在忙什么呀？', enabled: true, defaultMapping: '点击 / 好奇动作' },
+  { id: 'tap-body', label: '单击身体', kind: 'tap', text: '碰到我啦～', enabled: true, defaultMapping: '点击回应动作' },
   { id: 'double-click', label: '连续双击', kind: 'praise', text: '被夸奖了 ✦', enabled: true, defaultMapping: '开心 / 夸奖动作' },
   { id: 'triple-click', label: '连续三击', kind: 'excited', text: '最喜欢你啦！', enabled: true, defaultMapping: '兴奋 / 开心动作' },
   { id: 'long-press-head', label: '长按头部', kind: 'head', text: '再摸一下嘛', enabled: true, defaultMapping: '摸头动作' },
@@ -196,6 +197,7 @@ let petShownOnce = false
 let petOffScreen = false
 let petLastPosition = null
 let petChatOpen = false
+let chatPanelBounds = null
 let speechBubbleBounds = null
 let statusToastBounds = null
 let longMessageReaderBounds = null
@@ -1015,6 +1017,7 @@ function getPreferences() {
     scaleApplyToAll: modelScaleAppliesToAll(),
     opacityApplyToAll: modelOpacityAppliesToAll(),
     interactionMode: ['smart', 'locked'].includes(interactionMode) ? interactionMode : 'smart',
+    showMessagesWhenLocked: store.get('showMessagesWhenLocked') !== false,
     cursorFollow: ['near', 'off'].includes(cursorFollow) ? cursorFollow : 'near',
     effects: ['subtle', 'off'].includes(effects) ? effects : 'subtle',
     idleEnabled: store.get('idleEnabled') !== false,
@@ -1499,9 +1502,9 @@ function clampPetWindowRegion(region, padding = 0) {
 function applyPetInteractionRegion() {
   if (!petWindow || petWindow.isDestroyed()) return
   const preferences = getPreferences()
-  // Like the chat surface, an already-open long-message reader remains
-  // operable so its Copy/Collapse controls cannot strand the user.
-  const locked = !petChatOpen && !longMessageLayoutOpen && preferences.interactionMode === 'locked'
+  // Lock is an unconditional input promise: visible chat/readers must never
+  // weaken desktop passthrough while their renderer-side close is in flight.
+  const locked = preferences.interactionMode === 'locked'
   petWindow.setIgnoreMouseEvents(locked)
   if (!['win32', 'linux'].includes(process.platform)) {
     petShapeDisplaySignature = ''
@@ -1516,21 +1519,10 @@ function applyPetInteractionRegion() {
       width: PET_WIDTH,
       height: PET_HEIGHT,
     }
-    // 聊天框、背景检测或锁定模式需要完整绘制区域。锁定模式虽然全局
-    // 穿透鼠标，但仍须重建完整 shape，否则旧 DPI 的原生裁剪区会继续
-    // 截断角色。扩展后的透明外窗不能整个参与命中：只加入平移后的
-    // 400x600 舞台与阅读卡视觉区域，空白仍然穿透到桌面。
-    const useFullStage = petChatOpen || locked || preferences.backgroundDetection
-    const regions = [useFullStage ? fullStage : translateStageRegion(interactionRegionFromBounds())]
-    // Dynamic hosts use a captured-stage hand-off when a left-side reader
-    // changes the window origin. During it expose only the pet stage. Stable
-    // shaped hosts never enter this branch because their stage origin is fixed.
-    if (!petLayoutTransitionActive && !longMessageLayoutOpen && !useFullStage && speechBubbleBounds) {
-      regions.push(translateStageRegion(speechBubbleBounds))
-    }
-    if (!petLayoutTransitionActive && !useFullStage && statusToastBounds) {
-      regions.push(translateStageRegion(statusToastBounds))
-    }
+    // Lock/background-detection need the complete visual stage. Ordinary chat
+    // only contributes its measured panel rectangle, so transparent gaps in
+    // the 400x600 host continue to reach the desktop.
+    let readerRegion = null
     if (!petLayoutTransitionActive && longMessageLayoutOpen) {
       // The reader uses fixed top/height geometry. Its provisional slot already
       // matches the measured card, including the 18px visual padding, so the
@@ -1540,9 +1532,22 @@ function applyPetInteractionRegion() {
         longMessageReaderBounds.revision === petWindowLayout.revision
         ? longMessageReaderBounds
         : petWindowLayout.readerSlotBounds
-      const readerRegion = clampPetWindowRegion(measuredReader, 18)
-      if (readerRegion) regions.push(readerRegion)
+      readerRegion = clampPetWindowRegion(measuredReader, 18)
     }
+    const policy = resolvePetInteractionPolicy({
+      interactionMode: preferences.interactionMode,
+      backgroundDetection: preferences.backgroundDetection,
+      chatOpen: petChatOpen,
+      longMessageOpen: longMessageLayoutOpen,
+      transitionActive: petLayoutTransitionActive,
+      fullStage,
+      characterRegion: translateStageRegion(interactionRegionFromBounds()),
+      chatRegion: translateStageRegion(chatPanelBounds),
+      bubbleRegion: translateStageRegion(speechBubbleBounds),
+      statusRegion: translateStageRegion(statusToastBounds),
+      readerRegion,
+    })
+    const regions = policy.regions
     const displaySignature = currentPetDisplaySignature()
     const regionSignature = JSON.stringify(regions)
     if (
@@ -2064,6 +2069,7 @@ function createPetWindow() {
   const position = safePetPosition(store.get('windowX'), store.get('windowY'))
   const preferences = getPreferences()
   longMessageLayoutOpen = false
+  chatPanelBounds = null
   longMessageReaderBounds = null
   longMessageReaderState = normalizeLongMessageReaderState(null)
   petLayoutTransitionActive = false
@@ -2155,6 +2161,7 @@ function createPetWindow() {
     }
     petWindow = null
     longMessageLayoutOpen = false
+    chatPanelBounds = null
     longMessageReaderBounds = null
     petLayoutTransitionActive = false
     petShapeDisplaySignature = ''
@@ -2513,8 +2520,12 @@ function togglePetVisibility() {
 }
 
 function setPetChatOpen(open) {
-  const next = Boolean(open && aiPluginManager && aiPluginManager.getSnapshot().ready)
+  const next = Boolean(
+    open && aiPluginManager && aiPluginManager.getSnapshot().ready &&
+    getPreferences().interactionMode !== 'locked'
+  )
   petChatOpen = next
+  if (!next) chatPanelBounds = null
   applyPetInteractionRegion()
   sendToWindow(petWindow, 'ai:chat-visibility', next)
   updateTrayMenu()
@@ -2620,6 +2631,7 @@ function openAIChat() {
     openSettings('ai', aiCapabilitySetupMessage('chat'))
     return
   }
+  if (getPreferences().interactionMode === 'locked') return
   if (petOffScreen) togglePetVisibility()
   if (!petWindow || petWindow.isDestroyed() || petOffScreen) return
   setPetChatOpen(true)
@@ -3105,6 +3117,7 @@ function updatePreferences(patch) {
   const currentPreferences = getPreferences()
   const allowed = {
     interactionMode: value => ['smart', 'locked'].includes(value) ? value : currentPreferences.interactionMode,
+    showMessagesWhenLocked: value => Boolean(value),
     cursorFollow: value => ['near', 'off'].includes(value) ? value : currentPreferences.cursorFollow,
     effects: value => ['subtle', 'off'].includes(value) ? value : currentPreferences.effects,
     idleEnabled: value => Boolean(value),
@@ -3226,6 +3239,12 @@ function aiMenuItem() {
     return {
       label: '关闭对话',
       click: () => setPetChatOpen(false),
+    }
+  }
+  if (getPreferences().interactionMode === 'locked') {
+    return {
+      label: '开启对话（请先解锁）',
+      enabled: false,
     }
   }
   return {
@@ -3990,6 +4009,24 @@ function setupIPC() {
       speechBubbleBounds = { x: left, y: top, width: right - left, height: bottom - top }
     } else {
       speechBubbleBounds = null
+    }
+    applyPetInteractionRegion()
+  })
+
+  ipcMain.on('pet:chat-bounds', (event, bounds) => {
+    if (!isPetWindowSender(event)) return
+    if (
+      petChatOpen && bounds && Number.isFinite(bounds.x) && Number.isFinite(bounds.y) &&
+      Number.isFinite(bounds.width) && Number.isFinite(bounds.height) &&
+      bounds.width > 0 && bounds.height > 0
+    ) {
+      const left = Math.max(0, Math.floor(bounds.x - 16))
+      const top = Math.max(0, Math.floor(bounds.y - 16))
+      const right = Math.min(PET_WIDTH, Math.ceil(bounds.x + bounds.width + 16))
+      const bottom = Math.min(PET_HEIGHT, Math.ceil(bounds.y + bounds.height + 16))
+      chatPanelBounds = { x: left, y: top, width: right - left, height: bottom - top }
+    } else {
+      chatPanelBounds = null
     }
     applyPetInteractionRegion()
   })

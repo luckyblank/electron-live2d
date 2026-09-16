@@ -2,15 +2,25 @@ const fs = require('fs')
 const path = require('path')
 const crypto = require('crypto')
 const JSZip = require('jszip')
-const { MODEL_REACTION_PROFILES } = require('../config/model-reactions')
+const { AI_EMOTION_INTERACTIONS, MODEL_REACTION_PROFILES } = require('../config/model-reactions')
 const { inspectModelDirectory } = require('../model-inspector')
 
 const projectRoot = path.resolve(__dirname, '..')
 const modelsRoot = path.join(projectRoot, 'models')
 const requiredActionKinds = [
   'idle', 'tap', 'greet', 'head', 'happy', 'snack',
-  'shy', 'curious', 'sleepy', 'sad', 'angry', 'drag',
+  'shy', 'curious', 'surprised', 'sleepy', 'sad', 'angry', 'drag',
 ]
+const requiredExpressionKinds = ['praise', 'sad', 'angry', 'surprised', 'shy', 'curious', 'calm']
+const requiredEmotionRoutes = {
+  happy: 'praise',
+  sad: 'sad',
+  angry: 'angry',
+  surprised: 'surprised',
+  shy: 'shy',
+  confused: 'curious',
+  calm: 'calm',
+}
 
 function fileStem(fileName, suffix) {
   return String(fileName || '')
@@ -61,14 +71,20 @@ async function readModelArchive(modelId) {
   for (const entryName of Object.keys(archive.files)) {
     if (/\.motion3\.json$/i.test(entryName)) {
       const value = JSON.parse(await archive.file(entryName).async('string'))
+      const curves = Array.isArray(value.Curves) ? value.Curves : []
       motionAssets.push({
         entryName,
         stem: fileStem(entryName, /\.motion3\.json$/i),
         hash: assetHash(value),
-        playable: (Array.isArray(value.Curves) ? value.Curves : []).some(curve => (
+        playable: curves.some(curve => (
           curve && ['Parameter', 'PartOpacity'].includes(curve.Target) &&
           Array.isArray(curve.Segments) && curve.Segments.length >= 2
         )),
+        parameterIds: new Set(curves
+          .filter(curve => curve && curve.Target === 'Parameter' && typeof curve.Id === 'string')
+          .map(curve => curve.Id)),
+        duration: Number(value.Meta?.Duration) || 0,
+        loop: Boolean(value.Meta?.Loop),
       })
     } else if (/\.exp3\.json$/i.test(entryName)) {
       const value = JSON.parse(await archive.file(entryName).async('string'))
@@ -131,9 +147,33 @@ async function validateProfile(modelId, profile) {
     if (!asset.playable) errors.push(`expression has no parameters: ${asset.entryName}`)
   }
 
+  if (modelId === 'mori-suit') {
+    const greetingStem = profile.actions?.greet?.[0]?.clip
+    const greeting = archive.motionAssets.find(asset => asset.stem === greetingStem)
+    if (!greeting) {
+      errors.push('greet: redesigned Mori greeting motion is missing')
+    } else {
+      // Mori 的 ParamArmL / ParamArmR 在 moc3 中没有关键形。问候动作必须至少
+      // 驱动这些已经验证会改变画面的参数，避免再次退化成“参数在变、画面不动”。
+      for (const parameterId of ['ParamBodyAngleX', 'ParamBodyAngleZ', 'ParamTail']) {
+        if (!greeting.parameterIds.has(parameterId)) {
+          errors.push(`greet: redesigned Mori greeting is missing visible parameter: ${parameterId}`)
+        }
+      }
+      if (greeting.duration < 1.5) errors.push('greet: redesigned Mori greeting is too short')
+      if (greeting.loop) errors.push('greet: redesigned Mori greeting must not loop')
+    }
+  }
+
   for (const kind of requiredActionKinds) {
     if (!Array.isArray(profile.actions?.[kind]) || !profile.actions[kind].length) {
       errors.push(`missing action mapping: ${kind}`)
+    }
+  }
+
+  for (const kind of requiredExpressionKinds) {
+    if (typeof profile.expressions?.[kind] !== 'string' || !profile.expressions[kind]) {
+      errors.push(`missing expression mapping: ${kind}`)
     }
   }
 
@@ -210,14 +250,17 @@ async function run() {
   ))
   const missingProfiles = bundledLive2DModelIds.filter(modelId => !MODEL_REACTION_PROFILES[modelId])
   const staleProfiles = Object.keys(MODEL_REACTION_PROFILES).filter(modelId => !bundledModelIds.includes(modelId))
+  const emotionRoutingErrors = Object.entries(requiredEmotionRoutes)
+    .filter(([emotion, interaction]) => AI_EMOTION_INTERACTIONS[emotion] !== interaction)
+    .map(([emotion, interaction]) => `${emotion}: expected ${interaction}, got ${AI_EMOTION_INTERACTIONS[emotion] || 'missing'}`)
   const models = []
 
   for (const [modelId, profile] of Object.entries(MODEL_REACTION_PROFILES)) {
     if (bundledModelIds.includes(modelId)) models.push(await validateProfile(modelId, profile))
   }
 
-  const passed = !missingProfiles.length && !staleProfiles.length && models.every(model => !model.errors.length)
-  const report = { passed, missingProfiles, staleProfiles, models }
+  const passed = !missingProfiles.length && !staleProfiles.length && !emotionRoutingErrors.length && models.every(model => !model.errors.length)
+  const report = { passed, missingProfiles, staleProfiles, emotionRoutingErrors, models }
   process.stdout.write(`${JSON.stringify(report, null, 2)}\n`)
   if (!passed) process.exitCode = 1
 }

@@ -4,6 +4,34 @@ const JSZip = require('jszip')
 
 const projectRoot = path.resolve(__dirname, '..')
 
+function createLinearMotion(duration, curveKeyframes) {
+  const curves = Object.entries(curveKeyframes).map(([Id, keyframes]) => {
+    if (!Array.isArray(keyframes) || keyframes.length < 2) {
+      throw new Error(`${Id}: a motion curve needs at least two keyframes`)
+    }
+    const [first, ...remaining] = keyframes
+    const Segments = [first[0], first[1]]
+    for (const [time, value] of remaining) Segments.push(0, time, value)
+    return { Target: 'Parameter', Id, Segments }
+  })
+  return {
+    Version: 3,
+    Meta: {
+      Duration: duration,
+      Fps: 30,
+      Loop: false,
+      AreBeziersRestricted: true,
+      CurveCount: curves.length,
+      TotalSegmentCount: curves.reduce((total, curve) => total + (curve.Segments.length - 2) / 3, 0),
+      TotalPointCount: curves.reduce((total, curve) => total + 1 + (curve.Segments.length - 2) / 3, 0),
+      UserDataCount: 0,
+      TotalUserDataSize: 0,
+    },
+    Curves: curves,
+    UserData: [],
+  }
+}
+
 // Every group intentionally contains one clip. live2d-renderer 0.6.x uses the
 // group index as part of its preload cache key, so multi-clip and empty-name
 // groups can overwrite the action that a later click expects to play.
@@ -99,6 +127,57 @@ const archivePlans = {
         }],
         UserData: [],
       },
+      // ParamArmL / ParamArmR 存在于 moc3 参数表中，但没有任何关键形，
+      // 从 -10 到 10 都不会改变 drawable。原动作只写这两个无效参数，因而
+      // 看起来完全没有手部动作。Mori 的双手素材是合掌姿态，无法在不重做
+      // moc3 的前提下拆成单手挥动；这里改为合掌摇摆问候，让双手随上身
+      // 明显左右移动，并用轻鞠躬、点头、眨眼、狐耳和尾巴补足问候语义。
+      mtn_shake_huishou: createLinearMotion(2.2, {
+        ParamBodyAngleX: [
+          [0, 0], [0.18, -2], [0.45, 6], [0.72, -6], [0.99, 6],
+          [1.26, -5], [1.53, 4], [1.82, -2], [2.08, 0], [2.2, 0],
+        ],
+        ParamBodyAngleY: [
+          [0, 0], [0.18, -2], [0.38, -5], [0.55, 1], [0.72, 0],
+          [1.82, -1], [2.08, 0], [2.2, 0],
+        ],
+        ParamBodyAngleZ: [
+          [0, 0], [0.18, -2], [0.45, 7], [0.72, -7], [0.99, 7],
+          [1.26, -6], [1.53, 4], [1.82, -2], [2.08, 0], [2.2, 0],
+        ],
+        ParamBodyVertical: [
+          [0, 0], [0.18, 0.06], [0.38, -0.1], [0.55, 0.05], [0.72, 0],
+          [0.99, 0.05], [1.26, -0.03], [1.53, 0.04], [1.82, 0], [2.2, 0],
+        ],
+        ParamAngleY: [
+          [0, 0], [0.18, -3], [0.38, -10], [0.55, 3], [0.72, 0], [2.2, 0],
+        ],
+        ParamAngleZ: [
+          [0, 0], [0.18, 3], [0.45, -8], [0.72, 8], [0.99, -8],
+          [1.26, 7], [1.53, -5], [1.82, 3], [2.08, 0], [2.2, 0],
+        ],
+        ParamTail: [
+          [0, 0], [0.18, 0.15], [0.45, 0.55], [0.72, -0.45], [0.99, 0.6],
+          [1.26, -0.45], [1.53, 0.4], [1.82, -0.2], [2.08, 0], [2.2, 0],
+        ],
+        ParamTailHide: [[0, 0], [2.2, 0]],
+        ParamFoxearL: [
+          [0, 0], [0.18, -0.15], [0.35, 0.18], [0.52, -0.35], [0.7, 0.1],
+          [0.9, -0.25], [1.08, 0.15], [1.3, -0.2], [1.52, 0.08], [1.8, 0], [2.2, 0],
+        ],
+        ParamFoxearR: [
+          [0, 0], [0.28, -0.15], [0.45, 0.18], [0.62, -0.35], [0.8, 0.1],
+          [1, -0.25], [1.18, 0.15], [1.4, -0.2], [1.62, 0.08], [1.9, 0], [2.2, 0],
+        ],
+        ParamEyeLOpen: [
+          [0, 1], [0.28, 1], [0.36, 0.15], [0.46, 1],
+          [1.42, 1], [1.5, 0.1], [1.6, 1], [2.2, 1],
+        ],
+        ParamEyeROpen: [
+          [0, 1], [0.28, 1], [0.36, 0.15], [0.46, 1],
+          [1.42, 1], [1.5, 0.1], [1.6, 1], [2.2, 1],
+        ],
+      }),
     },
     motions: {
       Idle: 'mtn_shake',

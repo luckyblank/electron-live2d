@@ -76,7 +76,7 @@ const qaInteractionDefaults = [
 ]
 const qaGestureDefaults = [
   { id: 'tap-head', label: '单击头部', kind: 'head', actionId: '', text: '好舒服～', defaultMapping: '摸头动作' },
-  { id: 'tap-body', label: '单击身体', kind: 'curious', actionId: '', text: '在忙什么呀？', defaultMapping: '点击 / 好奇动作' },
+  { id: 'tap-body', label: '单击身体', kind: 'tap', actionId: '', text: '碰到我啦～', defaultMapping: '点击回应动作' },
   { id: 'double-click', label: '连续双击', kind: 'praise', actionId: '', text: '被夸奖了 ✦', defaultMapping: '开心 / 夸奖动作' },
   { id: 'triple-click', label: '连续三击', kind: 'excited', actionId: '', text: '最喜欢你啦！', defaultMapping: '兴奋 / 开心动作' },
   { id: 'long-press-head', label: '长按头部', kind: 'head', actionId: '', text: '再摸一下嘛', defaultMapping: '摸头动作' },
@@ -202,6 +202,7 @@ let snapshot = {
     cursorFollow: 'near',
     effects: 'subtle',
     interactionMode: 'smart',
+    showMessagesWhenLocked: true,
     idleEnabled: false,
     qualityMode: 'auto',
     alwaysOnTop: true,
@@ -994,12 +995,37 @@ async function runCharacterRangesFocused() {
 async function readLockedBackgroundControlState() {
   return win.webContents.executeJavaScript(`(() => {
     const lock = document.querySelector('[data-setting="interactionMode"]')
+    const lockedMessages = document.querySelector('[data-setting="showMessagesWhenLocked"]')
     const background = document.querySelector('[data-setting="backgroundDetection"]')
+    const lockRow = lock.closest('.setting-row')
+    const lockedMessagesRow = lockedMessages.closest('.setting-row')
     const row = background.closest('.setting-row')
+    const lockRowStyle = getComputedStyle(lockRow)
+    const lockedMessagesRowStyle = getComputedStyle(lockedMessagesRow)
+    const lockIconStyle = getComputedStyle(lockRow.querySelector('.setting-row-icon'))
+    const lockedMessagesIconStyle = getComputedStyle(lockedMessagesRow.querySelector('.setting-row-icon'))
+    const lockTitleStyle = getComputedStyle(lockRow.querySelector('.setting-copy strong'))
+    const lockedMessagesTitleStyle = getComputedStyle(lockedMessagesRow.querySelector('.setting-copy strong'))
     return {
       theme: document.documentElement.dataset.settingsTheme,
       view: document.documentElement.dataset.settingsView,
       lockChecked: lock.checked,
+      lockedMessagesChecked: lockedMessages.checked,
+      lockedMessagesDisabled: lockedMessages.disabled,
+      lockedMessagesLabel: lockedMessagesRow.querySelector('strong').textContent.trim(),
+      lockedMessagesHint: lockedMessagesRow.querySelector('small').textContent.replace(/\\s+/g, ' ').trim(),
+      lockedMessagesIsPeer: lockedMessagesRow.parentElement === lockRow.parentElement,
+      lockedMessagesLayoutMatchesLock: lockedMessagesRowStyle.marginLeft === lockRowStyle.marginLeft &&
+        lockedMessagesRowStyle.gridTemplateColumns === lockRowStyle.gridTemplateColumns &&
+        lockedMessagesRowStyle.minHeight === lockRowStyle.minHeight &&
+        lockedMessagesRowStyle.paddingLeft === lockRowStyle.paddingLeft &&
+        lockedMessagesRowStyle.paddingRight === lockRowStyle.paddingRight &&
+        lockedMessagesIconStyle.display === lockIconStyle.display &&
+        lockedMessagesIconStyle.width === lockIconStyle.width &&
+        lockedMessagesIconStyle.height === lockIconStyle.height &&
+        lockedMessagesTitleStyle.fontSize === lockTitleStyle.fontSize,
+      lockedMessagesInset: Number.parseFloat(lockedMessagesRowStyle.marginLeft),
+      lockInset: Number.parseFloat(lockRowStyle.marginLeft),
       backgroundChecked: background.checked,
       backgroundDisabled: background.disabled,
       backgroundAriaDisabled: background.getAttribute('aria-disabled'),
@@ -1022,6 +1048,7 @@ async function runLockBackgroundControlFocused() {
       ...snapshot.preferences,
       settingsTheme: theme,
       interactionMode: 'smart',
+      showMessagesWhenLocked: true,
       backgroundDetection: true,
     }
     win.webContents.send('state:changed', { snapshot: cloneSnapshot() })
@@ -1038,6 +1065,18 @@ async function runLockBackgroundControlFocused() {
     )
     await new Promise(resolve => setTimeout(resolve, 220))
     const locked = await readLockedBackgroundControlState()
+
+    await win.webContents.executeJavaScript(
+      `document.querySelector('[data-setting="showMessagesWhenLocked"]').click()`
+    )
+    await new Promise(resolve => setTimeout(resolve, 220))
+    const lockedMessagesOff = await readLockedBackgroundControlState()
+
+    await win.webContents.executeJavaScript(
+      `document.querySelector('[data-setting="showMessagesWhenLocked"]').click()`
+    )
+    await new Promise(resolve => setTimeout(resolve, 220))
+    const lockedMessagesOn = await readLockedBackgroundControlState()
 
     await win.webContents.executeJavaScript(
       `document.querySelector('[data-setting="backgroundDetection"]').click()`
@@ -1065,8 +1104,16 @@ async function runLockBackgroundControlFocused() {
     const updates = settingsUpdates.slice(updatesBefore)
     const assertions = {
       startsEnabled: !before.lockChecked && before.backgroundChecked && !before.backgroundDisabled,
+      messageControlIsPeerAndConfigurable: before.lockedMessagesChecked &&
+        !before.lockedMessagesDisabled && before.lockedMessagesIsPeer &&
+        before.lockedMessagesLayoutMatchesLock && before.lockedMessagesInset === before.lockInset &&
+        before.lockedMessagesLabel === '锁定时显示消息' &&
+        before.lockedMessagesHint.includes('APP 回复与外部消息气泡'),
       lockKeepsControlEnabled: locked.lockChecked && locked.backgroundChecked && !locked.backgroundDisabled &&
         locked.backgroundAriaDisabled !== 'true' && !locked.rowSuspended,
+      messageControlWorksWhileLocked: locked.lockedMessagesChecked &&
+        !lockedMessagesOff.lockedMessagesChecked && !lockedMessagesOff.lockedMessagesDisabled &&
+        lockedMessagesOn.lockedMessagesChecked && !lockedMessagesOn.lockedMessagesDisabled,
       lockKeepsNormalVisuals: locked.theme === theme && locked.view === 'behavior' &&
         locked.rowCursor === 'pointer' && locked.copyOpacity === 1 && locked.iconOpacity === 1 &&
         locked.trackOpacity === 1 && locked.label === '背景检测' &&
@@ -1079,12 +1126,16 @@ async function runLockBackgroundControlFocused() {
         !restored.backgroundDisabled && !restored.rowSuspended,
       settingsUpdatesPersistChoices: updates.some(update => update.interactionMode === 'locked') &&
         updates.some(update => update.interactionMode === 'smart') &&
+        updates.some(update => update.showMessagesWhenLocked === false) &&
+        updates.some(update => update.showMessagesWhenLocked === true) &&
         updates.some(update => update.backgroundDetection === false) &&
         updates.some(update => update.backgroundDetection === true),
     }
     themes[theme] = {
       before,
       locked,
+      lockedMessagesOff,
+      lockedMessagesOn,
       whileLockedOff,
       whileLockedOn,
       restored,
@@ -1952,6 +2003,7 @@ async function run() {
       ...snapshot.preferences,
       settingsTheme: theme,
       interactionMode: 'smart',
+      showMessagesWhenLocked: true,
       backgroundDetection: true,
     }
     win.webContents.send('state:changed', { snapshot: cloneSnapshot() })
@@ -1966,6 +2018,12 @@ async function run() {
     await win.webContents.executeJavaScript(`document.querySelector('[data-setting="interactionMode"]').click()`)
     await new Promise(resolve => setTimeout(resolve, 220))
     const locked = await readLockedBackgroundControlState()
+    await win.webContents.executeJavaScript(`document.querySelector('[data-setting="showMessagesWhenLocked"]').click()`)
+    await new Promise(resolve => setTimeout(resolve, 220))
+    const lockedMessagesOff = await readLockedBackgroundControlState()
+    await win.webContents.executeJavaScript(`document.querySelector('[data-setting="showMessagesWhenLocked"]').click()`)
+    await new Promise(resolve => setTimeout(resolve, 220))
+    const lockedMessagesOn = await readLockedBackgroundControlState()
     await win.webContents.executeJavaScript(`document.querySelector('[data-setting="backgroundDetection"]').click()`)
     await new Promise(resolve => setTimeout(resolve, 220))
     const whileLockedOff = await readLockedBackgroundControlState()
@@ -1983,6 +2041,8 @@ async function run() {
     results.interactions.lockedBackgroundDetection[theme] = {
       before,
       locked,
+      lockedMessagesOff,
+      lockedMessagesOn,
       whileLockedOff,
       whileLockedOn,
       restored,
@@ -3039,10 +3099,10 @@ async function run() {
     theme,
     switchPages.flatMap(page => page.theme === theme ? page.switches : []).filter(item => item.checked),
   ]))
-  const expectedSwitchCounts = { behavior: 5, system: 6 }
+  const expectedSwitchCounts = { behavior: 6, system: 6 }
   const behaviorSwitchSpacingMatchesReference = ['glass', 'healing'].every(theme => {
     const page = switchPages.find(item => item.theme === theme && item.section === 'behavior')
-    return page && page.switches.length === 5 && page.switches.every(item => (
+    return page && page.switches.length === 6 && page.switches.every(item => (
       Math.abs(item.rowRect.height - 64) <= .1 &&
       item.rowPaddingTop === '8px' && item.rowPaddingBottom === '8px'
     ))
@@ -3339,6 +3399,14 @@ async function run() {
     lockLeavesBackgroundDetectionControlEnabled: Object.entries(results.interactions.lockedBackgroundDetection).every(([theme, state]) => (
       !state.before.lockChecked && state.before.backgroundChecked && !state.before.backgroundDisabled &&
       state.locked.lockChecked && state.locked.backgroundChecked && !state.locked.backgroundDisabled &&
+      state.before.lockedMessagesChecked && !state.before.lockedMessagesDisabled &&
+      state.before.lockedMessagesIsPeer && state.before.lockedMessagesLayoutMatchesLock &&
+      state.before.lockedMessagesInset === state.before.lockInset &&
+      state.before.lockedMessagesLabel === '锁定时显示消息' &&
+      state.before.lockedMessagesHint.includes('APP 回复与外部消息气泡') &&
+      state.locked.lockedMessagesChecked && !state.lockedMessagesOff.lockedMessagesChecked &&
+      !state.lockedMessagesOff.lockedMessagesDisabled && state.lockedMessagesOn.lockedMessagesChecked &&
+      !state.lockedMessagesOn.lockedMessagesDisabled &&
       state.locked.backgroundAriaDisabled !== 'true' && !state.locked.rowSuspended &&
       state.locked.theme === theme && state.locked.view === 'behavior' &&
       state.locked.rowCursor === 'pointer' && state.locked.copyOpacity === 1 &&
@@ -3350,6 +3418,8 @@ async function run() {
       state.restored.backgroundAriaDisabled !== 'true' && !state.restored.rowSuspended &&
       state.updates.some(update => update.interactionMode === 'locked') &&
       state.updates.some(update => update.interactionMode === 'smart') &&
+      state.updates.some(update => update.showMessagesWhenLocked === false) &&
+      state.updates.some(update => update.showMessagesWhenLocked === true) &&
       state.updates.some(update => update.backgroundDetection === false) &&
       state.updates.some(update => update.backgroundDetection === true)
     )),

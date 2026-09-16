@@ -30,6 +30,7 @@ window.petAPI = {
   onCoversRequest: callback => subscribe('covers:request', callback),
   reportHitBounds: bounds => ipcRenderer.send('pet:hit-bounds', bounds),
   reportBubbleBounds: bounds => ipcRenderer.send('pet:bubble-bounds', bounds),
+  reportChatBounds: bounds => ipcRenderer.send('pet:chat-bounds', bounds),
   reportStatusBounds: bounds => ipcRenderer.send('pet:status-bounds', bounds),
   setLongMessageLayout: options => ipcRenderer.invoke('pet:long-message-layout', options),
   previewLongMessageLayout: options => ipcRenderer.sendSync('pet:long-message-layout-preview', options),

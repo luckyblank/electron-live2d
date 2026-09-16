@@ -23,6 +23,7 @@
   const { Live2DCubismModel } = require('live2d-renderer')
   const { VideoPetModel } = require('./video-pet-model')
   const {
+    AI_EMOTION_INTERACTIONS: emotionInteractions,
     MODEL_REACTION_PROFILES: modelReactionProfiles,
     PREVIEW_ACTION_LABELS: previewActionLabels,
     PREVIEW_EXPRESSION_LABELS: previewExpressionLabels,
@@ -31,6 +32,13 @@
     normalizeLongMessageCharacterThreshold,
     isLongMessageText,
   } = require('../config/long-message')
+  const {
+    PET_GESTURE_LIMITS,
+    advanceMultiClick,
+    classifyHitAreaRole,
+    classifyPointerRelease,
+    pointIsHeadByPolicy,
+  } = require('../config/pet-gesture-policy')
   const petViewport = document.getElementById('pet-viewport')
   const stage = document.getElementById('pet-stage')
   const effectsCanvas = document.getElementById('fx-canvas')
@@ -76,26 +84,19 @@
   const TYPEWRITER_CHARACTER_INTERVAL_MS = 36
   const TYPEWRITER_COMPLETE_HOLD_MS = 2000
   const interactionCopy = {
+    tap: ['碰到我啦～', '我在这里', '有什么事吗？'],
     greet: ['你好呀～', '今天也一起加油', '见到你真好'],
     head: ['好舒服～', '再摸一下嘛', '嘿嘿，谢谢你'],
     praise: ['被夸奖了 ✦', '谢谢你！', '今天也很开心'],
     snack: ['好吃！', '能量补充完毕', '还想再来一点～'],
     calm: ['让我靠一会儿', '安静陪着你', '呼…放松一下'],
     curious: ['在忙什么呀？', '需要我陪你吗？', '我在听～'],
+    surprised: ['呀！', '吓我一跳', '发生什么了？'],
+    shy: ['有、有点害羞…', '别一直看着我嘛', '脸要红啦'],
     excited: ['最喜欢你啦！', '好开心！', '今天超有精神 ✦'],
     sad: ['呜…', '有点难过', '要抱抱'],
     angry: ['哼！', '生气了！', '不想理你了'],
     drag: ['带我去哪里呀？', '新位置不错', '这里也很好～'],
-  }
-  // AI 回复开头的情绪标签（plugin-manager 解析为稳定键）到互动反应的映射
-  const emotionInteractions = {
-    happy: 'excited',
-    sad: 'sad',
-    angry: 'angry',
-    surprised: 'curious',
-    shy: 'head',
-    confused: 'curious',
-    calm: 'calm',
   }
   const state = {
     snapshot: null,
@@ -163,6 +164,7 @@
   let bubbleTimer = null
   let bubbleLeaseSequence = 0
   let activeBubbleLease = null
+  let activeBubbleSource = ''
   let typewriterSequence = 0
   let typewriterTimer = null
   let activeTypewriter = null
@@ -216,6 +218,7 @@
   let longMessageCopyTimer = null
   let longMessageCopySequence = 0
   let lastLongMessageBoundsSignature = ''
+  let lastChatPanelBoundsSignature = ''
   let lastViewportSize = { width: PET_VIEWPORT_WIDTH, height: PET_VIEWPORT_HEIGHT }
 
   function petViewportRect() {
@@ -840,6 +843,7 @@
       snack: groups.filter(name => /snack|petsnack/i.test(name)),
       shy: groups.filter(name => /shy|petshy/i.test(name)),
       curious: groups.filter(name => /curious|petcurious/i.test(name)),
+      surprised: groups.filter(name => /surpris|petsurpris|惊讶/i.test(name)),
       sleepy: groups.filter(name => /sleep|petsleepy/i.test(name)),
     }
   }
@@ -851,10 +855,12 @@
     idle: [/默认|neutral|normal|\bnor\b/i],
     greet: [/微笑|smile/i],
     head: [/害羞|羞涩|shy|touched/i],
+    shy: [/害羞|羞涩|脸红|shy|blush|touched/i],
     praise: [/大笑|开心|笑眼|happy|delight/i],
     snack: [/微笑|笑眼|满足|smile|snack/i],
     calm: [/困倦|平静|calm|sleep/i],
-    curious: [/好奇|惊讶|curious|surpris/i],
+    curious: [/好奇|curious/i],
+    surprised: [/惊讶|惊喜|surpris/i],
     excited: [/惊喜|兴奋|大笑|excited|happy/i],
     sad: [/难过|焦虑|害怕|sad|sorrow|worry/i],
     angry: [/生气|angry/i],
@@ -1706,6 +1712,7 @@
       snack: ['snack', 'happy', 'tap'],
       shy: ['shy', 'head', 'tap'],
       curious: ['curious', 'head', 'tap'],
+      surprised: ['surprised', 'curious', 'tap', 'head'],
       sleepy: ['sleepy', 'idle'],
       sad: ['sleepy', 'idle'],
       angry: ['tap'],
@@ -1928,6 +1935,10 @@
       return opaquePixels >= 12
     } catch (error) {
       state.hitMask = null
+      if (state.lastHitBounds) {
+        state.lastHitBounds = null
+        window.petAPI.reportHitBounds(null)
+      }
       return false
     }
   }
@@ -1982,19 +1993,39 @@
   }
 
   function hitAreasAt(clientX, clientY) {
-    if (!state.model || !state.model.loaded || !state.model.settings) return []
+    const empty = { hits: [], hasHeadArea: false }
+    if (!state.model || !state.model.loaded || !state.model.settings) return empty
     try {
       const x = state.model.transformX(clientX)
       const y = state.model.transformY(clientY)
-      const matches = []
+      const hits = []
+      let hasHeadArea = false
       const count = state.model.settings.getHitAreasCount()
       for (let index = 0; index < count; index++) {
         const name = state.model.settings.getHitAreaName(index)
-        if (state.model.hitTest(name, x, y)) matches.push(String(name).toLowerCase())
+        const drawId = typeof state.model.settings.getHitAreaId === 'function'
+          ? state.model.settings.getHitAreaId(index)
+          : null
+        const drawIdString = (() => {
+          if (!drawId) return ''
+          if (typeof drawId === 'string') return drawId
+          const value = typeof drawId.getString === 'function' ? drawId.getString() : drawId
+          if (typeof value === 'string') return value
+          return value && typeof value.s === 'string' ? value.s : ''
+        })()
+        const normalizedName = String(name || '').trim().toLowerCase()
+        const normalizedId = String(drawIdString || '').trim().toLowerCase()
+        const role = classifyHitAreaRole(normalizedName, normalizedId)
+        if (role === 'head') hasHeadArea = true
+
+        let hit = false
+        if (drawId && typeof state.model.isHit === 'function') hit = state.model.isHit(drawId, x, y)
+        else if (name && typeof state.model.hitTest === 'function') hit = state.model.hitTest(name, x, y)
+        if (hit) hits.push({ name: normalizedName, id: normalizedId, role })
       }
-      return matches
+      return { hits, hasHeadArea }
     } catch (error) {
-      return []
+      return empty
     }
   }
 
@@ -2101,6 +2132,8 @@
       snack: { glyph: '◆', colors: ['#f0a85e', '#f4c76d', '#efb5c8'] },
       calm: { glyph: '·', colors: ['#a99ee7', '#c7c0ee'] },
       curious: { glyph: '?', colors: ['#806de2', '#b7aef0'] },
+      surprised: { glyph: '!', colors: ['#f4c76d', '#e888aa', '#806de2'] },
+      shy: { glyph: '♥', colors: ['#ef9fba', '#f3bfd0', '#b7aef0'] },
       excited: { glyph: '♥', colors: ['#e888aa', '#806de2', '#f4c76d'] },
       sad: { glyph: '·', colors: ['#7d8fc4', '#a99ee7', '#c7c0ee'] },
       angry: { glyph: '!', colors: ['#e2606d', '#f0a85e', '#e888aa'] },
@@ -2961,6 +2994,7 @@
     bubbleTimer = null
     cancelTypewriter(lease)
     activeBubbleLease = null
+    activeBubbleSource = ''
     if (activeBubbleSpeech && activeBubbleSpeech.lease === lease) activeBubbleSpeech = null
     interactionBubble.removeAttribute('aria-hidden')
     interactionBubble.classList.remove('is-visible')
@@ -3006,6 +3040,12 @@
 
   function showBubble(text, duration = null, source = 'interaction', options = {}) {
     if (!text) return null
+    const messageSource = source === 'ai' || source === 'external'
+    if (
+      messageSource && state.preferences &&
+      state.preferences.interactionMode === 'locked' &&
+      state.preferences.showMessagesWhenLocked === false
+    ) return null
     // 气泡必须依附于已完成加载且已有有效像素边界的当前角色，不能在
     // 空画布上先于角色出现。启动问候由 ensureChatGreeting 单独暂存。
     if (
@@ -3021,6 +3061,7 @@
     if (activeBubbleLease != null || interactionBubble.classList.contains('is-visible')) return null
     const lease = ++bubbleLeaseSequence
     activeBubbleLease = lease
+    activeBubbleSource = source
     setBubbleSpeech(lease, options.speech, source)
     const ownsFinalMessageLifecycle = options.typewriter === true
     const streaming = ownsFinalMessageLifecycle && isMessageStreamingOutputEnabled(source)
@@ -3095,8 +3136,11 @@
       head: { motion: 'head', count: 8, pose: { x: 0, y: 0.48 } },
       praise: { motion: 'happy', count: 9, pose: { x: -0.22, y: 0.18 } },
       snack: { motion: 'snack', count: 8, pose: { x: 0.2, y: 0.3 } },
+      tap: { motion: 'tap', count: 6, pose: { x: 0, y: 0.2 } },
       calm: { motion: 'sleepy', count: 5, pose: { x: 0, y: -0.34 } },
       curious: { motion: 'curious', count: 6, pose: { x: 0.38, y: 0.24 } },
+      surprised: { motion: 'surprised', count: 8, pose: { x: 0.28, y: 0.42 } },
+      shy: { motion: 'shy', count: 6, pose: { x: -0.18, y: -0.08 } },
       excited: { motion: 'happy', count: 12, pose: { x: -0.4, y: 0.38 } },
       sad: { motion: 'sad', count: 4, pose: { x: 0, y: -0.46 } },
       angry: { motion: 'angry', count: 7, pose: { x: -0.36, y: -0.14 } },
@@ -3330,16 +3374,39 @@
     if (statusToast.classList.contains('is-visible')) requestAnimationFrame(reportStatusToastBounds)
   }
 
+  function reportChatPanelVisualBounds() {
+    if (chatPanel.hidden) {
+      if (lastChatPanelBoundsSignature !== 'closed') {
+        lastChatPanelBoundsSignature = 'closed'
+        window.petAPI.reportChatBounds(null)
+      }
+      return
+    }
+    const bounds = {
+      x: chatPanel.offsetLeft,
+      y: chatPanel.offsetTop,
+      width: chatPanel.offsetWidth,
+      height: chatPanel.offsetHeight,
+    }
+    if (bounds.width <= 0 || bounds.height <= 0) return
+    const signature = JSON.stringify(bounds)
+    if (signature === lastChatPanelBoundsSignature) return
+    lastChatPanelBoundsSignature = signature
+    window.petAPI.reportChatBounds(bounds)
+  }
+
   function updateChatPosition() {
     const bounds = state.lastHitBounds
     if (chatPanel.hidden) {
       chatPanel.classList.remove('is-overlapping-pet')
       chatPanel.style.removeProperty('--chat-top')
       updateStatusToastPosition()
+      reportChatPanelVisualBounds()
       return
     }
     if (!chatAnchorMatchesCurrentModel() && !captureChatAnchor(bounds)) {
       updateStatusToastPosition()
+      reportChatPanelVisualBounds()
       return
     }
     const characterBottom = state.chatAnchorBottom
@@ -3348,6 +3415,7 @@
     chatPanel.classList.toggle('is-overlapping-pet', characterBottom > maximumTop)
     chatPanel.style.setProperty('--chat-top', `${Math.min(characterBottom, maximumTop)}px`)
     updateStatusToastPosition()
+    reportChatPanelVisualBounds()
   }
 
   function syncChatPositionDuringTransition() {
@@ -3376,8 +3444,9 @@
     if (!chatCollapsed) chatMessages.scrollTop = chatMessages.scrollHeight
   }
 
-  function setChatOpen(open, notifyHost = true) {
-    const next = Boolean(open)
+  function setChatOpen(open, notifyHost = true, options = {}) {
+    const locked = Boolean(state.preferences && state.preferences.interactionMode === 'locked')
+    const next = Boolean(open) && !locked
     const wasHidden = chatPanel.hidden
     chatPanel.hidden = !next
     if (!next || wasHidden) setChatMuted(true)
@@ -3399,9 +3468,12 @@
       }, 0)
     } else {
       pendingGreetingBubble = null
-      chatInput.value = ''
-      resizeChatInput()
-      updateChatSendState()
+      if (!locked && options.preserveDraft !== true) {
+        chatInput.value = ''
+        resizeChatInput()
+        updateChatSendState()
+      }
+      reportChatPanelVisualBounds()
     }
   }
 
@@ -3774,7 +3846,9 @@
     if (event.phase === 'failed') {
       if (externalPriorityMessageId !== message.id) return
       const errorText = event.error || '外部消息处理失败'
-      updateExternalPriorityFinalSurface(errorText, null, message.id)
+      if (!updateExternalPriorityFinalSurface(errorText, null, message.id)) {
+        releaseExternalPriority(message.id)
+      }
       return
     }
 
@@ -3782,7 +3856,7 @@
     if (externalPriorityMessageId !== message.id) return
     const result = event.result
     const speech = normalizePlayableSpeech(result.speech, 'external')
-    updateExternalPriorityFinalSurface(result.text, speech, message.id)
+    const displayed = updateExternalPriorityFinalSurface(result.text, speech, message.id)
     runInteraction(emotionInteractions[result.emotion] || 'curious', null, { bubble: false })
     if (speech) {
       playGeneratedSpeech(speech, null, '', {
@@ -3791,13 +3865,15 @@
         source: 'external',
         typewriter: true,
         messageId: message.id,
+        onComplete: displayed ? undefined : () => releaseExternalPriority(message.id),
       }).then(started => {
         if (!started && activeTypewriter && activeTypewriter.messageId === message.id) {
           activeTypewriter.speechCompleted = true
           scheduleTypewriterDismissal(activeTypewriter)
         }
+        if (!started && !displayed) releaseExternalPriority(message.id)
       })
-    }
+    } else if (!displayed) releaseExternalPriority(message.id)
   }
 
   async function submitChat() {
@@ -4096,10 +4172,13 @@
   }
 
   function pointIsHead(point, hitAreas = []) {
-    if (state.model && state.model.kind === 'video-pet' && state.lastHitBounds) {
-      return point.clientY <= state.lastHitBounds.y + state.lastHitBounds.height * 0.42
-    }
-    return hitAreas.some(name => name.includes('head')) || point.clientY <= petViewportSize().height * 0.34
+    return pointIsHeadByPolicy({
+      pointX: point && point.clientX,
+      pointY: point && point.clientY,
+      hitAreas,
+      visibleBounds: state.lastHitBounds,
+      video: Boolean(state.model && state.model.kind === 'video-pet'),
+    })
   }
 
   function runGestureInteraction(gestureId, fallbackKind, point) {
@@ -4112,44 +4191,59 @@
     })
   }
 
+  function triggerLongPress(point, hitAreas) {
+    if (!state.pointerDown || state.dragging || state.longPressTriggered) return false
+    state.longPressTriggered = true
+    const onHead = pointIsHead(point, hitAreas)
+    runGestureInteraction(onHead ? 'long-press-head' : 'long-press-body', onHead ? 'head' : 'calm', point)
+    return true
+  }
+
   function beginLongPress(point, hitAreas) {
     clearLongPress()
     state.longPressTriggered = false
     state.longPressTimer = setTimeout(() => {
       state.longPressTimer = null
-      if (!state.pointerDown || state.dragging) return
-      state.longPressTriggered = true
+      triggerLongPress(point, hitAreas)
+    }, PET_GESTURE_LIMITS.longPressMs)
+  }
+
+  function runClickSequence(count, point, hitAreas) {
+    if (count >= 3) runGestureInteraction('triple-click', 'excited', point)
+    else if (count === 2) runGestureInteraction('double-click', 'praise', point)
+    else {
       const onHead = pointIsHead(point, hitAreas)
-      runGestureInteraction(onHead ? 'long-press-head' : 'long-press-body', onHead ? 'head' : 'calm', point)
-    }, 650)
+      runGestureInteraction(onHead ? 'tap-head' : 'tap-body', onHead ? 'head' : 'tap', point)
+    }
+  }
+
+  function flushClickSequence() {
+    const count = state.clickCount
+    const point = state.lastClickPoint
+    const hitAreas = state.lastClickHitAreas
+    state.clickTimer = null
+    state.clickCount = 0
+    if (count > 0 && point) runClickSequence(count, point, hitAreas)
   }
 
   function queueClickInteraction(point, hitAreas) {
     const now = performance.now()
-    if (now - state.lastClickAt > 420) state.clickCount = 0
+    const transition = advanceMultiClick(state.clickCount, now - state.lastClickAt)
+    if (transition.flushCount > 0) {
+      if (state.clickTimer) clearTimeout(state.clickTimer)
+      flushClickSequence()
+    }
     state.lastClickAt = now
-    state.clickCount++
+    state.clickCount = transition.nextCount
     state.lastClickPoint = point
     state.lastClickHitAreas = hitAreas
     if (state.clickTimer) clearTimeout(state.clickTimer)
-
-    state.clickTimer = setTimeout(() => {
-      const count = state.clickCount
-      const clickPoint = state.lastClickPoint
-      const clickHitAreas = state.lastClickHitAreas
-      state.clickTimer = null
-      state.clickCount = 0
-      if (count >= 3) runGestureInteraction('triple-click', 'excited', clickPoint)
-      else if (count === 2) runGestureInteraction('double-click', 'praise', clickPoint)
-      else {
-        const onHead = pointIsHead(clickPoint, clickHitAreas)
-        runGestureInteraction(onHead ? 'tap-head' : 'tap-body', onHead ? 'head' : 'curious', clickPoint)
-      }
-    }, 300)
+    state.clickTimer = setTimeout(flushClickSequence, PET_GESTURE_LIMITS.multiClickMs)
   }
 
   function applySnapshot(snapshot) {
     const previousModelId = state.snapshot && state.snapshot.currentModelId
+    const wasLocked = Boolean(state.preferences && state.preferences.interactionMode === 'locked')
     const modelChanged = previousModelId !== snapshot.currentModelId
     const nextSettingsTheme = snapshot.preferences.settingsTheme === 'healing' ? 'healing' : 'glass'
     const settingsThemeChanged = document.documentElement.dataset.settingsTheme !== nextSettingsTheme
@@ -4164,6 +4258,16 @@
       if (refreshedMeta) state.modelMeta = refreshedMeta
     }
     state.preferences = snapshot.preferences
+    const locked = snapshot.preferences.interactionMode === 'locked'
+    if (locked) {
+      if (!chatPanel.hidden) setChatOpen(false, true, { preserveDraft: true })
+      const hideLockedMessage = (
+        snapshot.preferences.showMessagesWhenLocked === false &&
+        ['ai', 'external'].includes(activeBubbleSource)
+      )
+      if (hideLockedMessage) dismissBubble(activeBubbleLease, true)
+      else if (longMessageState.open || petWindowLayout.expanded) void closeLongMessageReader()
+    }
     const nextOpacity = Math.min(1, Math.max(0.1, Number(snapshot.preferences.opacity) || 1))
     document.documentElement.style.setProperty('--pet-character-opacity', String(nextOpacity))
     document.documentElement.dataset.settingsTheme = nextSettingsTheme
@@ -4181,7 +4285,7 @@
       requestAnimationFrame(syncChatPositionDuringTransition)
     }
     const backgroundDetectionActive = Boolean(
-      snapshot.preferences.backgroundDetection && snapshot.preferences.interactionMode !== 'locked'
+      snapshot.preferences.backgroundDetection && !locked
     )
     stage.classList.toggle('has-background-detection', backgroundDetectionActive)
     if (!backgroundDetectionActive) setDragAffordance(false)
@@ -4211,6 +4315,11 @@
     }
     if (!chatPanel.hidden && !modelChanged) ensureChatGreeting()
 
+    // A snapshot can arrive after the lock-triggered close IPC has already
+    // updated the host. Avoid treating later locked snapshots as a fresh user
+    // close; the draft remains available for the next explicit chat open.
+    if (locked && !wasLocked) reportChatPanelVisualBounds()
+
     if (!previousModelId || modelChanged || !state.model) {
       requestModel(snapshot.currentModelId)
     }
@@ -4224,7 +4333,7 @@
     if (!state.pointerDown) return
     const dx = event.screenX - state.pointerDown.screenX
     const dy = event.screenY - state.pointerDown.screenY
-    if (!state.dragging && Math.hypot(dx, dy) >= 6) {
+    if (!state.dragging && Math.hypot(dx, dy) >= PET_GESTURE_LIMITS.moveThreshold) {
       clearLongPress()
       state.dragging = true
       if (state.model) {
@@ -4270,17 +4379,29 @@
     const pointerDown = state.pointerDown
     const moved = Math.hypot(event.screenX - pointerDown.screenX, event.screenY - pointerDown.screenY)
     const elapsed = performance.now() - pointerDown.time
+    const releaseKind = classifyPointerRelease({
+      dragging: state.dragging,
+      longPressTriggered: state.longPressTriggered,
+      moved,
+      elapsed,
+      onPet: isOnPet(pointerDown.clientX, pointerDown.clientY),
+    })
     clearLongPress()
 
     if (state.dragging) {
       window.petAPI.dragEnd()
       if (state.liveCanvas) state.liveCanvas.classList.remove('is-dragging')
       stage.classList.remove('is-dragging')
-      if (moved >= 24 && performance.now() - state.lastDragReaction > 1800) {
+      if (
+        moved >= PET_GESTURE_LIMITS.dragReactionThreshold &&
+        performance.now() - state.lastDragReaction > PET_GESTURE_LIMITS.dragReactionCooldownMs
+      ) {
         state.lastDragReaction = performance.now()
         runGestureInteraction('drag-end', 'drag', viewportPoint(event.clientX, event.clientY))
       }
-    } else if (!state.longPressTriggered && moved < 6 && elapsed < 520 && isOnPet(pointerDown.clientX, pointerDown.clientY)) {
+    } else if (releaseKind === 'long-press') {
+      triggerLongPress(pointerDown, pointerDown.hitAreas)
+    } else if (releaseKind === 'click') {
       queueClickInteraction(pointerDown, pointerDown.hitAreas)
     }
 

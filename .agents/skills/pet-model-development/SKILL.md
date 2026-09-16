@@ -61,10 +61,10 @@ If `.codegraph/` exists, use CodeGraph before text search as required by the rep
 
 ### Motions, expressions, and interactions
 
-- Prefer standard Live2D motion groups so third-party models work without code: `Idle`, `TapBody`, `TapHead`, `PetGreet`, `PetHappy`, `PetSnack`, `PetShy`, `PetCurious`, and `PetSleepy`.
+- Prefer standard Live2D motion groups so third-party models work without code: `Idle`, `TapBody`, `TapHead`, `PetGreet`, `PetHappy`, `PetSnack`, `PetShy`, `PetCurious`, `PetSurprised`, and `PetSleepy`.
 - Generic Live2D loading filters empty motion-group names. A model whose useful motions live in an empty group needs a reviewed entry in `MODEL_REACTION_PROFILES`.
 - Product-specific mappings belong in [config/model-reactions.js](../../../config/model-reactions.js), not scattered conditionals keyed by model ID.
-- The main semantic action keys are `idle`, `tap`, `greet`, `head`, `happy`, `snack`, `shy`, `curious`, `sleepy`, `sad`, `angry`, and `drag`.
+- The main semantic action keys are `idle`, `tap`, `greet`, `head`, `happy`, `snack`, `shy`, `curious`, `surprised`, `sleepy`, `sad`, `angry`, and `drag`.
 - Higher-level interactions such as `praise`, `excited`, and `calm` map onto those model actions in the renderer. Inspect the current mapping before adding a new semantic key.
 - A Live2D expression is a native `.exp3.json`, a generated parameter expression, or an explicitly reviewed motion-to-expression fallback.
 - A video pet currently reports all clips as actions and reports no independent expressions. Adding an “expressions” list to `pet.json` alone will not work; the preview normalizer and video-specific playback path must also be extended.

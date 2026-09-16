@@ -219,6 +219,7 @@ const snapshot = {
     cursorFollow: 'off',
     effects: 'off',
     interactionMode: 'smart',
+    showMessagesWhenLocked: true,
     idleEnabled: false,
     qualityMode: 'auto',
     alwaysOnTop: true,
@@ -269,6 +270,8 @@ const longMessageBoundsReports = []
 const longMessageLayoutCalls = []
 const longMessageTransitionCalls = []
 const longMessageTransitionFrameSamples = []
+const chatBoundsReports = []
+const chatPanelStateReports = []
 const copiedTexts = []
 const aiMockState = {
   chatDelayMs: 0,
@@ -435,6 +438,12 @@ function registerIPC() {
     ) detachedReaderActions.push(String(action || ''))
   })
   ipcMain.on('pet:hit-bounds', (_event, bounds) => { lastHitBounds = bounds })
+  ipcMain.on('pet:chat-bounds', (_event, bounds) => {
+    chatBoundsReports.push(bounds ? structuredClone(bounds) : null)
+  })
+  ipcMain.on('ai:chat-panel-state', (_event, open) => {
+    chatPanelStateReports.push(Boolean(open))
+  })
   ipcMain.on('pet:long-message-bounds', (_event, bounds) => {
     lastLongMessageBounds = bounds ? structuredClone(bounds) : null
     longMessageBoundsReports.push(lastLongMessageBounds)
@@ -1099,12 +1108,17 @@ async function runModelOpacityLayering() {
     const bubble = document.getElementById('interaction-bubble')
     const stage = document.getElementById('pet-stage')
     const opacityOf = element => Number.parseFloat(getComputedStyle(element).opacity)
+    const bubbleWasVisible = bubble.classList.contains('is-visible')
+    if (!bubbleWasVisible) bubble.classList.add('is-visible')
+    const visibleBubbleOpacity = opacityOf(bubble)
+    if (!bubbleWasVisible) bubble.classList.remove('is-visible')
     return {
       rootVariable: getComputedStyle(document.documentElement).getPropertyValue('--pet-character-opacity').trim(),
       characterOpacity: opacityOf(canvas),
       fxOpacity: opacityOf(fxCanvas),
       chatOpacity: opacityOf(chat),
-      bubbleOpacity: opacityOf(bubble),
+      bubbleOpacity: visibleBubbleOpacity,
+      bubbleWasVisible,
       stageOpacity: opacityOf(stage),
       chatVisible: !chat.hidden,
       characterPointerEvents: getComputedStyle(canvas).pointerEvents,
@@ -1148,6 +1162,147 @@ async function runModelOpacityLayering() {
     metrics,
     screenshots,
     assertions,
+    passed: Object.values(assertions).every(Boolean),
+  }
+}
+
+async function runLockInteractionBehavior() {
+  await setSnapshot({
+    interactionMode: 'smart',
+    showMessagesWhenLocked: true,
+    backgroundDetection: false,
+    settingsTheme: 'healing',
+  })
+  const boundsReportStart = chatBoundsReports.length
+  const panelStateReportStart = chatPanelStateReports.length
+  petWindow.webContents.send('ai:chat-visibility', true)
+  await wait(320)
+  await petWindow.webContents.executeJavaScript(`(() => {
+    const input = document.getElementById('ai-chat-input')
+    input.value = '锁定后仍需保留的草稿'
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+  })()`)
+  const beforeLock = await petWindow.webContents.executeJavaScript(`(() => {
+    const panel = document.getElementById('ai-chat-panel')
+    const input = document.getElementById('ai-chat-input')
+    return { hidden: panel.hidden, draft: input.value }
+  })()`)
+
+  await setSnapshot({ interactionMode: 'locked' })
+  const locked = await petWindow.webContents.executeJavaScript(`(() => {
+    const panel = document.getElementById('ai-chat-panel')
+    const input = document.getElementById('ai-chat-input')
+    return { hidden: panel.hidden, draft: input.value }
+  })()`)
+  const lockedScreenshot = await capture('lock-chat-hidden.png')
+  petWindow.webContents.send('ai:chat-visibility', true)
+  await wait(180)
+  const lockedOpenRequest = await petWindow.webContents.executeJavaScript(
+    `document.getElementById('ai-chat-panel').hidden`
+  )
+
+  const visibleMessageText = '锁定时允许显示的消息'
+  const visibleMessage = {
+    id: 'qa-lock-visible-message',
+    requestId: 'qa-lock-visible-message-request',
+    type: 'direct',
+    content: visibleMessageText,
+    speak: false,
+    sender: '锁定消息验收',
+    source: 'external',
+    sourceLabel: '外部',
+    receivedAt: new Date().toISOString(),
+  }
+  petWindow.webContents.send('external-message:event', { phase: 'received', message: visibleMessage })
+  petWindow.webContents.send('external-message:event', {
+    phase: 'completed',
+    message: visibleMessage,
+    result: {
+      text: visibleMessageText,
+      emotion: 'calm',
+      speech: { requested: false, status: 'disabled' },
+      completedAt: new Date().toISOString(),
+    },
+  })
+  const lockedMessageVisible = await waitForBubbleText(visibleMessageText, 2500)
+
+  await setSnapshot({ showMessagesWhenLocked: false })
+  const lockedMessageDismissed = await waitForBubbleVisibility(false, 1200)
+  const suppressedMessageText = '锁定时不应显示的消息'
+  const suppressedMessage = {
+    ...visibleMessage,
+    id: 'qa-lock-suppressed-message',
+    requestId: 'qa-lock-suppressed-message-request',
+    content: suppressedMessageText,
+    receivedAt: new Date().toISOString(),
+  }
+  petWindow.webContents.send('external-message:event', { phase: 'received', message: suppressedMessage })
+  petWindow.webContents.send('external-message:event', {
+    phase: 'completed',
+    message: suppressedMessage,
+    result: {
+      text: suppressedMessageText,
+      emotion: 'calm',
+      speech: { requested: false, status: 'disabled' },
+      completedAt: new Date().toISOString(),
+    },
+  })
+  await wait(260)
+  const lockedMessageSuppressed = await readBubble('lock-message-suppressed')
+  await setSnapshot({ showMessagesWhenLocked: true })
+
+  await setSnapshot({ interactionMode: 'smart' })
+  const afterUnlock = await petWindow.webContents.executeJavaScript(`(() => {
+    const panel = document.getElementById('ai-chat-panel')
+    const input = document.getElementById('ai-chat-input')
+    return { hidden: panel.hidden, draft: input.value }
+  })()`)
+  petWindow.webContents.send('ai:chat-visibility', true)
+  await wait(320)
+  const reopened = await petWindow.webContents.executeJavaScript(`(() => {
+    const panel = document.getElementById('ai-chat-panel')
+    const input = document.getElementById('ai-chat-input')
+    return { hidden: panel.hidden, draft: input.value }
+  })()`)
+  const reopenedScreenshot = await capture('lock-chat-reopened-with-draft.png')
+
+  const boundsReports = chatBoundsReports.slice(boundsReportStart)
+  const panelStateReports = chatPanelStateReports.slice(panelStateReportStart)
+  const openBounds = boundsReports.find(Boolean)
+  const assertions = {
+    chatStartsVisibleWithDraft: !beforeLock.hidden && beforeLock.draft === '锁定后仍需保留的草稿',
+    chatReportsMeasuredBounds: Boolean(
+      openBounds && openBounds.width > 0 && openBounds.height > 0 &&
+      openBounds.width < PET_VIEWPORT_WIDTH && openBounds.height < PET_VIEWPORT_HEIGHT
+    ),
+    lockHidesChatWithoutClearingDraft: locked.hidden && locked.draft === beforeLock.draft,
+    lockClearsChatHitRegion: boundsReports.includes(null),
+    lockNotifiesHostThatChatClosed: panelStateReports.includes(false),
+    lockedOpenRequestStaysHidden: lockedOpenRequest === true,
+    lockedMessageSwitchControlsBubble: lockedMessageVisible.visible &&
+      lockedMessageVisible.text === visibleMessageText && !lockedMessageDismissed.visible &&
+      !lockedMessageSuppressed.visible && lockedMessageSuppressed.text !== suppressedMessageText &&
+      lockedMessageSuppressed.source !== 'external',
+    unlockDoesNotReopenChat: afterUnlock.hidden && afterUnlock.draft === beforeLock.draft,
+    explicitOpenRestoresDraft: !reopened.hidden && reopened.draft === beforeLock.draft,
+  }
+
+  petWindow.webContents.send('ai:chat-visibility', false)
+  await wait(120)
+  await setSnapshot({ interactionMode: 'smart', settingsTheme: 'glass' })
+  return {
+    beforeLock,
+    locked,
+    lockedOpenRequest,
+    lockedMessageVisible,
+    lockedMessageDismissed,
+    lockedMessageSuppressed,
+    afterUnlock,
+    reopened,
+    boundsReports,
+    panelStateReports,
+    assertions,
+    screenshots: { lockedScreenshot, reopenedScreenshot },
     passed: Object.values(assertions).every(Boolean),
   }
 }
@@ -3870,6 +4025,7 @@ async function run() {
   const greetingModelReadiness = await runGreetingModelReadiness()
   const modelLoaded = greetingModelReadiness.modelLoaded
   const modelOpacityLayering = await runModelOpacityLayering()
+  const lockInteractionBehavior = await runLockInteractionBehavior()
   const nicknameChatSync = await runNicknameChatSync()
   const results = []
   for (const theme of ['glass', 'healing']) results.push(await runTheme(theme))
@@ -3894,6 +4050,7 @@ async function run() {
     lastModelStatus,
     greetingModelReadiness,
     modelOpacityLayering,
+    lockInteractionBehavior,
     nicknameChatSync,
     results,
     themeSwitch,
@@ -3909,6 +4066,7 @@ async function run() {
     detachedLongMessageReader,
     passed: greetingModelReadiness.passed
       && modelOpacityLayering.passed
+      && lockInteractionBehavior.passed
       && nicknameChatSync.passed
       && results.every(result => result.passed)
       && themeSwitch.passed
@@ -3935,6 +4093,7 @@ async function run() {
       screenshots: greetingModelReadiness.screenshots,
     },
     modelOpacityLayering,
+    lockInteractionBehavior,
     nicknameChatSync,
     themes: results.map(result => ({ theme: result.theme, passed: result.passed, assertions: result.assertions, screenshots: result.screenshots })),
     themeSwitch: { passed: themeSwitch.passed, assertions: themeSwitch.assertions, screenshots: themeSwitch.screenshots },
@@ -4000,6 +4159,10 @@ async function run() {
     passed: report.passed,
   }, null, 2))
   petWindow.destroy()
+  if (!report.passed) {
+    app.exit(1)
+    return
+  }
   app.quit()
 }
 

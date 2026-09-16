@@ -308,7 +308,7 @@ models/
 | `Groups: LipSync` | 推荐 | AI 语音播放时驱动嘴型 |
 | `HitAreas` | 推荐 | 改善头部/身体点击判断；`Id` 必须是真实 drawable ID |
 
-如果模型没有 `LipSync` 组，文字聊天仍然可用，但语音播放时不会得到正常口型。如果没有 `HitAreas`，宿主仍会根据指针在窗口中的相对高度做头部回退判断，但精度较低。
+如果模型没有 `LipSync` 组，文字聊天仍然可用，但语音播放时不会得到正常口型。如果没有可识别的头部 `HitArea`，宿主会根据角色实际可见像素边界的顶部比例回退判断；点在角色可见边界外不会被误判为头部。
 
 ### 2.8 动作组命名规范
 
@@ -326,13 +326,14 @@ models/
 | 投喂 | `PetSnack` | `snack`、`petsnack` |
 | 害羞 | `PetShy` | `shy`、`petshy` |
 | 好奇 | `PetCurious` | `curious`、`petcurious` |
+| 惊讶 | `PetSurprised` | `surpris`、`petsurpris`、`惊讶` |
 | 困倦 | `PetSleepy` | `sleep`、`petsleepy` |
 
 同一组可以配置多个动作，宿主会从适用组中随机选择。设置页最多展示前 24 个可预览动作和前 24 个表情。
 
-> 重要：不要把新模型的动作全部放在空字符串 Motion Group（`""`）中。通用加载流程会过滤空名称组，避免第三方资源把大量参数片段当作完整循环动作。当前 `mori-suit` 的空组动作能够工作，是因为 `renderer/app.js` 中存在仅针对该模型 ID 的专用 `modelReactionProfiles` 映射，并不是通用行为。
+> 重要：不要把新模型的动作全部放在空字符串 Motion Group（`""`）中。通用加载流程会过滤空名称组，避免第三方资源把大量参数片段当作完整循环动作。当前 `mori-suit` 的空组动作能够工作，是因为 `config/model-reactions.js` 中存在仅针对该模型 ID 的 `MODEL_REACTION_PROFILES` 映射，并不是通用行为。
 
-对于普通模型，语义动作主要通过上表的动作组自动匹配；`Expressions` 会出现在设置页供手动预览。如果希望模型在每种 AI 情绪下自动切换特定表情，或者希望使用空组中的特定动作，需要在 `renderer/app.js` 的 `modelReactionProfiles` 中为该模型增加显式映射，并为相关行为补充回归验证。
+对于普通模型，语义动作主要通过上表的动作组自动匹配；`Expressions` 会出现在设置页供手动预览。如果希望模型在每种 AI 情绪下自动切换特定表情，或者希望使用空组中的特定动作，需要在 `config/model-reactions.js` 的 `MODEL_REACTION_PROFILES` 中为该模型增加显式映射，并为相关行为补充回归验证。
 
 ### 2.9 模型验证与排错
 

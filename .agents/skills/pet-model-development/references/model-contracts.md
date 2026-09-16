@@ -81,7 +81,7 @@ my-character.zip
 - `EyeBlink`，参数通常包含 `ParamEyeLOpen`、`ParamEyeROpen`；
 - `LipSync`，参数通常包含 `ParamMouthOpenY`。
 
-`HitAreas` 建议至少声明名称包含 `Head` 和 `Body` 的真实 drawable。没有头部命中区时，宿主使用窗口相对高度估计头部。
+`HitAreas` 建议至少声明真实的头部和身体 drawable，并让 `Name` 或 `Id` 含有可识别的 `Head` / `Face` 与 `Body` / `Torso` 语义。宿主使用 `getHitAreaId()` 与 drawable ID 做几何检测，因此空 `Name` 仍可由 `HitAreaHead` / `HitAreaBody` 一类 ID 正确识别。模型没有可识别头部区域时，宿主按角色实际可见像素边界的顶部比例回退；可见边界外一律不判为头部。
 
 ### 2.4 动作组自动分类
 
@@ -97,6 +97,7 @@ my-character.zip
 | 投喂 | `PetSnack` | `snack`、`petsnack` |
 | 害羞 | `PetShy` | `shy`、`petshy` |
 | 好奇 | `PetCurious` | `curious`、`petcurious` |
+| 惊讶 | `PetSurprised` | `surpris`、`petsurpris`、`惊讶` |
 | 困倦 | `PetSleepy` | `sleep`、`petsleepy` |
 
 检查 `renderer/app.js` 中当前分类函数后再依赖非标准名字。空名称动作组会在通用路径中过滤。
@@ -118,6 +119,7 @@ my-character.zip
       snack: [{ clip: "eat" }],
       shy: [{ clip: "shy" }],
       curious: [{ clip: "look-around" }],
+      surprised: [{ clip: "surprised" }],
       sleepy: [{ clip: "sleep" }],
       sad: [{ clip: "sad" }],
       angry: [{ clip: "angry" }],
@@ -129,6 +131,7 @@ my-character.zip
       head: "shy",
       praise: "smile",
       curious: "curious",
+      surprised: "surprised",
       excited: "happy",
       sad: "sad",
       angry: "angry"
@@ -195,7 +198,7 @@ Animation behavior:
 - `idle` is mandatory and loops.
 - Non-idle animations play once and then return to idle via the video `ended` event.
 - Multiple files under one semantic key are selected randomly.
-- Fallbacks are implemented in `INTERACTION_FALLBACKS`. Current primary keys are `idle`, `tap`, `greet`, `head`, `happy`, `snack`, `curious`, `sleepy`, `sad`, `angry`, and `drag`.
+- Fallbacks are implemented in `INTERACTION_FALLBACKS`. Current primary keys are `idle`, `tap`, `greet`, `head`, `happy`, `snack`, `shy`, `curious`, `surprised`, `sleepy`, `sad`, `angry`, and `drag`.
 - A source switch retains the previous canvas frame until the next video has a decodable frame, preventing transparent flashes.
 - Video bytes are read from disk and exposed through an object URL; destroy must pause playback, remove the source, revoke URLs, stop audio, and clear the canvas.
 - Current video pets have no independent expression manager, head/eye parameters, physics, or lip-sync parameters.
