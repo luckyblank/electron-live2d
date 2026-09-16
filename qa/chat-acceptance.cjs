@@ -215,6 +215,7 @@ const snapshot = {
   bubbleStyleCatalog: BUBBLE_THEME_DEFINITIONS,
   preferences: {
     scale: 0.85,
+    opacity: 1,
     cursorFollow: 'off',
     effects: 'off',
     interactionMode: 'smart',
@@ -291,6 +292,7 @@ function registerIPC() {
   })
   ipcMain.handle('model:select', () => ({ ok: true, snapshot: cloneSnapshot() }))
   ipcMain.handle('model:scale-update', () => ({ ok: true, snapshot: cloneSnapshot() }))
+  ipcMain.handle('model:opacity-update', () => ({ ok: true, snapshot: cloneSnapshot() }))
   ipcMain.handle('ai:chat', async () => {
     const delayMs = aiMockState.chatDelayMs
     const text = aiMockState.replyText
@@ -1087,6 +1089,69 @@ async function setSnapshot(patch) {
   await wait(300)
 }
 
+async function runModelOpacityLayering() {
+  const hitBoundsBefore = lastHitBounds ? structuredClone(lastHitBounds) : null
+  const screenshots = {}
+  const readLayerMetrics = () => petWindow.webContents.executeJavaScript(`(() => {
+    const canvas = document.getElementById('live2d-canvas')
+    const fxCanvas = document.getElementById('fx-canvas')
+    const chat = document.getElementById('ai-chat-panel')
+    const bubble = document.getElementById('interaction-bubble')
+    const stage = document.getElementById('pet-stage')
+    const opacityOf = element => Number.parseFloat(getComputedStyle(element).opacity)
+    return {
+      rootVariable: getComputedStyle(document.documentElement).getPropertyValue('--pet-character-opacity').trim(),
+      characterOpacity: opacityOf(canvas),
+      fxOpacity: opacityOf(fxCanvas),
+      chatOpacity: opacityOf(chat),
+      bubbleOpacity: opacityOf(bubble),
+      stageOpacity: opacityOf(stage),
+      chatVisible: !chat.hidden,
+      characterPointerEvents: getComputedStyle(canvas).pointerEvents,
+      stagePointerEvents: getComputedStyle(stage).pointerEvents,
+    }
+  })()`)
+
+  await setSnapshot({ settingsTheme: 'glass', effects: 'off', opacity: 1 })
+  petWindow.webContents.send('ai:chat-visibility', true)
+  await wait(300)
+  const baselineMetrics = await readLayerMetrics()
+
+  for (const [label, opacity] of [['100', 1], ['65', 0.65], ['30', 0.3]]) {
+    await setSnapshot({ opacity })
+    screenshots[label] = await capture(`character-opacity-${label}.png`)
+  }
+
+  const metrics = await readLayerMetrics()
+  const hitBoundsAfter = lastHitBounds ? structuredClone(lastHitBounds) : null
+
+  const assertions = {
+    rootVariableTracksPreference: metrics.rootVariable === '0.3',
+    characterCanvasUsesPreference: metrics.characterOpacity === 0.3,
+    effectsRemainOpaque: metrics.fxOpacity === 1,
+    chatRemainsOpaque: metrics.chatVisible && metrics.chatOpacity === 1,
+    bubbleRemainsOpaque: metrics.bubbleOpacity === 1,
+    petStageRemainsOpaque: metrics.stageOpacity === 1,
+    pointerRoutingUnchanged: metrics.characterPointerEvents === baselineMetrics.characterPointerEvents
+      && metrics.stagePointerEvents === baselineMetrics.stagePointerEvents,
+    hitBoundsUnchanged: Boolean(hitBoundsBefore)
+      && JSON.stringify(hitBoundsAfter) === JSON.stringify(hitBoundsBefore),
+  }
+
+  petWindow.webContents.send('ai:chat-visibility', false)
+  await setSnapshot({ opacity: 1 })
+
+  return {
+    hitBoundsBefore,
+    hitBoundsAfter,
+    baselineMetrics,
+    metrics,
+    screenshots,
+    assertions,
+    passed: Object.values(assertions).every(Boolean),
+  }
+}
+
 async function runTheme(theme) {
   await setSnapshot({ settingsTheme: theme, backgroundDetection: false })
   petWindow.webContents.send('ai:chat-visibility', false)
@@ -1144,10 +1209,12 @@ async function runTheme(theme) {
 
   await petWindow.webContents.executeJavaScript(`document.getElementById('pet-stage').classList.add('is-dragging')`)
   const draggingFrame = await readState(`${theme}:dragging-detection-frame`)
-  await petWindow.webContents.executeJavaScript(`document.getElementById('pet-stage').classList.remove('is-dragging')`)
+  await petWindow.webContents.executeJavaScript(`document.getElementById('pet-stage').classList.remove('is-dragging', 'qa-force-detection-frame')`)
 
-  await setSnapshot({ backgroundDetection: false })
-  await petWindow.webContents.executeJavaScript(`document.getElementById('pet-stage').classList.remove('qa-force-detection-frame')`)
+  await setSnapshot({ interactionMode: 'locked', backgroundDetection: true })
+  const frameWhileLocked = await readState(`${theme}:detection-suspended-while-locked`)
+
+  await setSnapshot({ interactionMode: 'smart', backgroundDetection: false })
   const frameDisabled = await readState(`${theme}:detection-disabled-chat-open`)
   petWindow.webContents.send('ai:chat-visibility', false)
 
@@ -1180,6 +1247,9 @@ async function runTheme(theme) {
       && draggingFrame.detectionFrame.backgroundImage === 'none'
       && draggingFrame.detectionFrame.boxShadow === 'none',
     chatDoesNotChangeDetectionFrame: frameWithChat.bodyBefore.content === 'none' && !frameWithChat.rootClasses.includes('has-ai-chat'),
+    lockSuspendsDetectionFrame: frameWhileLocked.detectionFrame.opacity === '0'
+      && !frameWhileLocked.stageClasses.includes('has-background-detection')
+      && !frameWhileLocked.stageClasses.includes('is-drag-hover'),
     noFrameWhenDetectionDisabled: frameDisabled.detectionFrame.opacity === '0' && !frameDisabled.stageClasses.includes('has-background-detection'),
   }
 
@@ -1187,7 +1257,7 @@ async function runTheme(theme) {
     theme,
     modelReady: Boolean(lastModelStatus && lastModelStatus.phase === 'ready'),
     lastHitBounds,
-    states: { initial, afterHover, expanded, afterLeave, collapsedAgain, frameWithChat, draggingFrame, frameDisabled },
+    states: { initial, afterHover, expanded, afterLeave, collapsedAgain, frameWithChat, draggingFrame, frameWhileLocked, frameDisabled },
     detectionFrameAlpha,
     screenshots: { collapsedScreenshot, expandedScreenshot, frameScreenshot },
     assertions,
@@ -3799,6 +3869,7 @@ async function run() {
   await petWindow.webContents.executeJavaScript('window.__PET_QA_TYPEWRITER_INTERVAL_MS = 1')
   const greetingModelReadiness = await runGreetingModelReadiness()
   const modelLoaded = greetingModelReadiness.modelLoaded
+  const modelOpacityLayering = await runModelOpacityLayering()
   const nicknameChatSync = await runNicknameChatSync()
   const results = []
   for (const theme of ['glass', 'healing']) results.push(await runTheme(theme))
@@ -3822,6 +3893,7 @@ async function run() {
     modelLoaded,
     lastModelStatus,
     greetingModelReadiness,
+    modelOpacityLayering,
     nicknameChatSync,
     results,
     themeSwitch,
@@ -3836,6 +3908,7 @@ async function run() {
     longMessageReader,
     detachedLongMessageReader,
     passed: greetingModelReadiness.passed
+      && modelOpacityLayering.passed
       && nicknameChatSync.passed
       && results.every(result => result.passed)
       && themeSwitch.passed
@@ -3861,6 +3934,7 @@ async function run() {
       assertions: greetingModelReadiness.assertions,
       screenshots: greetingModelReadiness.screenshots,
     },
+    modelOpacityLayering,
     nicknameChatSync,
     themes: results.map(result => ({ theme: result.theme, passed: result.passed, assertions: result.assertions, screenshots: result.screenshots })),
     themeSwitch: { passed: themeSwitch.passed, assertions: themeSwitch.assertions, screenshots: themeSwitch.screenshots },

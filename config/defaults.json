@@ -1,13 +1,19 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 4,
   "characters": {
     "preferredModelId": "mori-suit",
     "scale": 1,
+    "opacity": 1,
+    "modelScaleApplyToAll": false,
+    "modelOpacityApplyToAll": false,
+    "sharedModelScale": 1,
+    "sharedModelOpacity": 1,
     "nickname": "",
     "companionPreset": "natural",
     "windowPosition": "center",
     "modelOrder": [],
     "modelScales": {},
+    "modelOpacities": {},
     "modelNicknames": {},
     "modelProfiles": {
       "mori-suit": {
@@ -74,7 +80,69 @@
     "effects": "subtle",
     "idleEnabled": false,
     "qualityMode": "auto",
-    "backgroundDetection": false
+    "backgroundDetection": false,
+    "shortcutBindings": [
+      {
+        "id": "toggle-visibility",
+        "action": "toggle-visibility",
+        "accelerator": "CommandOrControl+Shift+D"
+      },
+      {
+        "id": "open-settings",
+        "action": "open-settings",
+        "accelerator": "CommandOrControl+Shift+,"
+      },
+      {
+        "id": "toggle-animation",
+        "action": "toggle-animation",
+        "accelerator": "CommandOrControl+Shift+P"
+      },
+      {
+        "id": "toggle-chat",
+        "action": "toggle-chat",
+        "accelerator": "CommandOrControl+Shift+Return"
+      },
+      {
+        "id": "random-interaction",
+        "action": "random-interaction",
+        "accelerator": "CommandOrControl+Shift+Space"
+      },
+      {
+        "id": "open-external-tester",
+        "action": "open-external-tester",
+        "accelerator": "CommandOrControl+Shift+E"
+      },
+      {
+        "id": "toggle-lock",
+        "action": "toggle-lock",
+        "accelerator": "CommandOrControl+Shift+L"
+      },
+      {
+        "id": "refresh-models",
+        "action": "refresh-models",
+        "accelerator": "CommandOrControl+Shift+R"
+      },
+      {
+        "id": "previous-model",
+        "action": "previous-model",
+        "accelerator": "CommandOrControl+Shift+Left"
+      },
+      {
+        "id": "next-model",
+        "action": "next-model",
+        "accelerator": "CommandOrControl+Shift+Right"
+      },
+      {
+        "id": "app-long-screenshot",
+        "action": "app-long-screenshot",
+        "accelerator": "CommandOrControl+Shift+S"
+      },
+      {
+        "id": "quit-app",
+        "action": "quit-app",
+        "accelerator": "CommandOrControl+Shift+Q"
+      }
+    ]
   },
   "ai": {
     "chatGreeting": "你好呀～今天想聊点什么？",

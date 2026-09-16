@@ -10,6 +10,9 @@ contextBridge.exposeInMainWorld('settingsAPI', {
   getSnapshot: () => ipcRenderer.invoke('state:get-snapshot'),
   updatePreferences: patch => ipcRenderer.invoke('settings:update', patch),
   resetPreferences: () => ipcRenderer.invoke('settings:reset'),
+  updateShortcut: binding => ipcRenderer.invoke('shortcuts:update', binding),
+  deleteShortcut: id => ipcRenderer.invoke('shortcuts:delete', id),
+  resetShortcuts: () => ipcRenderer.invoke('shortcuts:reset'),
   selectModel: modelId => ipcRenderer.invoke('model:select', modelId),
   reorderModels: modelIds => ipcRenderer.invoke('model:reorder', modelIds),
   importModelZip: () => ipcRenderer.invoke('model:import-zip'),
@@ -20,6 +23,13 @@ contextBridge.exposeInMainWorld('settingsAPI', {
   previewModelInteraction: (modelId, interaction) => ipcRenderer.invoke('model:interaction-preview', modelId, interaction),
   previewModelAsset: (modelId, kind, assetId) => ipcRenderer.invoke('model:preview', modelId, kind, assetId),
   updateModelScale: (modelId, scale) => ipcRenderer.invoke('model:scale-update', modelId, scale),
+  updateModelOpacity: (modelId, opacity) => ipcRenderer.invoke('model:opacity-update', modelId, opacity),
+  updateModelDisplayScope: (modelId, kind, applyToAll) => ipcRenderer.invoke(
+    'model:display-scope-update',
+    modelId,
+    kind,
+    applyToAll
+  ),
   resetPetPosition: () => ipcRenderer.invoke('window:reset-pet-position'),
   movePetPreset: preset => ipcRenderer.invoke('window:move-pet', preset),
   refreshCursorFollow: () => ipcRenderer.send('cursor:refresh'),

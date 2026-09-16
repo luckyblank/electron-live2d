@@ -243,6 +243,10 @@ select.search-select-native {
   transition: border-color 140ms ease, box-shadow 140ms ease, background-color 140ms ease;
 }
 
+.search-select-search-box[hidden] {
+  display: none;
+}
+
 .search-select-search-box:focus-within {
   border-color: var(--search-select-border-strong);
   background: rgba(255, 255, 255, .96);

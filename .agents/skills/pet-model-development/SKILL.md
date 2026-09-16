@@ -74,7 +74,7 @@ If `.codegraph/` exists, use CodeGraph before text search as required by the rep
 
 - The project is plain CommonJS JavaScript loaded directly by Electron. Do not introduce TypeScript, Vite, or a bundler for a model-only change.
 - The pet renderer intentionally runs with Node integration, no context isolation, no sandbox, and disabled web security because `live2d-renderer` loads local model resources directly. Do not “fix” those flags without redesigning the loading boundary.
-- Preserve the shared 400×600 transparent canvas, scale range 0.5–2, hit-mask flow, drag behavior, pause/resume behavior, cover generation, settings-background capture, and model-switch cleanup.
+- Preserve the shared 400×600 transparent canvas, scale range 0.1–2, opacity range 0.1–1, per-model scale/opacity maps and their opt-in all-character shared scopes, hit-mask flow, drag behavior, pause/resume behavior, cover generation, settings-background capture, and model-switch cleanup.
 - Video reactions are exclusive source changes. Non-idle clips return to looping idle when they end. Do not promise composable facial expressions or lip sync for video pets.
 - TTS audio can play for both model types, but automatic mouth movement depends on a usable Live2D `LipSync` parameter group.
 
@@ -82,7 +82,7 @@ If `.codegraph/` exists, use CodeGraph before text search as required by the rep
 
 - Model IDs, persisted action IDs, reaction keys, default configuration, and store schema are compatibility boundaries.
 - New optional fields need safe fallbacks. Renaming or removing persisted fields requires a non-destructive migration and an intentional schema-version change.
-- Keep user nicknames, scales, profiles, model order, interactions, gestures, and conversations intact.
+- Keep user nicknames, scales, opacities, profiles, model order, interactions, gestures, and conversations intact.
 - Verify redistribution rights for every model, texture, motion, expression, audio file, and generated derivative. Preserve required notices. The bundled DeepSeek pet assets have a non-commercial attribution requirement documented in its model directory and integration document.
 
 ## Implementation workflow

@@ -62,7 +62,7 @@
   const motionPriority = { idle: 1, normal: 2, force: 3 }
   const idleCopy = ['在这里陪你', '休息一下', '安静待会儿']
   const particleColors = ['#7164d8', '#b7aef0', '#efb5c8', '#fffdf9']
-  const MODEL_SCALE_MIN = 0.5
+  const MODEL_SCALE_MIN = 0.1
   const MODEL_SCALE_MAX = 2
   const MODEL_SCALE_STEP = 0.05
   const WHEEL_SCALE_DEBOUNCE_MS = 120
@@ -2019,7 +2019,11 @@
   }
 
   function setDragAffordance(visible) {
-    const enabled = Boolean(state.preferences && state.preferences.backgroundDetection)
+    const enabled = Boolean(
+      state.preferences &&
+      state.preferences.backgroundDetection &&
+      state.preferences.interactionMode !== 'locked'
+    )
     stage.classList.toggle('is-drag-hover', enabled && Boolean(visible))
   }
 
@@ -4160,6 +4164,8 @@
       if (refreshedMeta) state.modelMeta = refreshedMeta
     }
     state.preferences = snapshot.preferences
+    const nextOpacity = Math.min(1, Math.max(0.1, Number(snapshot.preferences.opacity) || 1))
+    document.documentElement.style.setProperty('--pet-character-opacity', String(nextOpacity))
     document.documentElement.dataset.settingsTheme = nextSettingsTheme
     syncBubbleChrome()
     if (interactionBubble.classList.contains('is-visible')) {
@@ -4174,8 +4180,11 @@
       updateChatPosition()
       requestAnimationFrame(syncChatPositionDuringTransition)
     }
-    stage.classList.toggle('has-background-detection', Boolean(snapshot.preferences.backgroundDetection))
-    if (!snapshot.preferences.backgroundDetection) setDragAffordance(false)
+    const backgroundDetectionActive = Boolean(
+      snapshot.preferences.backgroundDetection && snapshot.preferences.interactionMode !== 'locked'
+    )
+    stage.classList.toggle('has-background-detection', backgroundDetectionActive)
+    if (!backgroundDetectionActive) setDragAffordance(false)
     state.paused = Boolean(snapshot.runtime && snapshot.runtime.paused)
     if (state.model && state.model.kind === 'video-pet') state.model.paused = state.paused || !state.visible
     syncVisibility(Boolean(snapshot.runtime && snapshot.runtime.petVisible))
@@ -4330,23 +4339,6 @@
     if (event.key === 'Escape' && !chatPanel.hidden) {
       event.preventDefault()
       setChatOpen(false)
-      return
-    }
-    if (isInteractivePetUi(event.target)) return
-    if (!event.ctrlKey) return
-    if (event.key.toLowerCase() === 'm') {
-      event.preventDefault()
-      window.petAPI.openSettings('characters')
-    }
-    if (event.key.toLowerCase() === 'l') {
-      event.preventDefault()
-      if (!state.preferences) return
-      const locked = state.preferences.interactionMode === 'locked'
-      window.petAPI.updatePreferences({ interactionMode: locked ? 'smart' : 'locked' })
-    }
-    if (event.key.toLowerCase() === 'i') {
-      event.preventDefault()
-      runInteraction('random')
     }
   })
 

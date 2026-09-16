@@ -11,16 +11,25 @@ const { captureSettingsPanel } = require('../settings-screenshot')
 const projectRoot = path.resolve(__dirname, '..')
 const messageOutputOnly = process.argv.includes('--message-output-only')
 const aiPluginFolderOnly = process.argv.includes('--ai-plugin-folder-only')
+const characterRangesOnly = process.argv.includes('--character-ranges-only')
+const lockBackgroundControlOnly = process.argv.includes('--lock-background-control-only')
+const shortcutSettingsOnly = process.argv.includes('--shortcut-settings-only')
 
 app.commandLine.appendSwitch('force-device-scale-factor', process.env.QA_DEVICE_SCALE || '1')
 app.commandLine.appendSwitch('disable-gpu')
 app.setPath('userData', path.join(os.tmpdir(), 'live2d-companion-qa-userdata'))
 
-const outDir = path.join(os.tmpdir(), aiPluginFolderOnly
-  ? 'live2d-ai-plugin-folder-qa'
-  : messageOutputOnly
-    ? 'live2d-message-output-settings-qa'
-    : `live2d-companion-qa${process.env.QA_DEVICE_SCALE ? `-${process.env.QA_DEVICE_SCALE}x` : ''}`)
+const outDir = path.join(os.tmpdir(), lockBackgroundControlOnly
+  ? 'live2d-lock-background-control-qa'
+  : characterRangesOnly
+    ? 'live2d-character-ranges-qa'
+    : aiPluginFolderOnly
+      ? 'live2d-ai-plugin-folder-qa'
+      : messageOutputOnly
+        ? 'live2d-message-output-settings-qa'
+        : shortcutSettingsOnly
+          ? 'live2d-shortcut-settings-qa'
+          : `live2d-companion-qa${process.env.QA_DEVICE_SCALE ? `-${process.env.QA_DEVICE_SCALE}x` : ''}`)
 fs.mkdirSync(outDir, { recursive: true })
 
 const coversDir = path.join(process.env.APPDATA || '', 'Live2DCompanion', 'covers')
@@ -74,6 +83,30 @@ const qaGestureDefaults = [
   { id: 'long-press-body', label: '长按身体', kind: 'calm', actionId: '', text: '让我靠一会儿', defaultMapping: '休息 / 安静动作' },
   { id: 'drag-end', label: '拖拽结束', kind: 'drag', actionId: '', text: '新位置不错', defaultMapping: '拖拽动作' },
 ]
+const qaShortcutActions = [
+  ['toggle-visibility', '显示 / 隐藏'],
+  ['open-settings', '打开设置'],
+  ['toggle-animation', '暂停 / 继续动画'],
+  ['toggle-chat', '开启 / 关闭对话'],
+  ['random-interaction', '随机互动'],
+  ['open-external-tester', '外部消息调试'],
+  ['toggle-lock', '锁定 / 解锁'],
+  ['refresh-models', '刷新模型列表'],
+  ['previous-model', '上一个角色'],
+  ['next-model', '下一个角色'],
+  ['app-long-screenshot', 'APP 长截图'],
+  ['quit-app', '关闭应用'],
+  ['reset-position', '角色归位'],
+].map(([id, label]) => ({ id, label }))
+const qaDefaultShortcutIds = new Set(PREFERENCE_DEFAULTS.shortcutBindings.map(binding => binding.id))
+
+function qaShortcutBindings(value = PREFERENCE_DEFAULTS.shortcutBindings) {
+  return value.map(binding => ({
+    ...binding,
+    label: qaShortcutActions.find(action => action.id === binding.action)?.label || binding.action,
+    custom: !qaDefaultShortcutIds.has(binding.id),
+  }))
+}
 
 function qaInteractions(value) {
   if (!Array.isArray(value)) return structuredClone(qaInteractionDefaults)
@@ -156,11 +189,16 @@ let snapshot = {
   })),
   covers: Object.fromEntries(modelDefs.map(([id]) => [id, coverUrl(id)])),
   bubbleStyleCatalog: BUBBLE_THEME_DEFINITIONS,
+  shortcutActions: qaShortcutActions,
+  shortcutBindingLimit: 24,
   modelsFolder: 'C:\\Users\\lucky\\AppData\\Roaming\\Live2DCompanion\\models',
   pluginsFolder: 'C:\\Users\\lucky\\AppData\\Roaming\\Live2DCompanion\\plugins',
   runtime: { phase: 'ready', modelId: 'hiyori', message: '' },
   preferences: {
     scale: 0.85,
+    opacity: 0.85,
+    scaleApplyToAll: false,
+    opacityApplyToAll: false,
     cursorFollow: 'near',
     effects: 'subtle',
     interactionMode: 'smart',
@@ -176,6 +214,7 @@ let snapshot = {
     externalMessagesEnabled: false,
     settingsTheme: 'glass',
     bubbleStyles: { glass: 'glass', healing: 'glass' },
+    shortcutBindings: qaShortcutBindings(),
     chatGreeting: '你好呀～今天想聊点什么？',
     longMessageCharacterThreshold: 45,
     appLongMessageAutoExpand: false,
@@ -233,6 +272,13 @@ const modelPreviews = []
 const modelInteractionUpdates = []
 const modelInteractionPreviews = []
 const modelGestureUpdates = []
+const modelScaleUpdates = []
+const modelOpacityUpdates = []
+const modelDisplayScopeUpdates = []
+const modelScales = new Map([['mori-suit', 0.85]])
+const modelOpacities = new Map([['mori-suit', 0.85]])
+let sharedModelScale = 0.85
+let sharedModelOpacity = 0.85
 const openedUrls = []
 const copiedTexts = []
 const shortcutCaptureRequests = []
@@ -273,9 +319,36 @@ function registerIPC() {
     return { ok: false, canceled: true }
   })
   ipcMain.handle('settings:reset', () => cloneSnapshot())
+  ipcMain.handle('shortcuts:update', (_event, binding) => {
+    const bindings = snapshot.preferences.shortcutBindings
+    const index = bindings.findIndex(item => item.id === binding.id)
+    if (index >= 0) bindings[index] = { ...bindings[index], accelerator: binding.accelerator }
+    else {
+      bindings.push(...qaShortcutBindings([{
+        id: `custom-${binding.action}`,
+        action: binding.action,
+        accelerator: binding.accelerator,
+      }]))
+    }
+    return { ok: true, snapshot: cloneSnapshot() }
+  })
+  ipcMain.handle('shortcuts:delete', (_event, id) => {
+    snapshot.preferences.shortcutBindings = snapshot.preferences.shortcutBindings.filter(binding => binding.id !== id)
+    return { ok: true, snapshot: cloneSnapshot() }
+  })
+  ipcMain.handle('shortcuts:reset', () => {
+    snapshot.preferences.shortcutBindings = qaShortcutBindings()
+    return { ok: true, snapshot: cloneSnapshot() }
+  })
   ipcMain.handle('model:select', (_e, modelId) => {
     snapshot.currentModelId = modelId
     snapshot.runtime.modelId = modelId
+    snapshot.preferences.scale = snapshot.preferences.scaleApplyToAll
+      ? sharedModelScale
+      : modelScales.get(modelId) ?? 1
+    snapshot.preferences.opacity = snapshot.preferences.opacityApplyToAll
+      ? sharedModelOpacity
+      : modelOpacities.get(modelId) ?? 1
     return { ok: true, snapshot: cloneSnapshot() }
   })
   ipcMain.handle('model:reorder', (_e, modelIds) => {
@@ -330,7 +403,42 @@ function registerIPC() {
       },
     }
   })
-  ipcMain.handle('model:scale-update', (_e, _modelId, scale) => ({ ok: true, snapshot: patchSnapshot({ scale }) }))
+  ipcMain.handle('model:scale-update', (_e, modelId, scale) => {
+    const normalized = Math.min(2, Math.max(0.1, Number(scale) || 1))
+    if (snapshot.preferences.scaleApplyToAll) sharedModelScale = normalized
+    else modelScales.set(modelId, normalized)
+    modelScaleUpdates.push({ modelId, scale:normalized })
+    if (snapshot.currentModelId === modelId || snapshot.preferences.scaleApplyToAll) {
+      snapshot.preferences.scale = normalized
+    }
+    return { ok: true, snapshot: cloneSnapshot() }
+  })
+  ipcMain.handle('model:opacity-update', (_e, modelId, opacity) => {
+    const normalized = Math.min(1, Math.max(0.1, Number(opacity) || 1))
+    if (snapshot.preferences.opacityApplyToAll) sharedModelOpacity = normalized
+    else modelOpacities.set(modelId, normalized)
+    modelOpacityUpdates.push({ modelId, opacity: normalized })
+    if (snapshot.currentModelId === modelId || snapshot.preferences.opacityApplyToAll) {
+      snapshot.preferences.opacity = normalized
+    }
+    return { ok: true, snapshot: cloneSnapshot() }
+  })
+  ipcMain.handle('model:display-scope-update', (_e, modelId, kind, applyToAll) => {
+    const enabled = Boolean(applyToAll)
+    modelDisplayScopeUpdates.push({ modelId, kind, applyToAll: enabled })
+    if (kind === 'scale') {
+      const current = snapshot.preferences.scale
+      snapshot.preferences.scaleApplyToAll = enabled
+      if (enabled) sharedModelScale = current
+      else modelScales.set(modelId, current)
+    } else if (kind === 'opacity') {
+      const current = snapshot.preferences.opacity
+      snapshot.preferences.opacityApplyToAll = enabled
+      if (enabled) sharedModelOpacity = current
+      else modelOpacities.set(modelId, current)
+    }
+    return { ok: true, snapshot: cloneSnapshot() }
+  })
   for (const channel of ['window:reset-pet-position', 'window:move-pet', 'window:open-models-folder', 'window:open-plugins-folder']) {
     ipcMain.handle(channel, () => true)
   }
@@ -691,6 +799,308 @@ async function captureMessageOutputSettings(name) {
   return target
 }
 
+async function runCharacterRangesFocused() {
+  modelScaleUpdates.length = 0
+  modelOpacityUpdates.length = 0
+  modelDisplayScopeUpdates.length = 0
+  const initialModelId = snapshot.currentModelId
+  const readApplyAllHover = async selector => {
+    win.webContents.sendInputEvent({ type: 'mouseMove', x: 4, y: 4 })
+    await new Promise(resolve => setTimeout(resolve, 60))
+    const resting = await win.webContents.executeJavaScript(`(() => {
+      const element = document.querySelector(${JSON.stringify(selector)})
+      const rect = element.getBoundingClientRect()
+      const style = getComputedStyle(element)
+      return {
+        point:{ x:Math.round(rect.x + rect.width / 2), y:Math.round(rect.y + rect.height / 2) },
+        opacity:style.opacity,
+        transform:style.transform,
+        boxShadow:style.boxShadow,
+        backgroundColor:style.backgroundColor,
+      }
+    })()`)
+    win.webContents.sendInputEvent({ type: 'mouseMove', ...resting.point })
+    await new Promise(resolve => setTimeout(resolve, 80))
+    const hovered = await win.webContents.executeJavaScript(`(() => {
+      const style = getComputedStyle(document.querySelector(${JSON.stringify(selector)}))
+      return {
+        opacity:style.opacity,
+        transform:style.transform,
+        boxShadow:style.boxShadow,
+        backgroundColor:style.backgroundColor,
+      }
+    })()`)
+    return { resting, hovered }
+  }
+  await win.webContents.executeJavaScript(`(() => {
+    document.querySelector('.section-tab[data-section="characters"]').click()
+    const setRange = (selector, value) => {
+      const input = document.querySelector(selector)
+      input.value = String(value)
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    }
+    setRange('#scale-range', .1)
+    setRange('#opacity-range', .1)
+  })()`)
+  await new Promise(resolve => setTimeout(resolve, 320))
+  const metrics = await win.webContents.executeJavaScript(`(() => {
+    const read = (inputSelector, outputSelector) => {
+      const input = document.querySelector(inputSelector)
+      return {
+        min:Number(input.min),
+        max:Number(input.max),
+        step:Number(input.step),
+        value:Number(input.value),
+        output:document.querySelector(outputSelector).textContent.trim(),
+        progress:input.style.getPropertyValue('--range-progress'),
+      }
+    }
+    return {
+      theme:document.documentElement.dataset.settingsTheme,
+      view:document.documentElement.dataset.settingsView,
+      scaleLabel:document.querySelector('label[for="scale-range"]').textContent.trim(),
+      opacityLabel:document.querySelector('label[for="opacity-range"]').textContent.trim(),
+      scale:read('#scale-range', '#scale-value'),
+      opacity:read('#opacity-range', '#opacity-value'),
+      scaleApplyToAll:document.querySelector('#scale-apply-all').checked,
+      opacityApplyToAll:document.querySelector('#opacity-apply-all').checked,
+    }
+  })()`)
+
+  await win.webContents.executeJavaScript(`(() => {
+    const toggle = selector => {
+      const input = document.querySelector(selector)
+      input.checked = true
+      input.dispatchEvent(new Event('change', { bubbles: true }))
+    }
+    toggle('#scale-apply-all')
+    toggle('#opacity-apply-all')
+  })()`)
+  await new Promise(resolve => setTimeout(resolve, 280))
+  await win.webContents.executeJavaScript(`(() => {
+    const setRange = (selector, value) => {
+      const input = document.querySelector(selector)
+      input.value = String(value)
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    }
+    setRange('#scale-range', .8)
+    setRange('#opacity-range', .4)
+  })()`)
+  await new Promise(resolve => setTimeout(resolve, 320))
+
+  const designMetrics = await win.webContents.executeJavaScript(`(() => {
+    const box = selector => {
+      const rect = document.querySelector(selector).getBoundingClientRect()
+      return { x:rect.x, y:rect.y, width:rect.width, height:rect.height, right:rect.right, bottom:rect.bottom }
+    }
+    const scaleCard = box('.scale-control:not(.opacity-control)')
+    const opacityCard = box('.opacity-control')
+    const hero = box('.section-heading')
+    return {
+      theme:document.documentElement.dataset.settingsTheme,
+      scaleValue:document.querySelector('#scale-value').textContent.trim(),
+      opacityValue:document.querySelector('#opacity-value').textContent.trim(),
+      scaleApplyToAll:document.querySelector('#scale-apply-all').checked,
+      opacityApplyToAll:document.querySelector('#opacity-apply-all').checked,
+      scaleApplyLabel:document.querySelector('label[for="scale-apply-all"] > span:last-child').textContent.trim(),
+      opacityApplyLabel:document.querySelector('label[for="opacity-apply-all"] > span:last-child').textContent.trim(),
+      scaleCard,
+      opacityCard,
+      hero,
+      topMargin:scaleCard.y - hero.bottom,
+      cardGap:opacityCard.y - scaleCard.bottom,
+      noHorizontalOverflow:document.documentElement.scrollWidth <= document.documentElement.clientWidth,
+    }
+  })()`)
+  const glassHover = await readApplyAllHover('label[for="scale-apply-all"]')
+
+  win.webContents.invalidate()
+  await win.capturePage()
+  await new Promise(resolve => setTimeout(resolve, 120))
+  const glassScreenshot = path.join(outDir, 'character-ranges-glass.png')
+  fs.writeFileSync(glassScreenshot, await win.capturePage().then(image => image.toPNG()))
+
+  const sharedValuesAfterSwitch = await win.webContents.executeJavaScript(`(async () => {
+    const wait = ms => new Promise(resolve => setTimeout(resolve, ms))
+    const current = document.querySelector('.model-card.is-selected').dataset.modelId
+    const other = [...document.querySelectorAll('.model-card')]
+      .find(card => card.dataset.modelId !== current && !card.disabled)
+    other.click()
+    await wait(260)
+    return {
+      modelId:document.querySelector('.model-card.is-selected').dataset.modelId,
+      scale:Number(document.querySelector('#scale-range').value),
+      opacity:Number(document.querySelector('#opacity-range').value),
+      scaleOutput:document.querySelector('#scale-value').textContent.trim(),
+      opacityOutput:document.querySelector('#opacity-value').textContent.trim(),
+      scaleApplyToAll:document.querySelector('#scale-apply-all').checked,
+      opacityApplyToAll:document.querySelector('#opacity-apply-all').checked,
+    }
+  })()`)
+
+  await win.webContents.executeJavaScript(`(() => {
+    document.querySelector('[data-theme-option="healing"]').click()
+    window.scrollTo(0, 0)
+  })()`)
+  await new Promise(resolve => setTimeout(resolve, 260))
+  const healingHover = await readApplyAllHover('label[for="scale-apply-all"]')
+  win.webContents.invalidate()
+  await win.capturePage()
+  await new Promise(resolve => setTimeout(resolve, 120))
+  const healingScreenshot = path.join(outDir, 'character-ranges-healing.png')
+  fs.writeFileSync(healingScreenshot, await win.capturePage().then(image => image.toPNG()))
+
+  const assertions = {
+    characterViewActive: metrics.view === 'characters',
+    labelsMatch: metrics.scaleLabel === '角色尺寸' && metrics.opacityLabel === '角色不透明度',
+    scaleRangeIsTenToTwoHundred: metrics.scale.min === .1 && metrics.scale.max === 2 && metrics.scale.step === .05,
+    opacityRangeIsTenToOneHundred: metrics.opacity.min === .1 && metrics.opacity.max === 1 && metrics.opacity.step === .05,
+    scaleMinimumRenders: metrics.scale.value === .1 && metrics.scale.output === '10%' && metrics.scale.progress === '0%',
+    opacityMinimumRenders: metrics.opacity.value === .1 && metrics.opacity.output === '10%' && metrics.opacity.progress === '0%',
+    scaleMinimumSavesForCurrentModel: modelScaleUpdates.some(update => update.modelId === initialModelId && update.scale === .1),
+    opacityMinimumSavesForCurrentModel: modelOpacityUpdates.some(update => update.modelId === initialModelId && update.opacity === .1),
+    applyAllLabelsMatch: designMetrics.scaleApplyLabel === '应用于全角色' &&
+      designMetrics.opacityApplyLabel === '应用于全角色',
+    applyAllControlsPersist: designMetrics.scaleApplyToAll && designMetrics.opacityApplyToAll &&
+      sharedValuesAfterSwitch.scaleApplyToAll && sharedValuesAfterSwitch.opacityApplyToAll,
+    sharedValuesFollowAcrossModels: sharedValuesAfterSwitch.scale === .8 &&
+      sharedValuesAfterSwitch.opacity === .4 && sharedValuesAfterSwitch.scaleOutput === '80%' &&
+      sharedValuesAfterSwitch.opacityOutput === '40%',
+    applyAllUpdatesReachMain: modelDisplayScopeUpdates.some(update => update.kind === 'scale' && update.applyToAll) &&
+      modelDisplayScopeUpdates.some(update => update.kind === 'opacity' && update.applyToAll),
+    cardsMatchReferenceSpacing: designMetrics.scaleCard.height >= 70 && designMetrics.opacityCard.height >= 70 &&
+      designMetrics.topMargin >= 8 && designMetrics.cardGap >= 8 && designMetrics.noHorizontalOverflow,
+    applyAllHoverIsStaticAndSubtle: [glassHover, healingHover].every(({ resting, hovered }) => (
+      resting.opacity === '0.82' && hovered.opacity === '0.82' &&
+      resting.transform === hovered.transform && resting.boxShadow === hovered.boxShadow &&
+      resting.backgroundColor === hovered.backgroundColor
+    )),
+  }
+  return {
+    generatedAt: new Date().toISOString(),
+    metrics,
+    modelScaleUpdates:structuredClone(modelScaleUpdates),
+    modelOpacityUpdates:structuredClone(modelOpacityUpdates),
+    modelDisplayScopeUpdates:structuredClone(modelDisplayScopeUpdates),
+    designMetrics,
+    hoverMetrics:{ glass:glassHover, healing:healingHover },
+    sharedValuesAfterSwitch,
+    screenshots:{ glass:glassScreenshot, healing:healingScreenshot },
+    assertions,
+    passed:Object.values(assertions).every(Boolean),
+  }
+}
+
+async function readLockedBackgroundControlState() {
+  return win.webContents.executeJavaScript(`(() => {
+    const lock = document.querySelector('[data-setting="interactionMode"]')
+    const background = document.querySelector('[data-setting="backgroundDetection"]')
+    const row = background.closest('.setting-row')
+    return {
+      theme: document.documentElement.dataset.settingsTheme,
+      view: document.documentElement.dataset.settingsView,
+      lockChecked: lock.checked,
+      backgroundChecked: background.checked,
+      backgroundDisabled: background.disabled,
+      backgroundAriaDisabled: background.getAttribute('aria-disabled'),
+      rowSuspended: row.classList.contains('is-setting-suspended'),
+      rowCursor: getComputedStyle(row).cursor,
+      copyOpacity: Number.parseFloat(getComputedStyle(row.querySelector('.setting-copy')).opacity),
+      iconOpacity: Number.parseFloat(getComputedStyle(row.querySelector('.setting-row-icon')).opacity),
+      trackOpacity: Number.parseFloat(getComputedStyle(row.querySelector('.switch-track')).opacity),
+      label: row.querySelector('strong').textContent.trim(),
+      hint: row.querySelector('small').textContent.replace(/\\s+/g, ' ').trim(),
+    }
+  })()`)
+}
+
+async function runLockBackgroundControlFocused() {
+  settingsUpdates.length = 0
+  const themes = {}
+  for (const theme of ['glass', 'healing']) {
+    snapshot.preferences = {
+      ...snapshot.preferences,
+      settingsTheme: theme,
+      interactionMode: 'smart',
+      backgroundDetection: true,
+    }
+    win.webContents.send('state:changed', { snapshot: cloneSnapshot() })
+    await win.webContents.executeJavaScript(`(() => {
+      document.querySelector('.section-tab[data-section="behavior"]').click()
+      document.querySelector('.settings-section.behavior-view').scrollTo({ top: 0, behavior: 'auto' })
+    })()`)
+    await new Promise(resolve => setTimeout(resolve, 220))
+    const updatesBefore = settingsUpdates.length
+    const before = await readLockedBackgroundControlState()
+
+    await win.webContents.executeJavaScript(
+      `document.querySelector('[data-setting="interactionMode"]').click()`
+    )
+    await new Promise(resolve => setTimeout(resolve, 220))
+    const locked = await readLockedBackgroundControlState()
+
+    await win.webContents.executeJavaScript(
+      `document.querySelector('[data-setting="backgroundDetection"]').click()`
+    )
+    await new Promise(resolve => setTimeout(resolve, 220))
+    const whileLockedOff = await readLockedBackgroundControlState()
+
+    await win.webContents.executeJavaScript(
+      `document.querySelector('[data-setting="backgroundDetection"]').click()`
+    )
+    await new Promise(resolve => setTimeout(resolve, 220))
+    const whileLockedOn = await readLockedBackgroundControlState()
+
+    win.webContents.invalidate()
+    await win.capturePage()
+    await new Promise(resolve => setTimeout(resolve, 120))
+    const screenshot = path.join(outDir, `${theme}-behavior-locked-enabled.png`)
+    fs.writeFileSync(screenshot, await win.capturePage().then(image => image.toPNG()))
+
+    await win.webContents.executeJavaScript(
+      `document.querySelector('[data-setting="interactionMode"]').click()`
+    )
+    await new Promise(resolve => setTimeout(resolve, 220))
+    const restored = await readLockedBackgroundControlState()
+    const updates = settingsUpdates.slice(updatesBefore)
+    const assertions = {
+      startsEnabled: !before.lockChecked && before.backgroundChecked && !before.backgroundDisabled,
+      lockKeepsControlEnabled: locked.lockChecked && locked.backgroundChecked && !locked.backgroundDisabled &&
+        locked.backgroundAriaDisabled !== 'true' && !locked.rowSuspended,
+      lockKeepsNormalVisuals: locked.theme === theme && locked.view === 'behavior' &&
+        locked.rowCursor === 'pointer' && locked.copyOpacity === 1 && locked.iconOpacity === 1 &&
+        locked.trackOpacity === 1 && locked.label === '背景检测' &&
+        locked.hint.includes('锁定宠物时自动暂停'),
+      canTurnOffWhileLocked: whileLockedOff.lockChecked && !whileLockedOff.backgroundChecked &&
+        !whileLockedOff.backgroundDisabled,
+      canTurnOnWhileLocked: whileLockedOn.lockChecked && whileLockedOn.backgroundChecked &&
+        !whileLockedOn.backgroundDisabled,
+      unlockKeepsLatestValue: !restored.lockChecked && restored.backgroundChecked &&
+        !restored.backgroundDisabled && !restored.rowSuspended,
+      settingsUpdatesPersistChoices: updates.some(update => update.interactionMode === 'locked') &&
+        updates.some(update => update.interactionMode === 'smart') &&
+        updates.some(update => update.backgroundDetection === false) &&
+        updates.some(update => update.backgroundDetection === true),
+    }
+    themes[theme] = {
+      before,
+      locked,
+      whileLockedOff,
+      whileLockedOn,
+      restored,
+      updates,
+      screenshot,
+      assertions,
+      passed:Object.values(assertions).every(Boolean),
+    }
+  }
+  return {
+    generatedAt: new Date().toISOString(),
+    themes,
+    passed:Object.values(themes).every(result => result.passed),
+  }
+}
+
 async function runAIPluginFolderFocused(consoleMessages) {
   const themes = {}
   for (const theme of ['glass', 'healing']) {
@@ -935,6 +1345,175 @@ async function run() {
   }
   await new Promise(resolve => setTimeout(resolve, 800))
 
+  if (shortcutSettingsOnly) {
+    const defaultShortcutCount = PREFERENCE_DEFAULTS.shortcutBindings.length
+    const themes = {}
+    for (const theme of ['glass', 'healing']) {
+      snapshot.preferences.settingsTheme = theme
+      snapshot.preferences.shortcutBindings = qaShortcutBindings()
+      win.webContents.send('state:changed', { snapshot: cloneSnapshot() })
+      await new Promise(resolve => setTimeout(resolve, 180))
+      themes[theme] = await win.webContents.executeJavaScript(`(() => {
+        document.querySelector('.section-tab[data-section="behavior"]').click()
+        const section = document.querySelector('.behavior-view')
+        const card = document.querySelector('.shortcut-settings-card')
+        section.scrollTo({ top: Math.max(0, card.offsetTop - 8), behavior: 'auto' })
+        const rows = [...card.querySelectorAll('.shortcut-settings-item')]
+        const longScreenshot = card.querySelector('[data-shortcut-id="app-long-screenshot"]')
+        document.querySelector('#shortcut-add').click()
+        const appLongScreenshotOption = [...document.querySelector('#shortcut-action').options]
+          .find(option => option.value === 'app-long-screenshot')
+        const result = {
+          title:card.querySelector('#shortcut-settings-title').textContent.trim(),
+          rows:rows.length,
+          labels:rows.map(row => row.querySelector('.shortcut-settings-label').textContent.trim()),
+          accelerators:rows.map(row => row.querySelector('.shortcut-keycap').textContent.trim()),
+          columns:getComputedStyle(card.querySelector('.shortcut-settings-grid')).gridTemplateColumns.split(' ').length,
+          horizontalOverflow:card.scrollWidth - card.clientWidth,
+          longScreenshot:longScreenshot ? {
+            label:longScreenshot.querySelector('.shortcut-settings-label').textContent.trim(),
+            accelerator:longScreenshot.querySelector('.shortcut-keycap').textContent.trim(),
+            editable:Boolean(longScreenshot.querySelector('[data-shortcut-edit="app-long-screenshot"]')),
+          } : null,
+          addOption:appLongScreenshotOption ? appLongScreenshotOption.textContent.trim() : '',
+          resetVisible:card.querySelector('#shortcut-reset').getBoundingClientRect().height > 0,
+          addVisible:card.querySelector('#shortcut-add').getBoundingClientRect().height > 0,
+        }
+        document.querySelector('#shortcut-dialog-close').click()
+        return result
+      })()`)
+      await new Promise(resolve => setTimeout(resolve, 320))
+      win.webContents.invalidate()
+      await win.capturePage()
+      await new Promise(resolve => setTimeout(resolve, 120))
+      const screenshot = path.join(outDir, `${theme}-app-long-screenshot-shortcut.png`)
+      fs.writeFileSync(screenshot, await win.capturePage().then(image => image.toPNG()))
+      themes[theme].screenshot = screenshot
+    }
+
+    snapshot.preferences.settingsTheme = 'healing'
+    snapshot.preferences.shortcutBindings = qaShortcutBindings()
+    win.webContents.send('state:changed', { snapshot: cloneSnapshot() })
+    await new Promise(resolve => setTimeout(resolve, 180))
+    const editing = await win.webContents.executeJavaScript(`(async () => {
+      const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
+      document.querySelector('.section-tab[data-section="behavior"]').click()
+      const capture = document.querySelector('#shortcut-capture')
+      document.querySelector('[data-shortcut-edit="app-long-screenshot"]').click()
+      capture.click()
+      capture.dispatchEvent(new KeyboardEvent('keydown', {
+        key:'S', code:'KeyS', ctrlKey:true, altKey:true, bubbles:true, cancelable:true,
+      }))
+      document.querySelector('#shortcut-dialog-save').click()
+      await pause(100)
+      const edited = document.querySelector('[data-shortcut-id="app-long-screenshot"] .shortcut-keycap').textContent.trim()
+
+      document.querySelector('#shortcut-reset').click()
+      await pause(100)
+      const reset = document.querySelector('[data-shortcut-id="app-long-screenshot"] .shortcut-keycap').textContent.trim()
+
+      document.querySelector('#shortcut-add').click()
+      document.querySelector('#shortcut-action').value = 'app-long-screenshot'
+      capture.click()
+      capture.dispatchEvent(new KeyboardEvent('keydown', {
+        key:'S', code:'KeyS', ctrlKey:true, altKey:true, bubbles:true, cancelable:true,
+      }))
+      document.querySelector('#shortcut-dialog-save').click()
+      await pause(100)
+      const custom = document.querySelector('[data-shortcut-id="custom-app-long-screenshot"]')
+      const added = custom ? {
+        label:custom.querySelector('.shortcut-settings-label').textContent.trim(),
+        accelerator:custom.querySelector('.shortcut-keycap').textContent.trim(),
+        editable:Boolean(custom.querySelector('[data-shortcut-edit="custom-app-long-screenshot"]')),
+      } : null
+      if (custom) {
+        custom.querySelector('[data-shortcut-edit="custom-app-long-screenshot"]').click()
+        document.querySelector('#shortcut-delete').click()
+        await pause(100)
+      }
+      return {
+        edited,
+        reset,
+        added,
+        rowsAfterDelete:document.querySelectorAll('.shortcut-settings-item').length,
+      }
+    })()`)
+
+    const expectedLabels = qaShortcutBindings().map(binding => binding.label)
+    const assertions = {
+      bothThemesShowSameDefaults: ['glass', 'healing'].every(theme => (
+        themes[theme].rows === defaultShortcutCount &&
+        themes[theme].labels.join('|') === expectedLabels.join('|')
+      )),
+      longScreenshotDefaultIsVisible: ['glass', 'healing'].every(theme => (
+        themes[theme].longScreenshot &&
+        themes[theme].longScreenshot.label === 'APP 长截图' &&
+        themes[theme].longScreenshot.accelerator === 'Ctrl + Shift + S' &&
+        themes[theme].longScreenshot.editable
+      )),
+      cardLayoutRemainsStable: ['glass', 'healing'].every(theme => (
+        themes[theme].title === '快捷键说明' && themes[theme].columns === 2 &&
+        themes[theme].horizontalOverflow <= 1 && themes[theme].resetVisible && themes[theme].addVisible
+      )),
+      actionIsAvailableForCustomShortcut: ['glass', 'healing'].every(theme => themes[theme].addOption === 'APP 长截图'),
+      editAndResetWork: editing.edited === 'Ctrl + Alt + S' && editing.reset === 'Ctrl + Shift + S',
+      customShortcutCanBeAddedAndDeleted: Boolean(
+        editing.added && editing.added.label === 'APP 长截图' &&
+        editing.added.accelerator === 'Ctrl + Alt + S' && editing.added.editable &&
+        editing.rowsAfterDelete === defaultShortcutCount
+      ),
+      noPageError: consoleMessages.filter(item => (
+        item.level === 'error' || /uncaught|unhandled/i.test(item.message || '')
+      )).length === 0,
+    }
+    const report = {
+      generatedAt: new Date().toISOString(),
+      outputDirectory: outDir,
+      themes,
+      editing,
+      assertions,
+      passed: Object.values(assertions).every(Boolean),
+    }
+    const reportPath = path.join(outDir, 'results.json')
+    fs.writeFileSync(reportPath, JSON.stringify(report, null, 2))
+    process.stdout.write(JSON.stringify({ reportPath, ...report }, null, 2))
+    win.destroy()
+    if (!report.passed) {
+      app.exit(1)
+      return
+    }
+    app.quit()
+    return
+  }
+
+  if (lockBackgroundControlOnly) {
+    const report = await runLockBackgroundControlFocused()
+    const reportPath = path.join(outDir, 'results.json')
+    fs.writeFileSync(reportPath, JSON.stringify(report, null, 2))
+    process.stdout.write(JSON.stringify({ reportPath, ...report }, null, 2))
+    win.destroy()
+    if (!report.passed) {
+      app.exit(1)
+      return
+    }
+    app.quit()
+    return
+  }
+
+  if (characterRangesOnly) {
+    const report = await runCharacterRangesFocused()
+    const reportPath = path.join(outDir, 'results.json')
+    fs.writeFileSync(reportPath, JSON.stringify(report, null, 2))
+    process.stdout.write(JSON.stringify({ reportPath, ...report }, null, 2))
+    win.destroy()
+    if (!report.passed) {
+      app.exit(1)
+      return
+    }
+    app.quit()
+    return
+  }
+
   const results = {
     generatedAt: new Date().toISOString(),
     window: {
@@ -1040,6 +1619,7 @@ async function run() {
     document.querySelector('#footer-update').hidden = true
   })()`)
 
+  results.interactions.shortcuts = {}
   for (const theme of ['glass', 'healing']) {
     snapshot.preferences.settingsTheme = theme
     win.webContents.send('state:changed', { snapshot: cloneSnapshot() })
@@ -1058,8 +1638,158 @@ async function run() {
       fs.writeFileSync(file, png)
       results.pages.push({ ...(await pageMetrics(theme, section)), screenshot:file, alpha:await alphaEvidence(png) })
       if (section === 'characters') results.characterLayouts[theme] = await characterLayoutMetrics(theme)
+      if (section === 'behavior') {
+        const shortcutMetrics = await win.webContents.executeJavaScript(`(() => {
+          const section = document.querySelector('.behavior-view')
+          const card = document.querySelector('.shortcut-settings-card')
+          section.scrollTo({ top: Math.max(0, card.offsetTop - 8), behavior: 'auto' })
+          const rows = [...card.querySelectorAll('.shortcut-settings-item')]
+          return {
+            title:card.querySelector('#shortcut-settings-title').textContent.trim(),
+            labels:rows.map(row => row.querySelector('.shortcut-settings-label').textContent.trim()),
+            accelerators:rows.map(row => row.querySelector('.shortcut-keycap').textContent.trim()),
+            editButtons:rows.filter(row => row.querySelector('[data-shortcut-edit]')).length,
+            resetVisible:card.querySelector('#shortcut-reset').getBoundingClientRect().height > 0,
+            addVisible:card.querySelector('#shortcut-add').getBoundingClientRect().height > 0,
+            liveNote:card.querySelector('.shortcut-live-note').textContent.trim(),
+            gridColumns:getComputedStyle(card.querySelector('.shortcut-settings-grid')).gridTemplateColumns,
+            horizontalOverflow:card.scrollWidth - card.clientWidth,
+          }
+        })()`)
+        await new Promise(resolve => setTimeout(resolve, 100))
+        win.webContents.invalidate()
+        const shortcutScreenshot = path.join(outDir, `${theme}-behavior-shortcuts.png`)
+        fs.writeFileSync(shortcutScreenshot, await win.capturePage().then(image => image.toPNG()))
+        results.interactions.shortcuts[theme] = { ...shortcutMetrics, screenshot: shortcutScreenshot }
+      }
     }
   }
+
+  results.interactions.shortcutDialogs = {}
+  for (const theme of ['glass', 'healing']) {
+    snapshot.preferences.settingsTheme = theme
+    win.webContents.send('state:changed', { snapshot: cloneSnapshot() })
+    await new Promise(resolve => setTimeout(resolve, 180))
+    const dialogMetrics = await win.webContents.executeJavaScript(`(() => {
+      document.querySelector('.section-tab[data-section="behavior"]').click()
+      document.querySelector('#shortcut-add').click()
+      const rect = element => {
+        const value = element.getBoundingClientRect()
+        return { x:value.x, y:value.y, width:value.width, height:value.height, right:value.right, bottom:value.bottom }
+      }
+      const card = document.querySelector('.shortcut-dialog-card')
+      const heading = document.querySelector('.shortcut-dialog-heading')
+      const icon = heading.querySelector('.shortcut-settings-icon')
+      const title = document.querySelector('#shortcut-dialog-title')
+      const subtitle = heading.querySelector('small')
+      const close = document.querySelector('#shortcut-dialog-close')
+      const actionField = document.querySelector('#shortcut-action-field')
+      const nativeSelect = document.querySelector('#shortcut-action')
+      const picker = document.querySelector('#shortcut-action-picker')
+      const trigger = document.querySelector('#shortcut-action-trigger')
+      const capture = document.querySelector('#shortcut-capture')
+      const actions = document.querySelector('.shortcut-dialog-actions')
+      return {
+        visible:!document.querySelector('#shortcut-dialog').hidden,
+        title:title.textContent.trim(),
+        card:rect(card),
+        heading:rect(heading),
+        headingColumns:getComputedStyle(heading).gridTemplateColumns,
+        icon:{ display:getComputedStyle(icon).display, ...rect(icon) },
+        titleRect:rect(title),
+        titleSingleLine:title.scrollHeight <= title.clientHeight + 1 && title.scrollWidth <= title.clientWidth + 1,
+        subtitleRect:rect(subtitle),
+        closeRect:rect(close),
+        actionField:rect(actionField),
+        selectEnhanced:Boolean(picker && trigger),
+        nativeSelectHidden:nativeSelect.classList.contains('search-select-native'),
+        selectTrigger:trigger ? rect(trigger) : null,
+        capture:rect(capture),
+        actions:rect(actions),
+        cardHorizontalOverflow:card.scrollWidth - card.clientWidth,
+      }
+    })()`)
+    await new Promise(resolve => setTimeout(resolve, 120))
+    win.webContents.invalidate()
+    const dialogScreenshot = path.join(outDir, `${theme}-shortcut-dialog.png`)
+    fs.writeFileSync(dialogScreenshot, await win.capturePage().then(image => image.toPNG()))
+
+    const menuMetrics = await win.webContents.executeJavaScript(`(() => {
+      document.querySelector('#shortcut-action-trigger').click()
+      const popover = document.querySelector('#shortcut-action-popover')
+      const searchBox = popover.querySelector('.search-select-search-box')
+      const value = popover.getBoundingClientRect()
+      return {
+        visible:!popover.hidden,
+        optionCount:popover.querySelectorAll('.search-select-option').length,
+        searchHidden:searchBox.hidden && getComputedStyle(searchBox).display === 'none',
+        rect:{ x:value.x, y:value.y, width:value.width, height:value.height, right:value.right, bottom:value.bottom },
+      }
+    })()`)
+    await new Promise(resolve => setTimeout(resolve, 120))
+    win.webContents.invalidate()
+    const menuScreenshot = path.join(outDir, `${theme}-shortcut-dialog-select-open.png`)
+    fs.writeFileSync(menuScreenshot, await win.capturePage().then(image => image.toPNG()))
+    await win.webContents.executeJavaScript(`document.querySelector('#shortcut-dialog-close').click()`)
+    results.interactions.shortcutDialogs[theme] = {
+      ...dialogMetrics,
+      menu: menuMetrics,
+      screenshot: dialogScreenshot,
+      menuScreenshot,
+    }
+  }
+
+  results.interactions.shortcutEditing = await win.webContents.executeJavaScript(`(async () => {
+    document.querySelector('.section-tab[data-section="behavior"]').click()
+    const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
+    const firstEdit = document.querySelector('[data-shortcut-edit="toggle-visibility"]')
+    firstEdit.click()
+    const editDialog = {
+      visible:!document.querySelector('#shortcut-dialog').hidden,
+      title:document.querySelector('#shortcut-dialog-title').textContent.trim(),
+      actionHidden:document.querySelector('#shortcut-action-field').hidden,
+    }
+    const capture = document.querySelector('#shortcut-capture')
+    capture.click()
+    capture.dispatchEvent(new KeyboardEvent('keydown', {
+      key:'V', code:'KeyV', ctrlKey:true, altKey:true, bubbles:true, cancelable:true,
+    }))
+    document.querySelector('#shortcut-dialog-save').click()
+    await pause(100)
+    const edited = document.querySelector('[data-shortcut-id="toggle-visibility"] .shortcut-keycap').textContent.trim()
+
+    document.querySelector('#shortcut-add').click()
+    const action = document.querySelector('#shortcut-action')
+    action.value = 'reset-position'
+    capture.click()
+    capture.dispatchEvent(new KeyboardEvent('keydown', {
+      key:'Home', code:'Home', ctrlKey:true, altKey:true, bubbles:true, cancelable:true,
+    }))
+    document.querySelector('#shortcut-dialog-save').click()
+    await pause(100)
+    const added = {
+      rows:document.querySelectorAll('.shortcut-settings-item').length,
+      label:document.querySelector('[data-shortcut-id="custom-reset-position"] .shortcut-settings-label')?.textContent.trim() || '',
+      key:document.querySelector('[data-shortcut-id="custom-reset-position"] .shortcut-keycap')?.textContent.trim() || '',
+    }
+
+    document.querySelector('[data-shortcut-edit="custom-reset-position"]').click()
+    const deleteVisible = !document.querySelector('#shortcut-delete').hidden
+    document.querySelector('#shortcut-delete').click()
+    await pause(100)
+    const afterDeleteRows = document.querySelectorAll('.shortcut-settings-item').length
+
+    document.querySelector('#shortcut-reset').click()
+    await pause(100)
+    return {
+      editDialog,
+      edited,
+      added,
+      deleteVisible,
+      afterDeleteRows,
+      resetKey:document.querySelector('[data-shortcut-id="toggle-visibility"] .shortcut-keycap').textContent.trim(),
+    }
+  })()`)
 
   const screenshotBefore = await win.webContents.executeJavaScript(`(() => {
     document.querySelector('.section-tab[data-section="characters"]').click()
@@ -1215,6 +1945,51 @@ async function run() {
     update && update.appLongScreenshotEnabled === true
   )) || null
   await win.webContents.executeJavaScript(`document.querySelector('[data-profile-tab="basic"]').click()`)
+
+  results.interactions.lockedBackgroundDetection = {}
+  for (const theme of ['glass', 'healing']) {
+    snapshot.preferences = {
+      ...snapshot.preferences,
+      settingsTheme: theme,
+      interactionMode: 'smart',
+      backgroundDetection: true,
+    }
+    win.webContents.send('state:changed', { snapshot: cloneSnapshot() })
+    await new Promise(resolve => setTimeout(resolve, 180))
+    const updatesBefore = settingsUpdates.length
+    await win.webContents.executeJavaScript(`(() => {
+      document.querySelector('.section-tab[data-section="behavior"]').click()
+      const section = document.querySelector('.settings-section.behavior-view')
+      section.scrollTo({ top: 0, behavior: 'auto' })
+    })()`)
+    const before = await readLockedBackgroundControlState()
+    await win.webContents.executeJavaScript(`document.querySelector('[data-setting="interactionMode"]').click()`)
+    await new Promise(resolve => setTimeout(resolve, 220))
+    const locked = await readLockedBackgroundControlState()
+    await win.webContents.executeJavaScript(`document.querySelector('[data-setting="backgroundDetection"]').click()`)
+    await new Promise(resolve => setTimeout(resolve, 220))
+    const whileLockedOff = await readLockedBackgroundControlState()
+    await win.webContents.executeJavaScript(`document.querySelector('[data-setting="backgroundDetection"]').click()`)
+    await new Promise(resolve => setTimeout(resolve, 220))
+    const whileLockedOn = await readLockedBackgroundControlState()
+    const screenshot = path.join(outDir, `${theme}-behavior-locked-enabled.png`)
+    win.webContents.invalidate()
+    await win.capturePage()
+    await new Promise(resolve => setTimeout(resolve, 120))
+    fs.writeFileSync(screenshot, await win.capturePage().then(image => image.toPNG()))
+    await win.webContents.executeJavaScript(`document.querySelector('[data-setting="interactionMode"]').click()`)
+    await new Promise(resolve => setTimeout(resolve, 220))
+    const restored = await readLockedBackgroundControlState()
+    results.interactions.lockedBackgroundDetection[theme] = {
+      before,
+      locked,
+      whileLockedOff,
+      whileLockedOn,
+      restored,
+      updates: settingsUpdates.slice(updatesBefore),
+      screenshot,
+    }
+  }
 
   results.interactions.bubbleStyles = {}
   for (const theme of ['glass', 'healing']) {
@@ -1902,18 +2677,54 @@ async function run() {
     const beforeDot = [...document.querySelectorAll('.model-pagination i')].findIndex(dot => dot.classList.contains('is-active'))
     return { beforeOrder, beforeDot, scrollLeft:list.scrollLeft }
   })()`)
-  snapshot.preferences.scale = 1.05
+  snapshot.preferences.scale = 0.1
   win.webContents.send('state:changed', { snapshot: cloneSnapshot() })
   await new Promise(resolve => setTimeout(resolve, 160))
   Object.assign(results.interactions.scaleKeepsCarousel, await win.webContents.executeJavaScript(`(() => {
     const list = document.querySelector('#model-list')
+    const scaleInput = document.querySelector('#scale-range')
     return {
       firstCardPreserved:window.__qaModelCard === list.firstElementChild,
       afterOrder:[...list.querySelectorAll('.model-card')].map(card => card.dataset.modelId),
       afterDot:[...document.querySelectorAll('.model-pagination i')].findIndex(dot => dot.classList.contains('is-active')),
       afterScrollLeft:list.scrollLeft,
+      inputMin:Number(scaleInput.min),
+      inputMax:Number(scaleInput.max),
+      inputStep:Number(scaleInput.step),
+      inputValue:Number(scaleInput.value),
+      output:document.querySelector('#scale-value').textContent.trim(),
     }
   })()`))
+
+  modelOpacityUpdates.length = 0
+  results.interactions.modelOpacity = await win.webContents.executeJavaScript(`(async () => {
+    const wait = ms => new Promise(resolve => setTimeout(resolve, ms))
+    const input = document.querySelector('#opacity-range')
+    const output = document.querySelector('#opacity-value')
+    const startingCard = document.querySelector('.model-card.is-selected')
+    const startingModelId = startingCard.dataset.modelId
+    const otherCard = [...document.querySelectorAll('.model-card')]
+      .find(card => card.dataset.modelId !== startingModelId && !card.disabled)
+    const otherModelId = otherCard.dataset.modelId
+    const setOpacity = async value => {
+      input.value = String(value)
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+      await wait(220)
+      return { value:Number(input.value), output:output.textContent.trim() }
+    }
+    const chooseModel = async modelId => {
+      document.querySelector('.model-card[data-model-id="' + CSS.escape(modelId) + '"]').click()
+      await wait(220)
+      return { value:Number(input.value), output:output.textContent.trim() }
+    }
+    const minimum = { min:Number(input.min), max:Number(input.max), step:Number(input.step) }
+    const startingSaved = await setOpacity(.1)
+    const otherDefault = await chooseModel(otherModelId)
+    const otherSaved = await setOpacity(.15)
+    const restored = await chooseModel(startingModelId)
+    return { startingModelId, otherModelId, minimum, startingSaved, otherDefault, otherSaved, restored }
+  })()`)
+  results.interactions.modelOpacity.updates = structuredClone(modelOpacityUpdates)
 
   modelOrders.length = 0
   results.interactions.modelReorder = await win.webContents.executeJavaScript(`(async () => {
@@ -2247,6 +3058,34 @@ async function run() {
     ))
   )) && checkedSwitchesByTheme.glass.length > 0 && checkedSwitchesByTheme.healing.length > 0 &&
     checkedSwitchesByTheme.glass[0].trackBackgroundImage !== checkedSwitchesByTheme.healing[0].trackBackgroundImage
+  const shortcutThemes = results.interactions.shortcuts
+  const shortcutDialogs = results.interactions.shortcutDialogs
+  const shortcutEditing = results.interactions.shortcutEditing
+  const defaultShortcutCount = PREFERENCE_DEFAULTS.shortcutBindings.length
+  const behaviorShortcutsMatchThemesAndWork = ['glass', 'healing'].every(theme => {
+    const result = shortcutThemes[theme]
+    return result && result.title === '快捷键说明' && result.labels.length === defaultShortcutCount &&
+      result.accelerators.length === defaultShortcutCount && result.editButtons === defaultShortcutCount &&
+      result.labels.includes('APP 长截图') && result.accelerators.includes('Ctrl + Shift + S') &&
+      result.resetVisible && result.addVisible &&
+      result.liveNote === '修改后实时生效' && result.horizontalOverflow <= 1 &&
+      result.gridColumns.split(' ').length === 2
+  }) && shortcutThemes.glass.labels.join('|') === shortcutThemes.healing.labels.join('|') &&
+    shortcutThemes.glass.accelerators.join('|') === shortcutThemes.healing.accelerators.join('|') &&
+    shortcutEditing.editDialog.visible && shortcutEditing.editDialog.actionHidden &&
+    shortcutEditing.edited === 'Ctrl + Alt + V' && shortcutEditing.added.rows === defaultShortcutCount + 1 &&
+    shortcutEditing.added.label === '角色归位' && shortcutEditing.added.key === 'Ctrl + Alt + Home' &&
+    shortcutEditing.deleteVisible && shortcutEditing.afterDeleteRows === defaultShortcutCount &&
+    shortcutEditing.resetKey === 'Ctrl + Shift + D'
+  const shortcutDialogsMatchSystemStyle = ['glass', 'healing'].every(theme => {
+    const result = shortcutDialogs[theme]
+    return result && result.visible && result.title === '添加自定义快捷键' &&
+      result.titleSingleLine && result.titleRect.width > 180 && result.icon.display === 'grid' &&
+      result.headingColumns.split(' ').length === 3 && result.selectEnhanced && result.nativeSelectHidden &&
+      result.selectTrigger && Math.abs(result.selectTrigger.width - result.capture.width) <= 1 &&
+      result.menu.visible && result.menu.optionCount >= defaultShortcutCount && result.menu.searchHidden && result.menu.rect.width >= 240 &&
+      result.cardHorizontalOverflow === 0 && result.closeRect.right <= result.card.right
+  })
   const heroTypographyIsAdaptive = Object.values(results.interactions.heroTypography).every(themeCases => (
     Object.values(themeCases).every(result => (
       result.text && result.lang === result.expectedLanguage && result.classes.includes(result.expectedClass) &&
@@ -2301,6 +3140,8 @@ async function run() {
     pageEyebrowSizeUniformAcrossAllPages: pageEyebrowSizeIsUniform,
     behaviorSwitchRowsMatchReferenceSpacing: behaviorSwitchSpacingMatchesReference,
     mainSwitchesUseThemeAwareTranslucentSurfaces: mainSwitchStylesAreTranslucent,
+    behaviorShortcutsMatchThemesAndWork,
+    shortcutDialogsMatchSystemStyle,
     staticPetBackgroundIsDefault: (() => {
       const result = results.interactions.petBackgroundDefault
       return result.warning === '默认显示静态宠物；开启会占用高 CPU。' &&
@@ -2328,8 +3169,8 @@ async function run() {
         Math.abs(result.after.scrollTop - result.before.scrollTop) <= 1 &&
         result.disabledShortcutSections.length === 0 && result.toggle.exists && !result.toggle.before && result.toggle.after &&
         result.toggle.label === 'APP 长截图' && result.toggle.hint.includes('当前选中的 Tab 页面') &&
-        result.toggle.hint.includes('Ctrl + Shift + S') && samePatch(result.togglePatch, { appLongScreenshotEnabled: true }) &&
-        result.shortcutSections.join('|') === 'characters' && aiPages.length === 2 &&
+        result.toggle.hint.includes('快捷键可在行为页修改') && samePatch(result.togglePatch, { appLongScreenshotEnabled: true }) &&
+        result.shortcutSections.length === 0 && aiPages.length === 2 &&
         aiPages.every(([theme, page]) => (
           page.layout.theme === theme && page.layout.geometry.section === 'ai' &&
           Math.abs(page.layout.trailingSpace) <= 2 &&
@@ -2476,7 +3317,42 @@ async function run() {
     accessibleControls: characterPages.every(page => page.unnamedButtons === 0 && page.unlabeledInputs === 0),
     scaleKeepsCarouselStable: results.interactions.scaleKeepsCarousel.firstCardPreserved &&
       results.interactions.scaleKeepsCarousel.beforeDot === results.interactions.scaleKeepsCarousel.afterDot &&
-      results.interactions.scaleKeepsCarousel.beforeOrder.join('|') === results.interactions.scaleKeepsCarousel.afterOrder.join('|'),
+      results.interactions.scaleKeepsCarousel.beforeOrder.join('|') === results.interactions.scaleKeepsCarousel.afterOrder.join('|') &&
+      results.interactions.scaleKeepsCarousel.inputMin === .1 &&
+      results.interactions.scaleKeepsCarousel.inputMax === 2 &&
+      results.interactions.scaleKeepsCarousel.inputStep === .05 &&
+      results.interactions.scaleKeepsCarousel.inputValue === .1 &&
+      results.interactions.scaleKeepsCarousel.output === '10%',
+    modelOpacityPersistsPerCharacter: results.interactions.modelOpacity.minimum.min === .1 &&
+      results.interactions.modelOpacity.minimum.max === 1 &&
+      results.interactions.modelOpacity.minimum.step === .05 &&
+      results.interactions.modelOpacity.startingSaved.value === .1 &&
+      results.interactions.modelOpacity.startingSaved.output === '10%' &&
+      results.interactions.modelOpacity.otherDefault.value === 1 &&
+      results.interactions.modelOpacity.otherDefault.output === '100%' &&
+      results.interactions.modelOpacity.otherSaved.value === .15 &&
+      results.interactions.modelOpacity.otherSaved.output === '15%' &&
+      results.interactions.modelOpacity.restored.value === .1 &&
+      results.interactions.modelOpacity.restored.output === '10%' &&
+      results.interactions.modelOpacity.updates.some(update => update.modelId === results.interactions.modelOpacity.startingModelId && update.opacity === .1) &&
+      results.interactions.modelOpacity.updates.some(update => update.modelId === results.interactions.modelOpacity.otherModelId && update.opacity === .15),
+    lockLeavesBackgroundDetectionControlEnabled: Object.entries(results.interactions.lockedBackgroundDetection).every(([theme, state]) => (
+      !state.before.lockChecked && state.before.backgroundChecked && !state.before.backgroundDisabled &&
+      state.locked.lockChecked && state.locked.backgroundChecked && !state.locked.backgroundDisabled &&
+      state.locked.backgroundAriaDisabled !== 'true' && !state.locked.rowSuspended &&
+      state.locked.theme === theme && state.locked.view === 'behavior' &&
+      state.locked.rowCursor === 'pointer' && state.locked.copyOpacity === 1 &&
+      state.locked.iconOpacity === 1 && state.locked.trackOpacity === 1 &&
+      state.locked.label === '背景检测' && state.locked.hint.includes('锁定宠物时自动暂停') &&
+      state.whileLockedOff.lockChecked && !state.whileLockedOff.backgroundChecked && !state.whileLockedOff.backgroundDisabled &&
+      state.whileLockedOn.lockChecked && state.whileLockedOn.backgroundChecked && !state.whileLockedOn.backgroundDisabled &&
+      !state.restored.lockChecked && state.restored.backgroundChecked && !state.restored.backgroundDisabled &&
+      state.restored.backgroundAriaDisabled !== 'true' && !state.restored.rowSuspended &&
+      state.updates.some(update => update.interactionMode === 'locked') &&
+      state.updates.some(update => update.interactionMode === 'smart') &&
+      state.updates.some(update => update.backgroundDetection === false) &&
+      state.updates.some(update => update.backgroundDetection === true)
+    )),
     modelOrderPersists: results.interactions.modelReorder.handleVisible &&
       results.interactions.modelReorder.savedOrders.length === 1 &&
       results.interactions.modelReorder.order.join('|') === results.interactions.modelReorder.savedOrders[0].join('|'),

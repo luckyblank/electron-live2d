@@ -1,5 +1,6 @@
 :root {
   color-scheme: light;
+  --pet-character-opacity: 1;
   --toast-surface: rgba(255, 253, 249, 0.94);
   --toast-ink: #292630;
   --toast-muted: #706b73;
@@ -134,12 +135,16 @@ body {
 #pet-stage .model-snapshot {
   z-index: 2;
   pointer-events: none;
-  opacity: 1;
+  opacity: var(--pet-character-opacity);
   transition: opacity 180ms ease;
 }
 
 #pet-stage .model-snapshot.is-leaving {
   opacity: 0;
+}
+
+#live2d-canvas {
+  opacity: var(--pet-character-opacity);
 }
 
 #fx-canvas {

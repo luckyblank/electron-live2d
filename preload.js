@@ -16,6 +16,7 @@ window.petAPI = {
   updatePreferences: patch => ipcRenderer.invoke('settings:update', patch),
   selectModel: modelId => ipcRenderer.invoke('model:select', modelId),
   updateModelScale: (modelId, scale) => ipcRenderer.invoke('model:scale-update', modelId, scale),
+  updateModelOpacity: (modelId, opacity) => ipcRenderer.invoke('model:opacity-update', modelId, opacity),
   openSettings: section => ipcRenderer.send('window:open-settings', section),
   showContextMenu: () => ipcRenderer.send('pet:show-context-menu'),
   dragPrime: (screenX, screenY) => ipcRenderer.send('pet:drag-prime', { screenX, screenY }),

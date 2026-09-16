@@ -235,12 +235,17 @@ The model ID keys or influences:
 - `modelNicknames`;
 - `modelProfiles`;
 - `modelScales`;
+- `modelOpacities`;
+- `modelScaleApplyToAll` 与 `sharedModelScale`；
+- `modelOpacityApplyToAll` 与 `sharedModelOpacity`；
 - `modelInteractions`;
 - `modelGestures`;
 - cover-cache filenames;
 - `aiConversations`.
 
 Treat model ID changes as data migrations, not cosmetic renames. A user-visible nickname can change without changing the model ID.
+
+尺寸与不透明度默认从 `modelScales` / `modelOpacities` 按模型 ID 读取。对应的 `model*ApplyToAll` 为 `true` 时，共享值优先于角色级映射，并适用于后来导入的角色；关闭共享作用域时，当前共享值只写回当时选中的角色，其他角色已有的独立值保持不变。两个作用域开关对旧配置都必须安全回退为 `false`。
 
 ## 7. Runtime compatibility surface
 

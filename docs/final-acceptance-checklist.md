@@ -28,12 +28,13 @@
 |---|---|---|---|---|
 | FRAME-01 | 开启聊天不创建整窗边框；整窗边框只由背景检测控制 | `renderer/app.js` 的 `applySnapshot()`；`renderer/styles.css` 的 `#pet-stage::after` | `qa/chat-acceptance.cjs`：`noChatOwnedWindowFrame`、`chatDoesNotChangeDetectionFrame` | 实现已定位，待主任务动态回填 |
 | FRAME-02 | 背景检测框为单层、四边一致、圆角自然，关闭后完全隐藏 | `renderer/styles.css` 的背景检测框规则 | 同脚本：`detectionFrameSingleLine`、`noFrameWhenDetectionDisabled`；另需肉眼比对左右阴影 | 实现已定位，待主任务动态回填 |
+| FRAME-03 | 锁定宠物时背景检测在宠物窗口暂停、不显示边框；设置页开关保持正常状态并可继续调整 | `renderer/app.js` 的 `applySnapshot()`；`renderer/settings.js` 的 `renderToggles()` | `qa/chat-acceptance.cjs`：`lockSuspendsDetectionFrame`；`qa/settings-ui.cjs`：`lockLeavesBackgroundDetectionControlEnabled` | 实现已定位，待主任务动态回填 |
 | CHAT-01 | 聊天每次打开默认折叠，只能点击左侧按钮展开；hover、移出和失焦不改变状态 | `renderer/app.js` 的 `setChatOpen()`、`setChatCollapsed()`；`renderer/styles.css` 的折叠态 | 同脚本：`opensCollapsed` 至 `secondClickCollapses` | 实现已定位，待主任务动态回填 |
 | CHAT-02 | 两主题切换时展开聊天框始终完整，底部输入和按钮不被裁切 | `renderer/app.js` 的 `updateChatPosition()`、`syncChatPositionDuringTransition()`、`ResizeObserver`；`renderer/styles.css` 的主题高度上限 | 同脚本：`runExpandedThemeSwitch()` | 实现已定位，待主任务动态回填 |
 | CHAT-03 | 折叠态左侧控件简洁，聊天框左右视觉重量与阴影一致 | `renderer/styles.css` 的 `.ai-chat-panel.is-collapsed`、`.ai-chat-toggle` | 两主题 400×600 截图人工比对 | 实现已定位，待主任务动态回填 |
 | SCALE-01 | 无聊天框时滚轮缩放也立即显示尺寸，不依赖背景检测或角色点击 | `renderer/app.js` 的 `applyWheelScale()`、`showStatus()`；`main.js` 的 `pet:status-bounds` 命中区 | 同脚本：`visibleWithoutChat`；分别在背景检测开/关状态人工滚轮复验 | 实现已定位，待主任务动态回填 |
 | SCALE-02 | 尺寸提示无聊天时位于窗口底部；有聊天时位于聊天框上方，不遮挡角色脸部 | `renderer/app.js` 的 `updateStatusToastPosition()`；`renderer/styles.css` 的 `.status-toast.is-scale-status` | 同脚本：`defaultsToBottomWithoutChat`、`sitsAboveChat` | 实现已定位，待主任务动态回填 |
-| SCALE-03 | 到达 50% / 200% 边界时仍给出“已达”提示 | `renderer/app.js` 的 `applyWheelScale()` | 连续滚轮缩小/放大至边界，确认提示出现且数值不越界 | 实现已定位，待主任务动态回填 |
+| SCALE-03 | 到达 10% / 200% 边界时仍给出“已达”提示 | `renderer/app.js` 的 `applyWheelScale()` | 连续滚轮缩小/放大至边界，确认提示出现且数值不越界 | 实现已定位，待主任务动态回填 |
 
 ### 2.2 顶部气泡与聊天消息
 
@@ -57,6 +58,8 @@
 | MODEL-UX-03 | 调整角色尺寸时不重建角色卡片，分页圆点和滚动位置不跳动 | `renderer/settings.js` 的 `renderedModelListKey` / `modelListRenderKey` | `qa/settings-ui.cjs`：`scaleKeepsCarouselStable` | 实现已定位，待主任务动态回填 |
 | MODEL-UX-04 | 选中角色卡片顶部描边完整，不被横向列表裁切 | `renderer/settings.css` 的 `.model-list` 上下内边距 | 双主题角色页截图人工检查 | 实现已定位，待主任务动态回填 |
 | MODEL-UX-05 | 拖动桌宠时设置页背景角色不消失，松手后自动恢复实时帧 | `renderer/app.js` 与 `renderer/settings.js` 的双端透明帧保护；主进程背景帧转发 | `qa/settings-background.cjs` | 实现已定位，待主任务动态回填 |
+| MODEL-UX-06 | 每个角色独立保存 10%～100% 不透明度；切换模型后恢复各自数值，且聊天、气泡、特效与命中区域不变 | `modelOpacities`、`model:opacity-update`、`--pet-character-opacity` | `qa/settings-ui.cjs` 的 `modelOpacityPersistsPerCharacter`；桌宠窗口截图对照 | 实现已定位，待主任务动态回填 |
+| MODEL-UX-07 | 尺寸和不透明度均可切换为“应用于全角色”；启用后切换或新导入角色沿用共享值，关闭后恢复其他角色的独立值 | `modelScaleApplyToAll` / `sharedModelScale`、`modelOpacityApplyToAll` / `sharedModelOpacity`、`model:display-scope-update` | `npm run qa:character-ranges`；双主题 470×760 截图人工比对 | 实现已定位，待主任务动态回填 |
 | MODEL-UX-06 | Windows 目录型 `.model3.json` 模型可真实加载 | `renderer/app.js` 的 URL-aware path 处理 | `qa/directory-model.cjs` | 实现已定位，待主任务动态回填 |
 | BEHAVIOR-01 | “安静陪伴 / 自然互动 / 省电陪伴”是组合预设；“自适应 / 省资源 / 高质量”只设置性能档，两者状态来源一致且能互相反映 | `renderer/settings.js` 的 `companionPresets`、`renderCompanionState()`、`renderToggles()` | `qa/settings-ui.cjs` 的 `companionPresets`、`externalSnapshotUpdatesSelection`；手动交叉修改验证 | 实现已定位，待主任务动态回填 |
 | BEHAVIOR-02 | “闲置与睡眠”开启后：30 秒进入轻闲置，90 秒困倦，180 秒深度休息并降帧；任意有效互动重置计时 | `renderer/app.js` 的 `updateIdle()` / 帧率策略；设置项 `idleEnabled` | 开启后按 30/90/180 秒观察；关闭后同等时间不触发；互动后重新计时 | 实现已定位，待主任务动态回填 |

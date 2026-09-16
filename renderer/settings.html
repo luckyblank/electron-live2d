@@ -97,7 +97,40 @@
             <p>只改变角色显示大小，不影响窗口位置。</p>
           </div>
           <output id="scale-value" for="scale-range">100%</output>
-          <input id="scale-range" type="range" min="0.5" max="2" step="0.05" value="1">
+          <div class="range-action-row">
+            <input id="scale-range" type="range" min="0.1" max="2" step="0.05" value="1" style="--range-progress:47.3684%">
+            <label class="apply-all-control" for="scale-apply-all">
+              <input id="scale-apply-all" type="checkbox">
+              <span class="apply-all-check" aria-hidden="true">
+                <svg viewBox="0 0 16 16"><path d="m3.5 8.2 2.8 2.8 6.2-6.2"/></svg>
+              </span>
+              <span>应用于全角色</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="scale-control opacity-control">
+          <span class="setting-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24">
+              <path d="M3 12s3.2-5.5 9-5.5 9 5.5 9 5.5-3.2 5.5-9 5.5S3 12 3 12Z"/>
+              <circle cx="12" cy="12" r="2.5"/>
+            </svg>
+          </span>
+          <div class="setting-copy">
+            <label for="opacity-range">角色不透明度</label>
+            <p>按角色单独保存；不影响聊天框、气泡和操作。</p>
+          </div>
+          <output id="opacity-value" for="opacity-range">100%</output>
+          <div class="range-action-row">
+            <input id="opacity-range" type="range" min="0.1" max="1" step="0.05" value="1" style="--range-progress:100%">
+            <label class="apply-all-control" for="opacity-apply-all">
+              <input id="opacity-apply-all" type="checkbox">
+              <span class="apply-all-check" aria-hidden="true">
+                <svg viewBox="0 0 16 16"><path d="m3.5 8.2 2.8 2.8 6.2-6.2"/></svg>
+              </span>
+              <span>应用于全角色</span>
+            </label>
+          </div>
         </div>
 
         <form id="model-nickname-form" class="nickname-control">
@@ -386,24 +419,31 @@
           </label>
           <label class="setting-row">
             <span class="setting-row-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="15" rx="2"/><path d="m6 16 4-4 3 3 2-2 3 3"/><circle cx="16.5" cy="8.5" r="1.5"/></svg></span>
-            <span class="setting-copy"><strong>背景检测</strong><small>显示完整窗口范围，透明背景也可抓取；关闭后仅角色附近可拖动。</small></span>
+            <span class="setting-copy"><strong>背景检测</strong><small>显示完整窗口范围，透明背景也可抓取；锁定宠物时自动暂停。</small></span>
             <input class="switch-input" type="checkbox" data-setting="backgroundDetection">
             <span class="switch-track" aria-hidden="true"></span>
           </label>
         </div>
 
-        <div class="shortcut-panel interaction-guide" aria-label="互动方式">
-          <header class="guide-heading">
-            <span class="guide-title-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 2.7c.7 5.4 2 6.7 7.4 7.4-5.4.7-6.7 2-7.4 7.4-.7-5.4-2-6.7-7.4-7.4 5.4-.7 6.7-2 7.4-7.4Z"/></svg></span>
-            <h2>交互方式说明</h2>
-            <span class="guide-paw" aria-hidden="true">♣</span>
-            <span class="guide-note" aria-hidden="true">小小的互动，<br>也是大大的开心！♡</span>
+        <section class="shortcut-settings-card" aria-labelledby="shortcut-settings-title">
+          <header class="shortcut-settings-heading">
+            <span class="shortcut-settings-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><rect x="2.5" y="5" width="19" height="14" rx="3"/><path d="M6 9h1m3 0h1m3 0h1m3 0h.1M6 12.5h1m3 0h1m3 0h1m3 0h.1M7 16h10"/></svg>
+            </span>
+            <span class="shortcut-settings-copy">
+              <strong id="shortcut-settings-title">快捷键说明</strong>
+              <small>支持自定义快捷键，快速触发常用功能</small>
+            </span>
+            <span class="shortcut-healing-paw" aria-hidden="true"></span>
+            <span class="shortcut-healing-note" aria-hidden="true">支持用户自定义快捷键 ♡</span>
+            <button id="shortcut-reset" class="shortcut-reset" type="button">恢复默认</button>
           </header>
-          <div class="guide-row"><i class="guide-dot" aria-hidden="true">1</i><span>轻点角色</span><b>按角色自定义</b></div>
-          <div class="guide-row"><i class="guide-dot" aria-hidden="true">2</i><span>双击 / 三击</span><b>按角色自定义</b></div>
-          <div class="guide-row"><i class="guide-dot" aria-hidden="true">3</i><span>长按 / 拖拽</span><b>按角色自定义</b></div>
-          <div class="guide-row"><i class="guide-dot" aria-hidden="true">4</i><span>右键角色</span><b>可增删互动</b></div>
-        </div>
+          <div id="shortcut-list" class="shortcut-settings-grid" aria-live="polite"></div>
+          <footer class="shortcut-settings-footer">
+            <button id="shortcut-add" class="shortcut-add" type="button"><span aria-hidden="true">＋</span>添加自定义快捷键</button>
+            <span class="shortcut-live-note">修改后实时生效</span>
+          </footer>
+        </section>
 
         <fieldset class="quality-fieldset">
           <legend><span class="quality-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 21V11m7 10V3m7 18V8"/></svg></span><span><strong>性能模式</strong><small>流畅的陪伴<br>更长久 ♡</small></span></legend>
@@ -779,7 +819,7 @@
           </label>
           <label class="setting-row">
             <span class="setting-row-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="15" rx="2"/><path d="M7 8H5v2M17 8h2v2M7 15H5v-2M17 15h2v-2"/><path d="M9 22h6M12 19v3"/></svg></span>
-            <span class="setting-copy"><strong>APP 长截图</strong><small>仅截取当前选中的 Tab 页面 · 快捷键 Ctrl + Shift + S</small></span>
+            <span class="setting-copy"><strong>APP 长截图</strong><small>仅截取当前选中的 Tab 页面 · 快捷键可在行为页修改</small></span>
             <input class="switch-input" type="checkbox" data-setting="appLongScreenshotEnabled">
             <span class="switch-track" aria-hidden="true"></span>
           </label>
@@ -890,6 +930,33 @@
     </footer>
   </div>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <div id="shortcut-dialog" class="shortcut-dialog" hidden>
+    <section class="shortcut-dialog-card" role="dialog" aria-modal="true" aria-labelledby="shortcut-dialog-title">
+      <header class="shortcut-dialog-heading">
+        <span class="shortcut-settings-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><rect x="2.5" y="5" width="19" height="14" rx="3"/><path d="M6 9h1m3 0h1m3 0h1m3 0h.1M6 12.5h1m3 0h1m3 0h1m3 0h.1M7 16h10"/></svg>
+        </span>
+        <div><strong id="shortcut-dialog-title">修改快捷键</strong><small>按下新的组合键，保存后立即生效</small></div>
+        <button id="shortcut-dialog-close" type="button" aria-label="关闭快捷键编辑"><svg viewBox="0 0 18 18" aria-hidden="true"><path d="m4 4 10 10M14 4 4 14"/></svg></button>
+      </header>
+      <label id="shortcut-action-field" class="shortcut-dialog-field">
+        <span>触发功能</span>
+        <select id="shortcut-action"></select>
+      </label>
+      <div class="shortcut-dialog-field">
+        <span>组合键</span>
+        <button id="shortcut-capture" class="shortcut-capture" type="button">点击后按下组合键</button>
+        <small id="shortcut-capture-hint">至少包含 Ctrl、Alt、Shift 或 Win 中的一个修饰键</small>
+      </div>
+      <footer class="shortcut-dialog-actions">
+        <button id="shortcut-delete" class="shortcut-dialog-delete" type="button" hidden>删除</button>
+        <span></span>
+        <button id="shortcut-dialog-cancel" type="button">取消</button>
+        <button id="shortcut-dialog-save" class="is-primary" type="button">保存</button>
+      </footer>
+    </section>
+  </div>
 
   <div id="update-dialog" class="update-dialog" hidden>
     <div class="update-dialog-card" role="dialog" aria-modal="true" aria-label="版本更新">

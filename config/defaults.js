@@ -35,13 +35,18 @@ function createInitialAIPluginState() {
 
 function createInitialStoreDefaults() {
   return {
-    // v1.0.1 是初始发行版，所有新配置直接使用第 1 版结构。
+    // 新配置始终直接使用 defaults.json 中的当前结构版本。
     schemaVersion: CURRENT_SCHEMA_VERSION,
     windowX: undefined,
     windowY: undefined,
     currentModelId: '',
     modelOrder: [...INITIAL_USER_DEFAULTS.characters.modelOrder],
     modelScales: { ...INITIAL_USER_DEFAULTS.characters.modelScales },
+    modelOpacities: { ...INITIAL_USER_DEFAULTS.characters.modelOpacities },
+    modelScaleApplyToAll: INITIAL_USER_DEFAULTS.characters.modelScaleApplyToAll === true,
+    modelOpacityApplyToAll: INITIAL_USER_DEFAULTS.characters.modelOpacityApplyToAll === true,
+    sharedModelScale: INITIAL_USER_DEFAULTS.characters.sharedModelScale,
+    sharedModelOpacity: INITIAL_USER_DEFAULTS.characters.sharedModelOpacity,
     modelNicknames: { ...INITIAL_USER_DEFAULTS.characters.modelNicknames },
     modelProfiles: Object.fromEntries(Object.entries(INITIAL_USER_DEFAULTS.characters.modelProfiles || {}).map(
       ([modelId, profile]) => [modelId, { ...profile }]

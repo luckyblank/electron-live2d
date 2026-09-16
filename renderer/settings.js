@@ -1,6 +1,10 @@
 (function () {
   const api = window.settingsAPI
   const captureRenderOnly = new URLSearchParams(window.location.search).get('capture') === '1'
+  const MODEL_SCALE_MIN = 0.1
+  const MODEL_SCALE_MAX = 2
+  const MODEL_OPACITY_MIN = 0.1
+  const MODEL_OPACITY_MAX = 1
   const elements = {
     titlebar: document.querySelector('.titlebar'),
     currentModelName: document.getElementById('current-model-name'),
@@ -18,6 +22,10 @@
     modelPagination: document.getElementById('model-pagination'),
     scaleRange: document.getElementById('scale-range'),
     scaleValue: document.getElementById('scale-value'),
+    scaleApplyAll: document.getElementById('scale-apply-all'),
+    opacityRange: document.getElementById('opacity-range'),
+    opacityValue: document.getElementById('opacity-value'),
+    opacityApplyAll: document.getElementById('opacity-apply-all'),
     modelNickname: document.getElementById('model-nickname'),
     characterProfile: document.getElementById('character-profile'),
     characterProfileToggle: document.getElementById('character-profile-toggle'),
@@ -54,6 +62,19 @@
     modelGesturesReset: document.getElementById('model-gestures-reset'),
     modelGesturesSummaryCount: document.getElementById('model-gestures-summary-count'),
     qualityDescription: document.getElementById('quality-description'),
+    shortcutList: document.getElementById('shortcut-list'),
+    shortcutReset: document.getElementById('shortcut-reset'),
+    shortcutAdd: document.getElementById('shortcut-add'),
+    shortcutDialog: document.getElementById('shortcut-dialog'),
+    shortcutDialogTitle: document.getElementById('shortcut-dialog-title'),
+    shortcutActionField: document.getElementById('shortcut-action-field'),
+    shortcutAction: document.getElementById('shortcut-action'),
+    shortcutCapture: document.getElementById('shortcut-capture'),
+    shortcutCaptureHint: document.getElementById('shortcut-capture-hint'),
+    shortcutDelete: document.getElementById('shortcut-delete'),
+    shortcutDialogClose: document.getElementById('shortcut-dialog-close'),
+    shortcutDialogCancel: document.getElementById('shortcut-dialog-cancel'),
+    shortcutDialogSave: document.getElementById('shortcut-dialog-save'),
     appVersion: document.getElementById('app-version'),
     modelsFolderPath: document.getElementById('models-folder-path'),
     pluginsFolderPath: document.getElementById('plugins-folder-path'),
@@ -146,6 +167,17 @@
       showOptionSecondary: false,
     }
   )
+  const shortcutActionPicker = window.SearchSelect.enhance(
+    elements.shortcutAction,
+    {
+      searchable: false,
+      density: 'regular',
+      minMenuWidth: 240,
+      maxMenuHeight: 260,
+      showTriggerSecondary: false,
+      showOptionSecondary: false,
+    }
+  )
 
   const qualityDescriptions = {
     auto: '互动时保持流畅，闲置后自动降低资源占用。',
@@ -219,6 +251,9 @@
   let scaleSaveTimer = null
   let pendingScaleSave = null
   let scaleSavePromise = null
+  let opacitySaveTimer = null
+  let pendingOpacitySave = null
+  let opacitySavePromise = null
   let toastTimer = null
   let modelSliderPointerId = null
   let modelSliderStartX = 0
@@ -242,6 +277,7 @@
   let petBackgroundFrameQueue = null
   let petBackgroundFrameBusy = false
   let petBackgroundFrameSequence = 0
+  let shortcutEditor = null
   const petBackgroundProbeCanvas = document.createElement('canvas')
   petBackgroundProbeCanvas.width = 24
   petBackgroundProbeCanvas.height = 36
@@ -695,27 +731,6 @@
     },
   })
 
-  let longScreenshotPending = false
-
-  async function saveLongScreenshotFromShortcut() {
-    if (longScreenshotPending) return
-    if (!snapshot || !snapshot.preferences || !snapshot.preferences.appLongScreenshotEnabled) {
-      showToast('请先在系统页开启 APP 长截图', 2600)
-      return
-    }
-    longScreenshotPending = true
-    try {
-      const result = await api.captureLongScreenshot(document.documentElement.dataset.settingsView)
-      if (result && result.ok) showToast(`长截图已保存：${result.fileName}`, 3200)
-      else if (!result || !result.canceled) showToast(result && result.error ? result.error : 'APP 长截图保存失败', 3000)
-    } catch (error) {
-      showToast('APP 长截图保存失败，请重试', 3000)
-      console.error(error)
-    } finally {
-      longScreenshotPending = false
-    }
-  }
-
   function updateGreetingPresetSelection() {
     elements.chatGreetingPresets.querySelectorAll('[data-greeting]').forEach(button => {
       const selected = button.dataset.greeting === elements.chatGreeting.value
@@ -908,11 +923,177 @@
   }
 
   function setScaleDisplay(value) {
-    const scale = Math.min(2, Math.max(0.5, Number(value) || 1))
-    const progress = ((scale - 0.5) / 1.5) * 100
+    const scale = Math.min(MODEL_SCALE_MAX, Math.max(MODEL_SCALE_MIN, Number(value) || 1))
+    const progress = ((scale - MODEL_SCALE_MIN) / (MODEL_SCALE_MAX - MODEL_SCALE_MIN)) * 100
     elements.scaleRange.value = String(scale)
     elements.scaleRange.style.setProperty('--range-progress', `${progress}%`)
     elements.scaleValue.textContent = `${Math.round(scale * 100)}%`
+  }
+
+  function shortcutKeyLabel(key) {
+    const labels = {
+      CommandOrControl: navigator.platform.toLowerCase().includes('mac') ? '⌘' : 'Ctrl',
+      Command: '⌘',
+      Control: 'Ctrl',
+      Ctrl: 'Ctrl',
+      Alt: navigator.platform.toLowerCase().includes('mac') ? '⌥' : 'Alt',
+      Option: '⌥',
+      Shift: 'Shift',
+      Super: navigator.platform.toLowerCase().includes('mac') ? '⌘' : 'Win',
+      Meta: navigator.platform.toLowerCase().includes('mac') ? '⌘' : 'Win',
+      Space: 'Space',
+      Period: '.',
+      Plus: '+',
+      Minus: '-',
+      Return: 'Enter',
+      Left: '←',
+      Right: '→',
+      Up: '↑',
+      Down: '↓',
+    }
+    return labels[key] || key.replace(/^Key/, '').replace(/^Digit/, '')
+  }
+
+  function shortcutDisplay(accelerator) {
+    return String(accelerator || '')
+      .split('+')
+      .filter(Boolean)
+      .map(shortcutKeyLabel)
+      .join(' + ')
+  }
+
+  function capturedShortcutKey(event) {
+    const codeMap = {
+      Space: 'Space',
+      Comma: ',',
+      Period: 'Period',
+      Slash: '/',
+      Backslash: '\\',
+      Semicolon: ';',
+      Quote: "'",
+      BracketLeft: '[',
+      BracketRight: ']',
+      Minus: 'Minus',
+      Equal: 'Plus',
+      Enter: 'Return',
+      Escape: 'Esc',
+      Backspace: 'Backspace',
+      Delete: 'Delete',
+      Insert: 'Insert',
+      Home: 'Home',
+      End: 'End',
+      PageUp: 'PageUp',
+      PageDown: 'PageDown',
+      ArrowUp: 'Up',
+      ArrowDown: 'Down',
+      ArrowLeft: 'Left',
+      ArrowRight: 'Right',
+      Tab: 'Tab',
+    }
+    if (/^Key[A-Z]$/.test(event.code)) return event.code.slice(3)
+    if (/^Digit[0-9]$/.test(event.code)) return event.code.slice(5)
+    if (/^F(?:[1-9]|1[0-9]|2[0-4])$/.test(event.code)) return event.code
+    return codeMap[event.code] || ''
+  }
+
+  function acceleratorFromKeyboardEvent(event) {
+    const modifierCodes = new Set(['ControlLeft', 'ControlRight', 'AltLeft', 'AltRight', 'ShiftLeft', 'ShiftRight', 'MetaLeft', 'MetaRight'])
+    if (modifierCodes.has(event.code)) return ''
+    const key = capturedShortcutKey(event)
+    if (!key || key === 'Esc') return ''
+    const modifiers = []
+    if (event.ctrlKey) modifiers.push('CommandOrControl')
+    if (event.altKey) modifiers.push('Alt')
+    if (event.shiftKey) modifiers.push('Shift')
+    if (event.metaKey) modifiers.push('Super')
+    if (!modifiers.length) return ''
+    return [...modifiers, key].join('+')
+  }
+
+  function renderShortcuts(preferences) {
+    const bindings = Array.isArray(preferences.shortcutBindings) ? preferences.shortcutBindings : []
+    elements.shortcutList.replaceChildren(...bindings.map(binding => {
+      const item = document.createElement('article')
+      item.className = 'shortcut-settings-item'
+      item.dataset.shortcutId = binding.id
+
+      const label = document.createElement('span')
+      label.className = 'shortcut-settings-label'
+      label.textContent = binding.label
+      label.title = binding.label
+
+      const keycap = document.createElement('kbd')
+      keycap.className = 'shortcut-keycap'
+      keycap.textContent = shortcutDisplay(binding.accelerator)
+      keycap.title = keycap.textContent
+
+      const edit = document.createElement('button')
+      edit.className = 'shortcut-edit'
+      edit.type = 'button'
+      edit.dataset.shortcutEdit = binding.id
+      edit.setAttribute('aria-label', `修改${binding.label}快捷键`)
+      edit.title = `修改${binding.label}`
+      edit.innerHTML = '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="m3.2 13.8-.7 3.7 3.7-.7L16 7l-3-3-9.8 9.8Zm8.4-8.4 3 3"/></svg>'
+      item.append(label, keycap, edit)
+      return item
+    }))
+
+    const actionCount = Array.isArray(snapshot.shortcutActions) ? snapshot.shortcutActions.length : 0
+    const limit = Number(snapshot.shortcutBindingLimit) || 24
+    elements.shortcutAdd.disabled = !actionCount || bindings.length >= limit
+    elements.shortcutAdd.title = bindings.length < limit ? '添加其他常用功能' : `最多可设置 ${limit} 个快捷键`
+  }
+
+  function closeShortcutDialog() {
+    shortcutActionPicker.close()
+    elements.shortcutDialog.hidden = true
+    elements.shortcutCapture.classList.remove('is-listening')
+    shortcutEditor = null
+  }
+
+  function fillShortcutActionOptions(selectedAction = '') {
+    const actions = Array.isArray(snapshot && snapshot.shortcutActions) ? snapshot.shortcutActions : []
+    elements.shortcutAction.replaceChildren(...actions
+      .map(action => {
+        const option = document.createElement('option')
+        option.value = action.id
+        option.textContent = action.label
+        option.selected = action.id === selectedAction
+        return option
+      }))
+    shortcutActionPicker.refresh()
+  }
+
+  function openShortcutDialog(binding = null) {
+    const editing = Boolean(binding)
+    fillShortcutActionOptions(binding ? binding.action : '')
+    if (!editing && !elements.shortcutAction.options.length) {
+      showToast('所有可用功能都已设置快捷键')
+      return
+    }
+    shortcutEditor = {
+      id: binding ? binding.id : '',
+      accelerator: binding ? binding.accelerator : '',
+      custom: Boolean(binding && binding.custom),
+    }
+    elements.shortcutDialogTitle.textContent = editing ? `修改「${binding.label}」` : '添加自定义快捷键'
+    elements.shortcutActionField.hidden = editing
+    elements.shortcutAction.disabled = editing
+    if (editing) elements.shortcutAction.value = binding.action
+    elements.shortcutDelete.hidden = !(editing && binding.custom)
+    elements.shortcutCapture.textContent = binding ? shortcutDisplay(binding.accelerator) : '点击后按下组合键'
+    elements.shortcutCaptureHint.textContent = '至少包含 Ctrl、Alt、Shift 或 Win 中的一个修饰键'
+    elements.shortcutCapture.classList.remove('is-listening')
+    elements.shortcutDialog.hidden = false
+    requestAnimationFrame(() => elements.shortcutCapture.focus())
+  }
+
+  function setOpacityDisplay(value) {
+    const opacity = Math.min(MODEL_OPACITY_MAX, Math.max(MODEL_OPACITY_MIN, Number(value) || 1))
+    const progress = ((opacity - MODEL_OPACITY_MIN) / (MODEL_OPACITY_MAX - MODEL_OPACITY_MIN)) * 100
+    elements.opacityRange.value = String(opacity)
+    elements.opacityRange.style.setProperty('--range-progress', `${progress}%`)
+    elements.opacityValue.textContent = `${Math.round(opacity * 100)}%`
   }
 
   function setCharacterProfileCollapsed(collapsed) {
@@ -2164,6 +2345,11 @@
     elements.chatGreetingCount.textContent = `${elements.chatGreeting.value.length} / 200`
     updateGreetingPresetSelection()
     setScaleDisplay(preferences.scale)
+    setOpacityDisplay(preferences.opacity)
+    elements.scaleApplyAll.checked = preferences.scaleApplyToAll === true
+    elements.opacityApplyAll.checked = preferences.opacityApplyToAll === true
+    elements.scaleApplyAll.disabled = !current
+    elements.opacityApplyAll.disabled = !current
     renderRuntime(snapshot.runtime)
     renderCompanionState(current, snapshot.ai, preferences)
     if (previousModelId && previousModelId !== snapshot.currentModelId) {
@@ -2177,6 +2363,7 @@
     }
     renderCharacterProfile(current)
     renderToggles(preferences)
+    renderShortcuts(preferences)
     renderExternalMessageService(snapshot.externalMessages, preferences)
     renderBubbleStylePicker(preferences, current)
     renderAI(snapshot.ai)
@@ -2221,6 +2408,31 @@
     }
   }
 
+  async function flushModelOpacitySave() {
+    if (opacitySaveTimer) {
+      clearTimeout(opacitySaveTimer)
+      opacitySaveTimer = null
+    }
+    if (opacitySavePromise) await opacitySavePromise
+    if (!pendingOpacitySave) return
+    const pending = pendingOpacitySave
+    pendingOpacitySave = null
+    opacitySavePromise = (async () => {
+      try {
+        const result = await api.updateModelOpacity(pending.modelId, pending.opacity)
+        if (!result || !result.ok) showToast(result && result.error ? result.error : '角色不透明度保存失败')
+      } catch (error) {
+        showToast('角色不透明度保存失败')
+        console.error(error)
+      }
+    })()
+    try {
+      await opacitySavePromise
+    } finally {
+      opacitySavePromise = null
+    }
+  }
+
   document.querySelectorAll('.section-tab').forEach(button => {
     button.addEventListener('click', () => {
       setActiveSection(button.dataset.section)
@@ -2231,9 +2443,10 @@
   })
 
   window.addEventListener('keydown', event => {
-    if (!(event.ctrlKey && event.shiftKey && event.key.toLowerCase() === 's')) return
-    event.preventDefault()
-    saveLongScreenshotFromShortcut()
+    if (event.key === 'Escape' && !elements.shortcutDialog.hidden) {
+      event.preventDefault()
+      closeShortcutDialog()
+    }
   })
 
   elements.companionPresets.addEventListener('click', event => {
@@ -2435,6 +2648,7 @@
     document.querySelectorAll('.model-card').forEach(option => { option.disabled = true })
     try {
       await flushModelScaleSave()
+      await flushModelOpacitySave()
       const result = await api.selectModel(targetModelId)
       if (result && result.snapshot) render(result.snapshot)
     } catch (error) {
@@ -2988,6 +3202,50 @@
     }, 120)
   })
 
+  elements.opacityRange.addEventListener('input', () => {
+    setOpacityDisplay(elements.opacityRange.value)
+    const modelId = snapshot && snapshot.currentModelId
+    if (!modelId) return
+    pendingOpacitySave = { modelId, opacity: Number(elements.opacityRange.value) }
+    if (opacitySaveTimer) clearTimeout(opacitySaveTimer)
+    opacitySaveTimer = setTimeout(() => {
+      opacitySaveTimer = null
+      flushModelOpacitySave()
+    }, 120)
+  })
+
+  async function updateModelDisplayScope(kind, input) {
+    const modelId = snapshot && snapshot.currentModelId
+    if (!modelId) return
+    const applyToAll = input.checked
+    input.disabled = true
+    try {
+      if (kind === 'scale') await flushModelScaleSave()
+      else await flushModelOpacitySave()
+      const result = await api.updateModelDisplayScope(modelId, kind, applyToAll)
+      if (!result || !result.ok) {
+        input.checked = !applyToAll
+        showToast(result && result.error ? result.error : '全角色设置保存失败')
+        return
+      }
+      render(result.snapshot)
+    } catch (error) {
+      input.checked = !applyToAll
+      showToast('全角色设置保存失败')
+      console.error(error)
+    } finally {
+      input.disabled = !(snapshot && snapshot.currentModelId)
+    }
+  }
+
+  elements.scaleApplyAll.addEventListener('change', () => {
+    updateModelDisplayScope('scale', elements.scaleApplyAll)
+  })
+
+  elements.opacityApplyAll.addEventListener('change', () => {
+    updateModelDisplayScope('opacity', elements.opacityApplyAll)
+  })
+
   document.querySelectorAll('[data-setting]').forEach(input => {
     input.addEventListener('change', () => {
       const key = input.dataset.setting
@@ -3020,6 +3278,122 @@
 
   document.querySelectorAll('[data-quality]').forEach(button => {
     button.addEventListener('click', () => savePreference({ qualityMode: button.dataset.quality }))
+  })
+
+  elements.shortcutList.addEventListener('click', event => {
+    const button = event.target.closest('[data-shortcut-edit]')
+    if (!button || !snapshot || !snapshot.preferences) return
+    const bindings = Array.isArray(snapshot.preferences.shortcutBindings)
+      ? snapshot.preferences.shortcutBindings
+      : []
+    const binding = bindings.find(item => item.id === button.dataset.shortcutEdit)
+    if (binding) openShortcutDialog(binding)
+  })
+
+  elements.shortcutAdd.addEventListener('click', () => openShortcutDialog())
+
+  elements.shortcutReset.addEventListener('click', async () => {
+    elements.shortcutReset.disabled = true
+    try {
+      const result = await api.resetShortcuts()
+      if (!result || !result.ok) {
+        showToast(result && result.error ? result.error : '恢复默认快捷键失败', 3000)
+        return
+      }
+      render(result.snapshot)
+      showToast('快捷键已恢复默认')
+    } catch (error) {
+      showToast('恢复默认快捷键失败', 3000)
+      console.error(error)
+    } finally {
+      elements.shortcutReset.disabled = false
+    }
+  })
+
+  elements.shortcutDialogClose.addEventListener('click', closeShortcutDialog)
+  elements.shortcutDialogCancel.addEventListener('click', closeShortcutDialog)
+  elements.shortcutDialog.addEventListener('pointerdown', event => {
+    if (event.target === elements.shortcutDialog) closeShortcutDialog()
+  })
+
+  elements.shortcutCapture.addEventListener('click', () => {
+    if (!shortcutEditor) return
+    elements.shortcutCapture.classList.add('is-listening')
+    elements.shortcutCapture.textContent = '请按下组合键…'
+    elements.shortcutCaptureHint.textContent = '正在监听键盘输入；按 Esc 取消本次录入'
+  })
+
+  elements.shortcutCapture.addEventListener('keydown', event => {
+    if (!shortcutEditor || !elements.shortcutCapture.classList.contains('is-listening')) return
+    event.preventDefault()
+    event.stopPropagation()
+    if (event.key === 'Escape') {
+      elements.shortcutCapture.classList.remove('is-listening')
+      elements.shortcutCapture.textContent = shortcutEditor.accelerator
+        ? shortcutDisplay(shortcutEditor.accelerator)
+        : '点击后按下组合键'
+      elements.shortcutCaptureHint.textContent = '已取消录入，当前组合键未改变'
+      return
+    }
+    const accelerator = acceleratorFromKeyboardEvent(event)
+    if (!accelerator) {
+      elements.shortcutCaptureHint.textContent = '请同时按住修饰键，再按一个字母、数字或功能键'
+      return
+    }
+    shortcutEditor.accelerator = accelerator
+    elements.shortcutCapture.classList.remove('is-listening')
+    elements.shortcutCapture.textContent = shortcutDisplay(accelerator)
+    elements.shortcutCaptureHint.textContent = '组合键已录入，点击保存后立即生效'
+  })
+
+  elements.shortcutDialogSave.addEventListener('click', async () => {
+    if (!shortcutEditor) return
+    if (!shortcutEditor.accelerator) {
+      elements.shortcutCapture.focus()
+      elements.shortcutCapture.click()
+      return
+    }
+    elements.shortcutDialogSave.disabled = true
+    try {
+      const result = await api.updateShortcut({
+        id: shortcutEditor.id,
+        action: elements.shortcutAction.value,
+        accelerator: shortcutEditor.accelerator,
+      })
+      if (!result || !result.ok) {
+        elements.shortcutCaptureHint.textContent = result && result.error ? result.error : '快捷键保存失败'
+        showToast(elements.shortcutCaptureHint.textContent, 3000)
+        return
+      }
+      render(result.snapshot)
+      closeShortcutDialog()
+      showToast('快捷键已更新')
+    } catch (error) {
+      showToast('快捷键保存失败', 3000)
+      console.error(error)
+    } finally {
+      elements.shortcutDialogSave.disabled = false
+    }
+  })
+
+  elements.shortcutDelete.addEventListener('click', async () => {
+    if (!shortcutEditor || !shortcutEditor.custom) return
+    elements.shortcutDelete.disabled = true
+    try {
+      const result = await api.deleteShortcut(shortcutEditor.id)
+      if (!result || !result.ok) {
+        showToast(result && result.error ? result.error : '删除快捷键失败', 3000)
+        return
+      }
+      render(result.snapshot)
+      closeShortcutDialog()
+      showToast('自定义快捷键已删除')
+    } catch (error) {
+      showToast('删除快捷键失败', 3000)
+      console.error(error)
+    } finally {
+      elements.shortcutDelete.disabled = false
+    }
   })
 
   document.querySelectorAll('[data-theme-option]').forEach(input => {

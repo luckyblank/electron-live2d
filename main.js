@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, Tray, ipcMain, nativeImage, screen, shell, safeStorage, dialog, clipboard } = require('electron')
+const { app, BrowserWindow, Menu, Tray, ipcMain, nativeImage, screen, shell, safeStorage, dialog, clipboard, globalShortcut } = require('electron')
 const fs = require('fs')
 const { Readable } = require('stream')
 const path = require('path')
@@ -15,6 +15,10 @@ const {
 const { BUBBLE_THEME_DEFINITIONS, normalizeBubbleStyles } = require('./config/bubble-styles')
 const { normalizeLongMessageCharacterThreshold } = require('./config/long-message')
 const { readEnvFile } = require('./config/environment')
+const {
+  mergeShortcutBindingsWithDefaults,
+  normalizeShortcutAccelerator: normalizeShortcutAcceleratorValue,
+} = require('./config/shortcut-bindings')
 const { inspectModelArchive, inspectModelDirectory } = require('./model-inspector')
 const { captureSettingsPanel, normalizedSection } = require('./settings-screenshot')
 const { buildConditionalTrayItems } = require('./tray-menu')
@@ -23,6 +27,10 @@ const WINDOWS_APP_USER_MODEL_ID = 'com.luckyblank.live2d'
 const APP_ICON_PATH = path.join(__dirname, 'resources', 'icon.png')
 const PET_WIDTH = 400
 const PET_HEIGHT = 600
+const MODEL_SCALE_MIN = 0.1
+const MODEL_SCALE_MAX = 2
+const MODEL_OPACITY_MIN = 0.1
+const MODEL_OPACITY_MAX = 1
 const LONG_MESSAGE_READER_WIDTH = 380
 const LONG_MESSAGE_READER_MIN_WIDTH = 280
 const LONG_MESSAGE_READER_MAX_WIDTH = 420
@@ -76,6 +84,32 @@ const GENERIC_MODEL_PROFILE = Object.freeze({
 })
 const USER_DATA_DIRECTORY_NAME = 'Live2DCompanion'
 const MODEL_INTERACTION_LIMIT = 12
+const SHORTCUT_BINDING_LIMIT = 24
+const SHORTCUT_ACTIONS = Object.freeze({
+  'toggle-visibility': Object.freeze({ label: '显示 / 隐藏', execute: () => togglePetVisibility() }),
+  'open-settings': Object.freeze({ label: '打开设置', execute: () => openSettings() }),
+  'toggle-animation': Object.freeze({ label: '暂停 / 继续动画', execute: () => toggleAnimationPause() }),
+  'toggle-chat': Object.freeze({ label: '开启 / 关闭对话', execute: () => togglePetChatShortcut() }),
+  'random-interaction': Object.freeze({ label: '随机互动', execute: () => requestPetInteraction('random') }),
+  'open-external-tester': Object.freeze({ label: '外部消息调试', execute: () => openExternalMessageTesterShortcut() }),
+  'toggle-lock': Object.freeze({
+    label: '锁定 / 解锁',
+    execute: () => {
+      const locked = getPreferences().interactionMode === 'locked'
+      updatePreferences({ interactionMode: locked ? 'smart' : 'locked' })
+    },
+  }),
+  'refresh-models': Object.freeze({ label: '刷新模型列表', execute: () => refreshModelList() }),
+  'previous-model': Object.freeze({ label: '上一个角色', execute: () => selectRelativeModel(-1) }),
+  'next-model': Object.freeze({ label: '下一个角色', execute: () => selectRelativeModel(1) }),
+  'app-long-screenshot': Object.freeze({ label: 'APP 长截图', execute: () => captureSettingsFromTray() }),
+  'quit-app': Object.freeze({ label: '关闭应用', execute: () => app.quit() }),
+  'reset-position': Object.freeze({ label: '角色归位', execute: () => resetPetPosition() }),
+})
+const DEFAULT_SHORTCUT_BINDINGS = Object.freeze(
+  INITIAL_USER_DEFAULTS.behavior.shortcutBindings.map(binding => Object.freeze({ ...binding }))
+)
+const DEFAULT_SHORTCUT_IDS = new Set(DEFAULT_SHORTCUT_BINDINGS.map(binding => binding.id))
 const DEFAULT_PET_INTERACTIONS = Object.freeze([
   { id: 'greet', label: '打个招呼', kind: 'greet', text: '你好呀～', defaultMapping: '问候 / 挥手动作' },
   { id: 'head', label: '摸摸头', kind: 'head', text: '好舒服～', defaultMapping: '摸头动作' },
@@ -137,6 +171,7 @@ let longMessageReaderState = {
   typing: false,
 }
 let tray = null
+const registeredShortcutAccelerators = new Set()
 let applicationIcon = null
 let modelsCache = null
 let coversCache = null
@@ -699,21 +734,192 @@ function migrateStore() {
     store.set('launchAtLogin', store.get('autoLaunch'))
   }
 
+  // During first-version development an earlier six-item shortcut draft may
+  // already have been persisted. electron-store will not replace an existing
+  // array when defaults gain more entries, so complete it without discarding
+  // user-edited accelerators or custom bindings.
+  const repairedShortcuts = mergeShortcutBindingsWithDefaults(
+    store.get('shortcutBindings'),
+    DEFAULT_SHORTCUT_BINDINGS,
+    {
+      validActions: Object.keys(SHORTCUT_ACTIONS),
+      limit: SHORTCUT_BINDING_LIMIT,
+    }
+  )
+  store.set('shortcutBindings', repairedShortcuts)
+
   store.set('schemaVersion', CURRENT_SCHEMA_VERSION)
 }
 
+function normalizeShortcutAccelerator(value) {
+  return normalizeShortcutAcceleratorValue(value)
+}
+
+function normalizeShortcutBindings(value, { fallbackToDefaults = true } = {}) {
+  const source = Array.isArray(value) ? value : []
+  const bindings = []
+  const ids = new Set()
+  const accelerators = new Set()
+  for (const candidate of source) {
+    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) continue
+    const action = typeof candidate.action === 'string' && SHORTCUT_ACTIONS[candidate.action]
+      ? candidate.action
+      : ''
+    const id = typeof candidate.id === 'string'
+      ? candidate.id.trim().toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 48)
+      : ''
+    const accelerator = normalizeShortcutAccelerator(candidate.accelerator)
+    const acceleratorKey = accelerator.toLowerCase()
+    if (!id || !action || !accelerator || ids.has(id) || accelerators.has(acceleratorKey)) continue
+    ids.add(id)
+    accelerators.add(acceleratorKey)
+    bindings.push({
+      id,
+      action,
+      label: SHORTCUT_ACTIONS[action].label,
+      accelerator,
+      custom: !DEFAULT_SHORTCUT_IDS.has(id),
+    })
+    if (bindings.length >= SHORTCUT_BINDING_LIMIT) break
+  }
+  if (bindings.length || !fallbackToDefaults) return bindings
+  return normalizeShortcutBindings(DEFAULT_SHORTCUT_BINDINGS, { fallbackToDefaults: false })
+}
+
+function shortcutBindings() {
+  return normalizeShortcutBindings(store.get('shortcutBindings'))
+}
+
+function storedShortcutBindings(bindings) {
+  return bindings.map(({ id, action, accelerator }) => ({ id, action, accelerator }))
+}
+
+function unregisterConfiguredShortcuts() {
+  for (const accelerator of registeredShortcutAccelerators) globalShortcut.unregister(accelerator)
+  registeredShortcutAccelerators.clear()
+}
+
+function registerShortcutSet(bindings) {
+  for (const binding of bindings) {
+    let registered = false
+    try {
+      registered = globalShortcut.register(binding.accelerator, () => {
+        try {
+          SHORTCUT_ACTIONS[binding.action].execute()
+        } catch (error) {
+          console.warn(`Shortcut action failed (${binding.action}):`, error.message)
+        }
+      })
+    } catch (error) {
+      return { ok: false, binding, error: error.message }
+    }
+    if (!registered) return { ok: false, binding, error: '该组合键已被系统或其他应用占用' }
+    registeredShortcutAccelerators.add(binding.accelerator)
+  }
+  return { ok: true }
+}
+
+function replaceRegisteredShortcuts(nextBindings, rollbackBindings = []) {
+  unregisterConfiguredShortcuts()
+  const result = registerShortcutSet(nextBindings)
+  if (result.ok) return result
+  unregisterConfiguredShortcuts()
+  const rollback = registerShortcutSet(rollbackBindings)
+  if (!rollback.ok) console.warn('Unable to restore previous shortcuts:', rollback.error)
+  return result
+}
+
+function shortcutMutationResult(nextBindings, reason) {
+  const current = shortcutBindings()
+  const registration = replaceRegisteredShortcuts(nextBindings, current)
+  if (!registration.ok) {
+    return {
+      ok: false,
+      error: `${registration.binding.label}：${registration.error}`,
+      snapshot: getSnapshot(),
+    }
+  }
+  store.set('shortcutBindings', storedShortcutBindings(nextBindings))
+  broadcastState(reason)
+  return { ok: true, snapshot: getSnapshot() }
+}
+
+function updateShortcutBinding(payload) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return { ok: false, error: '快捷键数据无效', snapshot: getSnapshot() }
+  }
+  const current = shortcutBindings()
+  const requestedId = typeof payload.id === 'string' ? payload.id.trim().toLowerCase() : ''
+  const existingIndex = current.findIndex(binding => binding.id === requestedId)
+  const requestedAction = typeof payload.action === 'string' ? payload.action : ''
+  const action = existingIndex >= 0 ? current[existingIndex].action : requestedAction
+  const accelerator = normalizeShortcutAccelerator(payload.accelerator)
+  if (!SHORTCUT_ACTIONS[action]) return { ok: false, error: '请选择可用功能', snapshot: getSnapshot() }
+  if (!accelerator) return { ok: false, error: '请按下完整的组合键', snapshot: getSnapshot() }
+  if (current.some((binding, index) => index !== existingIndex && binding.accelerator.toLowerCase() === accelerator.toLowerCase())) {
+    return { ok: false, error: '这个组合键已经在列表中使用', snapshot: getSnapshot() }
+  }
+
+  const next = current.map(binding => ({ ...binding }))
+  if (existingIndex >= 0) {
+    next[existingIndex].accelerator = accelerator
+  } else {
+    if (next.length >= SHORTCUT_BINDING_LIMIT) {
+      return { ok: false, error: `最多可设置 ${SHORTCUT_BINDING_LIMIT} 个快捷键`, snapshot: getSnapshot() }
+    }
+    next.push({
+      id: `custom-${action}-${Date.now().toString(36)}`,
+      action,
+      label: SHORTCUT_ACTIONS[action].label,
+      accelerator,
+      custom: true,
+    })
+  }
+  return shortcutMutationResult(next, 'shortcut-updated')
+}
+
+function deleteShortcutBinding(id) {
+  const current = shortcutBindings()
+  const target = current.find(binding => binding.id === id)
+  if (!target || !target.custom) return { ok: false, error: '默认快捷键不能删除', snapshot: getSnapshot() }
+  return shortcutMutationResult(current.filter(binding => binding.id !== id), 'shortcut-deleted')
+}
+
+function resetShortcutBindings() {
+  const defaults = normalizeShortcutBindings(DEFAULT_SHORTCUT_BINDINGS)
+  return shortcutMutationResult(defaults, 'shortcuts-reset')
+}
+
+function modelScaleAppliesToAll() {
+  return store.get('modelScaleApplyToAll') === true
+}
+
+function sharedModelScale() {
+  return clamp(
+    store.get('sharedModelScale'),
+    MODEL_SCALE_MIN,
+    MODEL_SCALE_MAX,
+    INITIAL_USER_DEFAULTS.characters.scale
+  )
+}
+
 function modelScale(modelId) {
+  if (modelScaleAppliesToAll()) return sharedModelScale()
   const scales = store.get('modelScales')
   const defaultScale = INITIAL_USER_DEFAULTS.characters.scale
   if (!modelId || !scales || typeof scales !== 'object' || Array.isArray(scales)) return defaultScale
-  return clamp(scales[modelId], 0.5, 2, defaultScale)
+  return clamp(scales[modelId], MODEL_SCALE_MIN, MODEL_SCALE_MAX, defaultScale)
 }
 
 function storeModelScale(modelId, value) {
   if (!modelId) return
+  if (modelScaleAppliesToAll()) {
+    store.set('sharedModelScale', clamp(value, MODEL_SCALE_MIN, MODEL_SCALE_MAX, sharedModelScale()))
+    return
+  }
   const stored = store.get('modelScales')
   const scales = stored && typeof stored === 'object' && !Array.isArray(stored) ? { ...stored } : {}
-  const scale = clamp(value, 0.5, 2, modelScale(modelId))
+  const scale = clamp(value, MODEL_SCALE_MIN, MODEL_SCALE_MAX, modelScale(modelId))
   if (Math.abs(scale - INITIAL_USER_DEFAULTS.characters.scale) < 0.001) delete scales[modelId]
   else scales[modelId] = scale
   store.set('modelScales', scales)
@@ -723,8 +929,75 @@ function updateModelScale(modelId, value) {
   const model = listModels().find(item => item.id === modelId && item.status === 'ready')
   if (!model) throw new Error('找不到这个角色')
   storeModelScale(model.id, value)
-  if (selectedModel()?.id === model.id) applyPreferences()
+  if (modelScaleAppliesToAll() || selectedModel()?.id === model.id) applyPreferences()
   broadcastState('model-scale-updated')
+  return getSnapshot()
+}
+
+function modelOpacityAppliesToAll() {
+  return store.get('modelOpacityApplyToAll') === true
+}
+
+function sharedModelOpacity() {
+  return clamp(
+    store.get('sharedModelOpacity'),
+    MODEL_OPACITY_MIN,
+    MODEL_OPACITY_MAX,
+    INITIAL_USER_DEFAULTS.characters.opacity
+  )
+}
+
+function modelOpacity(modelId) {
+  if (modelOpacityAppliesToAll()) return sharedModelOpacity()
+  const opacities = store.get('modelOpacities')
+  const defaultOpacity = INITIAL_USER_DEFAULTS.characters.opacity
+  if (!modelId || !opacities || typeof opacities !== 'object' || Array.isArray(opacities)) return defaultOpacity
+  return clamp(opacities[modelId], MODEL_OPACITY_MIN, MODEL_OPACITY_MAX, defaultOpacity)
+}
+
+function storeModelOpacity(modelId, value) {
+  if (!modelId) return
+  if (modelOpacityAppliesToAll()) {
+    store.set('sharedModelOpacity', clamp(value, MODEL_OPACITY_MIN, MODEL_OPACITY_MAX, sharedModelOpacity()))
+    return
+  }
+  const stored = store.get('modelOpacities')
+  const opacities = stored && typeof stored === 'object' && !Array.isArray(stored) ? { ...stored } : {}
+  const opacity = clamp(value, MODEL_OPACITY_MIN, MODEL_OPACITY_MAX, modelOpacity(modelId))
+  if (Math.abs(opacity - INITIAL_USER_DEFAULTS.characters.opacity) < 0.001) delete opacities[modelId]
+  else opacities[modelId] = opacity
+  store.set('modelOpacities', opacities)
+}
+
+function updateModelOpacity(modelId, value) {
+  const model = listModels().find(item => item.id === modelId && item.status === 'ready')
+  if (!model) throw new Error('找不到这个角色')
+  storeModelOpacity(model.id, value)
+  broadcastState('model-opacity-updated')
+  return getSnapshot()
+}
+
+function updateModelDisplayScope(modelId, kind, applyToAll) {
+  const model = listModels().find(item => item.id === modelId && item.status === 'ready')
+  if (!model) throw new Error('找不到这个角色')
+  const enabled = Boolean(applyToAll)
+
+  if (kind === 'scale') {
+    const currentScale = modelScale(model.id)
+    store.set('modelScaleApplyToAll', enabled)
+    if (enabled) store.set('sharedModelScale', currentScale)
+    else storeModelScale(model.id, currentScale)
+  } else if (kind === 'opacity') {
+    const currentOpacity = modelOpacity(model.id)
+    store.set('modelOpacityApplyToAll', enabled)
+    if (enabled) store.set('sharedModelOpacity', currentOpacity)
+    else storeModelOpacity(model.id, currentOpacity)
+  } else {
+    throw new Error('不支持的全角色设置')
+  }
+
+  applyPreferences()
+  broadcastState('model-display-scope-updated')
   return getSnapshot()
 }
 
@@ -738,6 +1011,9 @@ function getPreferences() {
 
   return {
     scale: modelScale(selectedModel()?.id),
+    opacity: modelOpacity(selectedModel()?.id),
+    scaleApplyToAll: modelScaleAppliesToAll(),
+    opacityApplyToAll: modelOpacityAppliesToAll(),
     interactionMode: ['smart', 'locked'].includes(interactionMode) ? interactionMode : 'smart',
     cursorFollow: ['near', 'off'].includes(cursorFollow) ? cursorFollow : 'near',
     effects: ['subtle', 'off'].includes(effects) ? effects : 'subtle',
@@ -763,6 +1039,7 @@ function getPreferences() {
       ? store.get('settingsTheme')
       : preferenceDefaults.settingsTheme,
     bubbleStyles: normalizeBubbleStyles(store.get('bubbleStyles')),
+    shortcutBindings: shortcutBindings(),
     chatGreeting: typeof storedChatGreeting === 'string'
       ? storedChatGreeting.trim().slice(0, CHAT_GREETING_MAX_LENGTH)
       : preferenceDefaults.chatGreeting,
@@ -781,6 +1058,8 @@ function getSnapshot() {
     ttsFolder: userTtsDir(),
     currentModelId: current ? current.id : '',
     preferences: getPreferences(),
+    shortcutActions: Object.entries(SHORTCUT_ACTIONS).map(([id, action]) => ({ id, label: action.label })),
+    shortcutBindingLimit: SHORTCUT_BINDING_LIMIT,
     bubbleStyleCatalog: BUBBLE_THEME_DEFINITIONS,
     ai: aiPluginManager
       ? aiPluginManager.getSnapshot()
@@ -1775,6 +2054,12 @@ async function openExternalMessageTester(target = 'app') {
   }
 }
 
+async function openExternalMessageTesterShortcut() {
+  const opened = await openExternalMessageTester('app')
+  if (opened) return
+  openSettings('system', '请先在系统页开启外部消息接入')
+}
+
 function createPetWindow() {
   const position = safePetPosition(store.get('windowX'), store.get('windowY'))
   const preferences = getPreferences()
@@ -2235,6 +2520,11 @@ function setPetChatOpen(open) {
   updateTrayMenu()
 }
 
+function togglePetChatShortcut() {
+  if (petChatOpen) setPetChatOpen(false)
+  else openAIChat()
+}
+
 function normalizedLongMessageReaderWidth(value) {
   const parsedWidth = Number(value)
   if (!Number.isFinite(parsedWidth)) return longMessageReaderWidth
@@ -2671,6 +2961,23 @@ function selectModel(modelId) {
   return true
 }
 
+function selectRelativeModel(offset) {
+  const models = listModels().filter(model => model.status === 'ready')
+  if (!models.length) return false
+  const current = selectedModel()
+  const currentIndex = Math.max(0, models.findIndex(model => current && model.id === current.id))
+  const nextIndex = (currentIndex + (offset < 0 ? -1 : 1) + models.length) % models.length
+  return selectModel(models[nextIndex].id)
+}
+
+function refreshModelList() {
+  refreshModels()
+  if (aiPluginManager) aiPluginManager.refresh()
+  updateTrayMenu()
+  broadcastState('models-refreshed')
+  requestMissingCovers()
+}
+
 function safeImportedModelId(filePath) {
   const stem = path.basename(filePath, path.extname(filePath)).trim()
   const sanitized = stem
@@ -2846,11 +3153,19 @@ function updatePreferences(patch) {
 }
 
 function resetPreferences() {
+  const previousShortcuts = shortcutBindings()
   for (const [key, value] of Object.entries(preferenceDefaults)) {
     if (key !== 'onboardingSeen') store.set(key, value)
   }
   store.set('modelScales', {})
+  store.set('modelOpacities', {})
+  store.set('modelScaleApplyToAll', false)
+  store.set('modelOpacityApplyToAll', false)
+  store.set('sharedModelScale', INITIAL_USER_DEFAULTS.characters.scale)
+  store.set('sharedModelOpacity', INITIAL_USER_DEFAULTS.characters.opacity)
   store.set('onboardingSeen', true)
+  const shortcutRegistration = replaceRegisteredShortcuts(shortcutBindings(), previousShortcuts)
+  if (!shortcutRegistration.ok) store.set('shortcutBindings', storedShortcutBindings(previousShortcuts))
   applyPreferences()
   broadcastState('preferences-reset')
   return getSnapshot()
@@ -3006,13 +3321,7 @@ function updateTrayMenu() {
     { type: 'separator' },
     {
       label: '刷新模型列表',
-      click: () => {
-        refreshModels()
-        if (aiPluginManager) aiPluginManager.refresh()
-        updateTrayMenu()
-        broadcastState('models-refreshed')
-        requestMissingCovers()
-      },
+      click: refreshModelList,
     },
     ...buildConditionalTrayItems({
       appLongScreenshotEnabled: preferences.appLongScreenshotEnabled,
@@ -3400,6 +3709,9 @@ function setupIPC() {
     return aiPluginManager.getConversation(requestedModelId)
   })
   ipcMain.handle('settings:update', (_event, patch) => updatePreferences(patch))
+  ipcMain.handle('shortcuts:update', (_event, binding) => updateShortcutBinding(binding))
+  ipcMain.handle('shortcuts:delete', (_event, id) => deleteShortcutBinding(id))
+  ipcMain.handle('shortcuts:reset', () => resetShortcutBindings())
   ipcMain.handle('settings:capture-long-screenshot', (event, section) => {
     if (!settingsWindow || settingsWindow.isDestroyed() || event.sender.id !== settingsWindow.webContents.id) {
       return { ok: false, error: '设置面板暂不可用' }
@@ -3482,6 +3794,20 @@ function setupIPC() {
   ipcMain.handle('model:scale-update', (_event, modelId, scale) => {
     try {
       return { ok: true, snapshot: updateModelScale(modelId, scale) }
+    } catch (error) {
+      return { ok: false, error: error.message }
+    }
+  })
+  ipcMain.handle('model:opacity-update', (_event, modelId, opacity) => {
+    try {
+      return { ok: true, snapshot: updateModelOpacity(modelId, opacity) }
+    } catch (error) {
+      return { ok: false, error: error.message }
+    }
+  })
+  ipcMain.handle('model:display-scope-update', (_event, modelId, kind, applyToAll) => {
+    try {
+      return { ok: true, snapshot: updateModelDisplayScope(modelId, kind, applyToAll) }
     } catch (error) {
       return { ok: false, error: error.message }
     }
@@ -3847,6 +4173,10 @@ app.whenReady().then(() => {
   screen.on('display-removed', schedulePetShapeRefresh)
   screen.on('display-metrics-changed', schedulePetShapeRefresh)
   createTray()
+  const shortcutRegistration = replaceRegisteredShortcuts(shortcutBindings())
+  if (!shortcutRegistration.ok) {
+    console.warn(`Unable to register shortcut ${shortcutRegistration.binding.accelerator}: ${shortcutRegistration.error}`)
+  }
   applyPreferences()
   startCursorTracking()
   if (shouldOpenInitialSettings) openSettings('characters')
@@ -3856,6 +4186,7 @@ app.on('second-instance', () => openSettings())
 
 app.on('before-quit', () => {
   appIsQuitting = true
+  unregisterConfiguredShortcuts()
   if (aiPluginManager) aiPluginManager.dispose()
   if (externalMessageServer) externalMessageServer.dispose().catch(() => {})
   endPetDrag()

@@ -2194,25 +2194,25 @@ kbd {
   background: #eee8fe;
 }
 
-:root[data-settings-view="characters"] #scale-value {
+:root[data-settings-view="characters"] :is(#scale-value, #opacity-value) {
   padding-right: 6px;
   color: #6547ea;
   font-size: 18px;
   font-weight: 790;
 }
 
-:root[data-settings-view="characters"] #scale-range {
+:root[data-settings-view="characters"] :is(#scale-range, #opacity-range) {
   height: 5px;
   margin: 1px 2px 0;
   border-radius: 99px;
   background: linear-gradient(to right, #7854f2 var(--range-progress, 33.33%), rgba(205, 198, 193, .7) var(--range-progress, 33.33%));
 }
 
-:root[data-settings-theme="healing"][data-settings-view="characters"] #scale-range {
+:root[data-settings-theme="healing"][data-settings-view="characters"] :is(#scale-range, #opacity-range) {
   background: linear-gradient(to right, #a766f1 0%, #e36bd4 var(--range-progress, 33.33%), rgba(222, 205, 195, .72) var(--range-progress, 33.33%));
 }
 
-:root[data-settings-view="characters"] #scale-range::-webkit-slider-thumb {
+:root[data-settings-view="characters"] :is(#scale-range, #opacity-range)::-webkit-slider-thumb {
   width: 22px;
   height: 22px;
   border: 5px solid rgba(239, 234, 255, .96);
@@ -2222,7 +2222,7 @@ kbd {
     0 3px 10px rgba(81, 56, 193, .3);
 }
 
-:root[data-settings-theme="healing"][data-settings-view="characters"] #scale-range::-webkit-slider-thumb {
+:root[data-settings-theme="healing"][data-settings-view="characters"] :is(#scale-range, #opacity-range)::-webkit-slider-thumb {
   border: 4px solid rgba(255, 248, 252, .98);
   background:
     radial-gradient(ellipse at 50% 69%, #e46fa8 0 22%, transparent 25%),
@@ -3398,16 +3398,16 @@ kbd {
   font-size: 9px;
 }
 
-:root[data-settings-view="characters"] #scale-value {
+:root[data-settings-view="characters"] :is(#scale-value, #opacity-value) {
   font-size: 17px;
 }
 
-:root[data-settings-view="characters"] #scale-range {
+:root[data-settings-view="characters"] :is(#scale-range, #opacity-range) {
   height: 4px;
   margin-top: 0;
 }
 
-:root[data-settings-view="characters"] #scale-range::-webkit-slider-thumb {
+:root[data-settings-view="characters"] :is(#scale-range, #opacity-range)::-webkit-slider-thumb {
   width: 19px;
   height: 19px;
   border-width: 4px;
@@ -8091,4 +8091,176 @@ kbd {
   height: auto;
   min-height: 74px;
   padding: 6px 8px 8px;
+}
+
+/* Character size and opacity cards ------------------------------------------
+   The two display controls intentionally share one geometry. Theme-specific
+   tokens only change the material and accent, keeping glass and healing from
+   drifting into a hybrid visual language. */
+:root[data-settings-view="characters"] {
+  --character-apply-accent: #7957f1;
+  --character-apply-surface: rgba(255, 255, 255, .38);
+  --character-apply-shadow: 0 2px 6px rgba(75, 55, 170, .055), inset 0 1px 0 rgba(255, 255, 255, .56);
+}
+
+:root[data-settings-theme="healing"][data-settings-view="characters"] {
+  --character-apply-accent: #cf54d9;
+  --character-apply-surface: rgba(255, 253, 251, .42);
+  --character-apply-shadow: 0 2px 6px rgba(182, 74, 143, .05), inset 0 1px 0 rgba(255, 255, 255, .58);
+}
+
+:root[data-settings-theme][data-settings-view="characters"]
+  .characters-view .section-heading + .scale-control {
+  margin-top: 10px;
+}
+
+:root[data-settings-theme][data-settings-view="characters"]
+  .characters-view .scale-control {
+  grid-template-columns: 32px minmax(0, 1fr) auto;
+  gap: 4px 9px;
+  min-height: 72px;
+  margin-bottom: 10px;
+  padding: 9px 12px 8px;
+  border-radius: 17px;
+}
+
+:root[data-settings-theme][data-settings-view="characters"]
+  .characters-view .scale-control .setting-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 11px;
+}
+
+:root[data-settings-theme][data-settings-view="characters"]
+  .characters-view .scale-control .setting-copy {
+  align-self: center;
+}
+
+:root[data-settings-theme][data-settings-view="characters"]
+  .characters-view .scale-control .setting-copy label {
+  font-size: 13px;
+  line-height: 1.2;
+}
+
+:root[data-settings-theme][data-settings-view="characters"]
+  .characters-view .scale-control .setting-copy p {
+  margin-top: 2px;
+  font-size: 9.5px;
+  line-height: 1.35;
+}
+
+:root[data-settings-theme][data-settings-view="characters"]
+  .characters-view :is(#scale-value, #opacity-value) {
+  align-self: center;
+  padding-right: 7px;
+  font-size: 18px;
+  line-height: 1;
+}
+
+:root[data-settings-theme][data-settings-view="characters"] .range-action-row {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+:root[data-settings-theme][data-settings-view="characters"]
+  .range-action-row > :is(#scale-range, #opacity-range) {
+  grid-column: 1;
+  min-width: 0;
+  height: 5px;
+  margin: 0;
+}
+
+:root[data-settings-theme][data-settings-view="characters"] .apply-all-control {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 27px;
+  padding: 0 9px 0 7px;
+  border: 1px solid rgba(255, 255, 255, .6);
+  border-radius: 10px;
+  background: var(--character-apply-surface);
+  box-shadow: var(--character-apply-shadow);
+  color: #35417d;
+  cursor: pointer;
+  font-size: 9px;
+  font-weight: 650;
+  line-height: 1;
+  opacity: .82;
+  white-space: nowrap;
+  transition: none;
+}
+
+:root[data-settings-theme="healing"][data-settings-view="characters"] .apply-all-control {
+  color: #503764;
+}
+
+:root[data-settings-theme][data-settings-view="characters"] .apply-all-control > input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+:root[data-settings-theme][data-settings-view="characters"] .apply-all-check {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border: 1px solid rgba(111, 87, 219, .22);
+  border-radius: 6px;
+  background: rgba(246, 243, 255, .94);
+  color: transparent;
+  box-shadow: inset 0 1px 2px rgba(77, 60, 132, .08);
+  transition: background 140ms ease, box-shadow 140ms ease, color 140ms ease, transform 140ms var(--ease);
+}
+
+:root[data-settings-theme][data-settings-view="characters"] .apply-all-check svg {
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2.4;
+}
+
+:root[data-settings-theme][data-settings-view="characters"]
+  .apply-all-control > input:checked + .apply-all-check {
+  border-color: transparent;
+  background: linear-gradient(145deg, #9977fb, var(--character-apply-accent));
+  box-shadow: 0 3px 8px rgba(99, 69, 211, .28), inset 0 1px 0 rgba(255, 255, 255, .38);
+  color: #fff;
+}
+
+:root[data-settings-theme="healing"][data-settings-view="characters"]
+  .apply-all-control > input:checked + .apply-all-check {
+  background: linear-gradient(145deg, #ee78c9, #bd48db);
+  box-shadow: 0 3px 8px rgba(190, 68, 171, .22), inset 0 1px 0 rgba(255, 255, 255, .4);
+}
+
+:root[data-settings-theme][data-settings-view="characters"]
+  .apply-all-control:has(input:focus-visible) {
+  outline: 2px solid color-mix(in srgb, var(--character-apply-accent) 62%, white);
+  outline-offset: 2px;
+}
+
+:root[data-settings-theme][data-settings-view="characters"]
+  .apply-all-control:has(input:disabled) {
+  cursor: default;
+  opacity: .5;
+  transform: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root[data-settings-theme][data-settings-view="characters"]
+    :is(.apply-all-control, .apply-all-check) {
+    transition-duration: .01ms;
+  }
 }
